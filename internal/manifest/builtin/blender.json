@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "sources": [
+    {
+      "id": "blender-backups",
+      "type": "timestamped-files",
+      "emits": "point",
+      "app": "org.blenderfoundation.blender",
+      "perishable": true,
+      "cause": "user-action",
+      "discovery": "spotlight",
+      "description": "Blender writes a .blend1 backup beside the .blend on every save, overwriting the previous one. That is what makes the cause user-action: the file cannot exist unless somebody pressed save, so a person was at the keyboard at that instant. Measured 2026-07-29, every .blend1 inside Biome's window landed inside a Blender focus interval — 4 of 4, and 5 of 5 over a different span — against 9 of 15 for Motion's timer-written autosaves. These sit wherever the project does rather than in one vault, so they are found through Spotlight; a recursive glob from a shallow root would walk the whole volume. The name carries no time, so the event is the file's modification time, and that is the caveat to carry: an mtime records only the LAST modification, so evidence for a past day is destroyed the moment the same file is saved again. A measured case elsewhere in this project fell from 1,773 files to 513 within hours. Read these events as markers that Blender work happened on a day, never as a measure of volume, and note that their absence is not evidence that no work happened. Marked perishable for the same reason: the record only ever shrinks, so it has to be captured on a schedule.",
+      "files": {
+        "query": "kMDItemFSName == '*.blend1'"
+      },
+      "timestamp": {
+        "from": "mtime"
+      }
+    }
+  ]
+}

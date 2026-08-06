@@ -1,0 +1,92 @@
+#!/bin/sh
+# silencecensus — how many SILENCES a working day holds, and how long they are.
+#
+# A silence is a stretch of a working day in which no source observed anything.
+# It is the only reduction of a day's raw evidence that carries no clustering
+# parameter in it: sort the observations, subtract, and report the holes. Every
+# sitting boundary any gap threshold can ever produce falls inside one of these,
+# so the census is the whole space of possible boundaries with none of them
+# chosen — which is why `timetattle review -blind` asks about silences rather
+# than about blocks.
+#
+# This exists to answer the one question that design turns on: HOW MANY silences
+# is a reviewer being asked about, and how much time do the ones below a display
+# floor hold? A floor is a rendering choice, and a rendering choice that hides
+# hours is a model.
+#
+# Usage:
+#   scripts/silencecensus [-s STORE] DAY [DAY...]
+#
+# DAY is a working day, 2026-07-24. The working day is taken to run from 05:00
+# local to 05:00 the next day; the store holds UTC, and this offsets by the
+# machine's own zone at that date rather than assuming one.
+#
+# Every figure `project/2026-08-02-*` publishes from this names this script.
+
+set -eu
+
+store="${HOME}/.timetattle/timetattle.db"
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-s | -store)
+		store="$2"
+		shift 2
+		;;
+	-*)
+		echo "silencecensus: unknown flag $1" >&2
+		exit 2
+		;;
+	*) break ;;
+	esac
+done
+
+if [ $# -eq 0 ]; then
+	echo "usage: silencecensus [-s STORE] DAY [DAY...]" >&2
+	exit 2
+fi
+if [ ! -f "$store" ]; then
+	echo "silencecensus: no store at $store" >&2
+	exit 1
+fi
+
+printf '%-12s %8s %8s %8s %8s %8s %8s %9s %9s\n' \
+	day obs '>=30s' '>=2m' '>=5m' '>=15m' '>=1h' 'h<2m' 'longest'
+
+for day in "$@"; do
+	# The working day in UTC. date(1) differs between BSD and GNU, so the
+	# offset is read out of the store's own zone via SQLite rather than shelled
+	# out to a date(1) whose flags are not portable.
+	from=$(sqlite3 "$store" "SELECT strftime('%Y-%m-%dT%H:%M:%S', '${day} 05:00:00', 'utc');" 2>/dev/null || true)
+	to=$(sqlite3 "$store" "SELECT strftime('%Y-%m-%dT%H:%M:%S', '${day} 05:00:00', '+1 day', 'utc');" 2>/dev/null || true)
+	if [ -z "$from" ] || [ -z "$to" ]; then
+		echo "silencecensus: $day is not a date" >&2
+		exit 1
+	fi
+
+	sqlite3 -readonly "$store" "
+WITH e AS (
+  SELECT COALESCE(started_at, ended_at) AS s, COALESCE(ended_at, started_at) AS e
+  FROM event
+  WHERE COALESCE(started_at, ended_at) >= '${from}'
+    AND COALESCE(started_at, ended_at) <  '${to}'
+    -- EVIDENCE ONLY, which is the same set internal/dayview draws Observed
+    -- from. knowledgec-backlit bounds sittings and never creates one, and
+    -- islocked/mediausage are read and dropped; counting any of them here
+    -- would fill the day with intervals nobody calls work and report a day of
+    -- silence as a day with none. The shipped defaults, config.Default().
+    AND source_id NOT IN ('knowledgec-backlit', 'knowledgec-islocked', 'knowledgec-mediausage')),
+-- The reach of everything seen so far, so an interval spanning several points
+-- does not manufacture a silence inside itself.
+r AS (SELECT s, MAX(e) OVER (ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS reach FROM e),
+g AS (SELECT (julianday(s) - julianday(LAG(reach) OVER (ORDER BY s))) * 1440.0 AS m FROM r)
+SELECT printf('%-12s %8d %8d %8d %8d %8d %8d %9.2f %9.1f',
+  '${day}',
+  (SELECT count(*) FROM e),
+  (SELECT count(*) FROM g WHERE m >= 0.5),
+  (SELECT count(*) FROM g WHERE m >= 2),
+  (SELECT count(*) FROM g WHERE m >= 5),
+  (SELECT count(*) FROM g WHERE m >= 15),
+  (SELECT count(*) FROM g WHERE m >= 60),
+  COALESCE((SELECT SUM(m) FROM g WHERE m > 0 AND m < 2), 0) / 60.0,
+  COALESCE((SELECT MAX(m) FROM g), 0));"
+done

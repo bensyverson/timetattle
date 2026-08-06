@@ -1,0 +1,63 @@
+-- 0011: what the reviewer was LOOKING AT when they answered.
+--
+-- The most expensive thing in this schema is a column that had to be added
+-- afterwards, and this one is being added afterwards because the fact it
+-- records was not known to matter until it was measured.
+--
+-- # The measurement, which is the whole argument for the column
+--
+-- Over the fourteen presence-covered reviewed days the fit residual at the
+-- shipped parameters — gap 15m, lead-in 5m, tail-out 5m — is EXACTLY 0.000h.
+-- Contradicted is 0.000h at every point in the grid. The reference parameters
+-- rank 1 of 22 live points and the fitter prints CIRCULAR and refuses to report
+-- an answer. project/private/2026-08-02-a-fitter-that-reports-an-interval.md.
+--
+-- The cause is structural rather than statistical. `timetattle review` draws the
+-- derived sittings and asks whether they are right, so a reviewer who agrees
+-- produces an `engaged` set that is a strict SUBSET of the derivation: the
+-- objective cannot be improved by claiming less, and claiming more only adds
+-- contradiction, so the minimum sits at the reference by construction. More
+-- days of the same kind cannot help. A confirmation of a derivation cannot
+-- separate the derivation from the truth however many times it is repeated.
+--
+-- # Why this is a column and not a note, an origin or a convention
+--
+-- The distinction has to survive into a query, because the reader that must act
+-- on it is `timetattle fit` and the action is REFUSING TO POOL. Two populations
+-- of labels are worth different amounts, one of them is worth almost nothing,
+-- and a fitter that averages them reports a precision it has not got — in the
+-- direction that looks like success, which is the failure mode this project has
+-- shipped three times.
+--
+-- `note` was the cheap alternative and is refused for the reason its own
+-- comment gives: it is kept verbatim and never parsed. A fact the code must
+-- branch on cannot live in a field the schema promises not to read. `origin` is
+-- worse: it names WHO reviewed, and overloading it would make "ben" and "ben
+-- (blind)" two people.
+--
+-- # Why the default is 'derivation' and not NULL
+--
+-- Every review recorded before this migration was a review of the derivation.
+-- That is not an assumption: `timetattle review` is the only writer of this
+-- table and it had no other mode, so the value is KNOWN for the 70 existing
+-- rows rather than merely unrecorded. A NULL would say "nobody wrote this
+-- down", which would be false, and would then have to be COALESCEd at every
+-- reading site for ever — the standing trap in this schema, and the one 0004
+-- and 0003 both write around.
+--
+-- NOT NULL with a default is therefore the honest shape here, and it is honest
+-- only because of that argument. Where a value genuinely were unknown for the
+-- back rows, a nullable column saying so would be the right answer instead.
+--
+-- # Two values and not three
+--
+-- 'observations' does not distinguish a blind pass that asked about every
+-- silence from one that asked about the longest forty. That distinction is
+-- real, and it is recoverable WITHOUT a column: an unasked silence writes no
+-- adjustment at all, so the gaps between a review's assertions say exactly
+-- which stretches were put to the reviewer. A column would be a second spelling
+-- of a fact the rows already carry, which is the argument dayview.changed makes
+-- for computing the corrected/agreed distinction rather than storing it.
+ALTER TABLE adjustment_review
+    ADD COLUMN shown TEXT NOT NULL DEFAULT 'derivation'
+    CHECK (shown IN ('derivation', 'observations'));

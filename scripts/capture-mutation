@@ -1,0 +1,83 @@
+#!/bin/bash
+# Prove, by mutation, that one unreadable capture source costs only itself.
+#
+# This reproduces the failure that ran from 2026-07-30 12:01 to 2026-07-31
+# 21:10: a lost Full Disk Access grant on knowledgeC. It does NOT touch
+# ~/Library or anything real — it builds a throwaway fixture with a knowledgeC
+# file this process cannot open, and points every flag at that fixture.
+#
+# Run it against the current tree to see what a partial capture now preserves.
+# Run it against a tree where the capture phase returns on first error (before
+# task NkvFg) and every number below is zero.
+#
+#   ./scripts/capture-mutation
+#
+# Set KEEP=1 to leave the fixture behind for inspection.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/timetattle-mutation-XXXXXX")"
+trap '[ -n "${KEEP:-}" ] || { chmod 600 "$WORK/knowledgeC.db" 2>/dev/null; rm -rf "$WORK"; }' EXIT
+
+BIN="$WORK/timetattle"
+echo "building $BIN"
+go build -o "$BIN" "$ROOT/cmd/timetattle" || exit 1
+
+# The fixture: real evidence waiting for every capture except knowledgeC, whose
+# database is readable by nobody. chmod 000 is the closest reproduction of a
+# revoked TCC grant that does not involve changing a real permission.
+mkdir -p "$WORK/biome/ScreenTime.AppUsage/local" "$WORK/vault" "$WORK/repo" "$WORK/snapshots"
+head -c 4096 /dev/urandom >"$WORK/biome/ScreenTime.AppUsage/local/segment-1"
+head -c 4096 /dev/urandom >"$WORK/biome/ScreenTime.AppUsage/local/segment-2"
+echo autosave >"$WORK/vault/composition.motn"
+echo a >"$WORK/repo/a.txt"
+echo b >"$WORK/repo/b.txt"
+echo "not a database" >"$WORK/knowledgeC.db"
+chmod 000 "$WORK/knowledgeC.db"
+
+if [ -r "$WORK/knowledgeC.db" ]; then
+	echo "error: this process can read a 0000 file (running as root?); the mutation would prove nothing" >&2
+	exit 1
+fi
+
+echo
+echo "== harvest, with an unreadable knowledgeC =="
+"$BIN" harvest \
+	-source "$WORK/knowledgeC.db" \
+	-dir "$WORK/snapshots" \
+	-biome "$WORK/biome" \
+	-store "$WORK/store/timetattle.db" \
+	-motion-vault "$WORK/vault" \
+	-filedays-roots "$WORK/repo" \
+	-index "$WORK/no-such-index.json"
+echo "harvest exit status: $?"
+
+count() { find "$1" -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+echo
+echo "== what survived =="
+echo "knowledgeC snapshots: $(find "$WORK/snapshots" -maxdepth 1 -name '*.db.gz' 2>/dev/null | wc -l | tr -d ' ')"
+echo "Biome captures:       $(count "$WORK/snapshots/biome")"
+echo "Motion vault files:   $(count "$WORK/snapshots/motion-vault")"
+echo "filedays snapshots:   $(count "$WORK/snapshots/filedays")"
+if ! command -v sqlite3 >/dev/null; then
+	echo "harvest_run rows:     (sqlite3 not installed; skipping the store counts)"
+elif [ -f "$WORK/store/timetattle.db" ]; then
+	echo "harvest_run rows:     $(sqlite3 -readonly "$WORK/store/timetattle.db" 'SELECT COUNT(*) FROM harvest_run;' 2>/dev/null)"
+	echo "events stored:        $(sqlite3 -readonly "$WORK/store/timetattle.db" 'SELECT COUNT(*) FROM event;' 2>/dev/null)"
+	# The capture phase's own record, added by task 4tuVv. Before it, a failed
+	# capture left nothing here and `status` counted the files still lying in
+	# the snapshot directory from the last run that worked.
+	echo "capture_run rows:     $(sqlite3 -readonly "$WORK/store/timetattle.db" 'SELECT COUNT(*) FROM capture_run;' 2>/dev/null)"
+	sqlite3 -readonly "$WORK/store/timetattle.db" \
+		"SELECT '  ' || kind || ': ' || status FROM capture_run ORDER BY id;" 2>/dev/null
+else
+	echo "harvest_run rows:     0 (the store was never opened)"
+	echo "events stored:        0 (the store was never opened)"
+	echo "capture_run rows:     0 (the store was never opened)"
+fi
+
+echo
+echo "== timetattle status against the same store =="
+"$BIN" status -store "$WORK/store/timetattle.db" -dir "$WORK/snapshots" -index "$WORK/no-such-index.json"
+echo "status exit status: $?"

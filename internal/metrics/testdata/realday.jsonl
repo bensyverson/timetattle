@@ -1,0 +1,78 @@
+// A synthetic working day with the SHAPE of a real one, read by
+// internal/metrics/fixturecorpus_test.go.
+//
+// NOTHING HERE IS REAL. Every project name is invented, every path is under a
+// made-up root, and the date the times are hung on — 2026-03-04 — is
+// deliberately not 2026-07-28, the concurrent day
+// project/private/2026-07-31-concurrent-project-validation.md measures, so that a
+// figure taken off this corpus can never be mistaken for one of those.
+//
+// One JSON object per line. "at" makes a Point; "from"/"to" make an Interval.
+// "note" is for the reader and is ignored. Lines beginning // are comments.
+//
+// Reproduce the report this produces with:
+//   go test ./internal/metrics/ -run FixtureDay -v
+
+// -- The screen, which is presence and never evidence of work. ---------------
+// Lit for half an hour before the day's first observation. This is the
+// warm-up the real corpus also shows, and it is why lit clock outside every
+// sitting has to be a reportable quantity rather than an error.
+{"source":"knowledgec-backlit","state":"on","from":"05:18:00","to":"05:52:00","note":"screen on before work began"}
+{"source":"knowledgec-backlit","state":"on","from":"08:00:00","to":"12:30:00"}
+{"source":"knowledgec-backlit","state":"off","from":"12:30:00","to":"13:00:00","note":"observed darkness, not silence"}
+// The sampler stops here while work carries on. SILENCE IS NOT DARKNESS: the
+// afternoon past 14:00 is neither lit nor dark, and counting it as either is a
+// bug this project has shipped twice.
+{"source":"knowledgec-backlit","state":"on","from":"13:00:00","to":"14:00:00"}
+// A source whose meaning is unestablished, which must contribute nothing at
+// all — neither evidence nor bounds. If it were clustered as work it would
+// manufacture a sitting out of a night.
+{"source":"knowledgec-islocked","state":"on","from":"01:00:00","to":"04:30:00","note":"ignored source"}
+
+// -- lantern: a morning of recorded acts, with two file timestamps inside it. --
+{"source":"claude-transcripts","project":"lantern","at":"08:12:00"}
+{"source":"claude-transcripts","project":"lantern","at":"08:22:00"}
+{"source":"claude-transcripts","project":"lantern","at":"08:33:00"}
+{"source":"claude-transcripts","project":"lantern","at":"08:44:00"}
+{"source":"claude-transcripts","project":"lantern","at":"08:55:00"}
+{"source":"claude-transcripts","project":"lantern","at":"09:05:00"}
+{"source":"fs-observations","project":"lantern","locator":"/work/lantern/render/beacon.blend","document":"beacon","at":"09:19:26","note":"weak: a timestamp, not an act"}
+{"source":"fs-observations","project":"lantern","locator":"/work/lantern/render/beacon-top.blend","document":"beacon-top","at":"09:28:00"}
+{"source":"gitlog-commits","project":"lantern","locator":"/work/lantern","at":"09:38:00"}
+
+// -- An unregistered directory: a path, and no project that claims it. -------
+// Actionable — somebody could register it — and therefore reported apart from
+// evidence that carries no path at all.
+// The 14-minute step between the first two is under the 15-minute gap, so they
+// are one sitting — and the four minutes their lead-in and tail-out do not
+// reach is BRIDGED silence: inside a sitting, accounted for by nothing, and
+// observed by nothing. It is the third state, and it exists here so the
+// assertion that bridged clock is never also observed has something to bite on.
+{"source":"gitlog-commits","locator":"/work/unclaimed/notes","at":"10:30:00"}
+{"source":"gitlog-commits","locator":"/work/unclaimed/notes","at":"10:44:00"}
+{"source":"gitlog-commits","locator":"/work/unclaimed/notes","at":"10:50:00"}
+
+// -- Evidence with no path at all: a focus interval naming an application. ---
+// Not actionable, and a different problem. It is also the corpus's only
+// unattributed DURATION, so the stretch it covers is observed as well as
+// unlocatable.
+{"source":"biome-focus","app":"org.blenderfoundation.blender","from":"11:20:00","to":"12:05:00"}
+
+// -- compass and anvil, interleaved in the same clock hours. ------------------
+// A held task claim is an attesting INTERVAL: somebody had the task open for
+// as long as it says, so this is the one stretch of the day where a project's
+// engaged time is genuinely OBSERVED rather than inferred.
+{"source":"job-claims","project":"compass","from":"13:05:00","to":"14:20:00"}
+{"source":"claude-transcripts","project":"compass","at":"13:10:00"}
+{"source":"claude-transcripts","project":"compass","at":"13:20:00"}
+{"source":"claude-transcripts","project":"compass","at":"13:31:00"}
+{"source":"fs-observations","project":"compass","locator":"/work/compass/plates/gridline.motn","document":"gridline","at":"14:00:00"}
+
+{"source":"claude-transcripts","project":"anvil","at":"13:15:00"}
+{"source":"claude-transcripts","project":"anvil","at":"13:26:00"}
+{"source":"claude-transcripts","project":"anvil","at":"13:37:00"}
+// A file timestamp with no recorded act anywhere near it. This is what makes
+// anvil's weak column non-zero, and it is the only reason the weak column is
+// distinguishable from the unobserved one on this day.
+{"source":"fs-observations","project":"anvil","locator":"/work/anvil/local/dark-crystal.motn","document":"dark-crystal","at":"13:50:00"}
+{"source":"claude-transcripts","project":"anvil","at":"14:04:00"}

@@ -1,0 +1,93 @@
+# A synthetic save-as corpus with the SHAPE of a real one.
+#
+# Read by internal/chains/fixturecorpus_test.go, built into a temporary
+# directory by internal/fsfixture, and then WALKED by internal/fsobserve rather
+# than handed to Reconstruct as pre-built events — so the birthtime reader, the
+# walk and the model are exercised together.
+#
+# NOTHING HERE IS REAL. Every name is invented and the date, 2026-03-04, is
+# deliberately not 2026-07-11, the day the published lightbar figures were taken
+# on, so that a number measured off this corpus can never be mistaken for one of
+# those measurements. What IS carried across is the arithmetic: the intervals
+# between the render/ steps are the published +14m12s, +2m48s, +237m17s, +7m15s,
+# +192m52s.
+#
+# Reproduce the real figures this was modelled on with:
+#   stat -f '%SB | %Sm | %N' -t '%Y-%m-%d %H:%M:%S' <the directories realdata_test.go names>
+
+# ---------------------------------------------------------------------------
+# render/ — a Blender save-as chain, six branches across one day.
+#
+# Every .blend has a birthtime equal to its mtime to the second, which is the
+# measured property of the real corpus: no single file carries a span at all,
+# and the structure is entirely in the filenames.
+# ---------------------------------------------------------------------------
+render/beacon.blend                          | 2026-03-04 09:19:26
+render/beacon-top.blend                      | 2026-03-04 09:33:38
+render/beacon-top-filmic.blend               | 2026-03-04 09:36:26
+render/beacon-top-filmic-rect-prefable.blend | 2026-03-04 13:33:43
+render/beacon-top-filmic-rect.blend          | 2026-03-04 13:40:58
+render/beacon-top-filmic-fable.blend         | 2026-03-04 16:53:50
+
+# Blender's own backups, each written BEFORE the .blend that carries the name.
+# internal/fsobserve classifies .blend1 as source deliberately, and it changes
+# the answer: under the default model these two documents first appear at their
+# backup, which shrinks two intervals and swaps one adjacent pair. Both are
+# honest readings of the same disk.
+render/beacon-top-filmic-rect.blend1  | 2026-03-04 13:33:27
+render/beacon-top-filmic-fable.blend1 | 2026-03-04 15:41:02
+
+# ---------------------------------------------------------------------------
+# plates/ — a second chain that happens to share the render/ stem, and a burst.
+# ---------------------------------------------------------------------------
+
+# The same name as render/beacon.blend, in a different folder, for a different
+# application, on the same day. Merging the two on the shared name would
+# interleave two people's worth of iteration rhythm into one false sequence.
+# This one is also the corpus's only file whose mtime moved long after its
+# birth, which is a separate observation and NOT a duration.
+plates/beacon.psd      | 2026-03-04 09:55:54 | 2026-03-04 23:41:06
+plates/beacon-flat.psd | 2026-03-04 23:41:06
+
+# Seven files duplicated together in one gesture, sharing a birthtime exactly.
+# Seven steps would be six intervals of zero, which reads as furious activity
+# and is in fact somebody pressing Duplicate once.
+plates/gridline-native.motn       | 2026-03-04 16:15:22
+plates/gridline-card-granted.motn | 2026-03-04 16:15:22
+plates/gridline-card-denied.motn  | 2026-03-04 16:15:22
+plates/gridline-face-granted.motn | 2026-03-04 16:15:22
+plates/gridline-face-denied.motn  | 2026-03-04 16:15:22
+plates/gridline2-face-denied.motn | 2026-03-04 16:15:22
+plates/gridline3-face-denied.motn | 2026-03-04 16:15:22
+
+# The second step of that family, so it is a chain rather than a single action.
+plates/gridline-face-granted-v2.motn | 2026-03-04 17:02:11
+
+# Rendered output, in the same directory and under the same stem as the family
+# above. One export writes a run of sequentially-named frames in the same
+# second; a model that chained them would report a long chain for one action.
+plates/gridline-face-granted-0001.png | 2026-03-04 17:05:00
+plates/gridline-face-granted-0002.png | 2026-03-04 17:05:00
+plates/gridline-face-granted-0003.png | 2026-03-04 17:05:00
+
+# ---------------------------------------------------------------------------
+# local/ — THE CONSTRUCTED DASH-SPLITTING CASE, on a real filesystem.
+#
+# dark-crystal is ONE document, not a "dark" family with a "crystal" variant.
+# dark-matter is a genuinely separate family that shares four characters with
+# it. No such sibling pair exists on the real disk, which is why dash-splitting
+# passes there with zero wrong joins while being wrong — CLAUDE.md's canonical
+# example of real data validating a wrong rule. Deleting either family from this
+# file removes the only evidence that would catch it.
+# ---------------------------------------------------------------------------
+local/dark-crystal.motn      | 2026-03-04 12:57:23
+local/dark-crystal-v2.motn   | 2026-03-04 12:57:23
+local/dark-crystal.psd       | 2026-03-04 14:09:54
+local/dark-crystal-apex.motn | 2026-03-04 14:46:10
+local/dark-matter.motn       | 2026-03-04 15:00:00
+local/dark-matter-halo.motn  | 2026-03-04 15:30:00
+
+# A document with no family at all. A model that chains everything is as useless
+# as one that chains nothing, so the corpus has to contain something that
+# correctly ends up unchained.
+local/lone-study.psd | 2026-03-04 18:00:00

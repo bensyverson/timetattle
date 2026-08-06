@@ -1,0 +1,73 @@
+# Secrets / local config
+.env
+
+# macOS
+.DS_Store
+
+# Go build artifacts
+*.exe
+*.test
+*.out
+/bin/
+coverage.*
+# `go build ./...` drops one binary per main package into the repo ROOT, named
+# after its directory. One of them, `claimlag`, was committed by accident: a
+# 9.3 MB Mach-O carrying 117 embedded /Users paths and a client symbol that
+# `strings` did not surface. Every main package is listed so the next one cannot
+# repeat it. Regenerate with:
+#   go list -f '{{if eq .Name "main"}}/{{.Dir}}{{end}}' ./... | sed 's|.*/|/|'
+/appfocus
+/attributionskip
+/claimlag
+/claimset
+/confidential
+/consolidatecheck
+/dayview
+/env
+/excludecheck
+/filedays
+/joinday
+/joinfocus
+/kcprofile
+/knowledgec
+/locatorcollide
+/locatorhistory
+/locatorlink
+/motionjoin
+/pseudonymize
+/restorebiome
+/runningcheck
+/sittingcheck
+/sleepcheck
+/timetattle
+/transcriptreconcile
+/transcripts
+/weakcensus
+
+# scripts/release.sh's build output: signed/notarized dmg and intermediates
+/dist/
+
+# SQLite databases (server data store + local job state) and WAL sidecars
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+local/
+
+public/
+.hugo_build.lock
+
+# Claude Code agent worktrees (transient, machine-local)
+.claude/worktrees/
+
+# Findings that are about the client surface rather than about the tool. The
+# rest of project/ is deliberately published: it is the measurement trail
+# CLAUDE.md calls load-bearing, and it survives here intact. What does not
+# belong in a public tree is a document whose subject IS what was removed --
+# such a document is a map of the surface, and publishing the map undoes the
+# pass. This is a directory rather than a list of filenames on purpose: an
+# ignore entry naming a dated confidentiality document is itself a pointer to
+# one. Contents stay on disk and in the private mirror's history.
+/project/private/

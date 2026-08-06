@@ -1,0 +1,27 @@
+{
+  "manifest_version": 1,
+  "sources": [
+    {
+      "id": "motion-autosave",
+      "type": "timestamped-files",
+      "emits": "point",
+      "app": "com.apple.motionapp",
+      "perishable": true,
+      "cause": "timer",
+      "description": "Apple Motion autosaves an open composition roughly every fifteen minutes into ~/Movies/Motion Projects/Autosave Vault/<composition>/, naming the file <composition>_YYYY-MM-DD_HHMM.motn. The time is local wall-clock with no zone, so it is parsed in the machine's own zone. NOTHING HAS EVER BEEN OBSERVED TO REMOVE A FILE FROM THIS VAULT, and two earlier claims in this description were wrong and were corrected on 2026-08-01. It said Motion removes autosaves, and that 2h15m of recorded Motion focus on 2026-07-28 left none at all. Both fail: two autosaves from that date survive, written 06:32 and 06:45 local, inside that day's Motion focus window, and Motion focus that day totalled 54.9 minutes rather than 2h15m. A controlled test on 2026-07-31 falsified the clean-close hypothesis outright — a clean close and a force quit both left their autosaves in place, and both were still present two days later. File by file the preserved snapshot and the live vault agree at 38 files, and the oldest surviving autosave is from 2022-08-02. It is still captured rather than merely read, and perishable stays true, because four days of observation is weak evidence for never and the copy costs almost nothing; that is a hedge, not a finding. ABSENCE OF AN AUTOSAVE STILL CARRIES NO INFORMATION, for a different reason than was previously believed: Motion is assumed to write an autosave only when a composition has unsaved changes at the interval tick, so a session saved promptly and often never writes one at all. Absence therefore tracks saving habit rather than whether work happened. What survives is NOT biased toward sessions that ended badly — that claim followed from the clean-close hypothesis and falls with it. The composition is the whole directory name; several real ones contain spaces and dashes that belong to the name, so it is taken intact and never split. The cause is a timer, and that is the sharpest caveat on this source: the autosave interval is wall-clock and does not care whether anyone is at the machine. On 2026-07-11 an autosave was written at 17:53 with the screen off, during a break Ben independently recalls, and 9 of 15 autosaves measured on 2026-07-29 fell inside a Motion focus interval against 4 of 4 for Blender's save-written backups. So an autosave is evidence that Motion was RUNNING, never that work was happening, and it must be joined against presence before it counts. An autosave says which composition was open at an instant and nothing about for how long: the duration comes from joining these points to Motion's focus intervals on the app identifier above.",
+      "files": {
+        "root": "~/Movies/Motion Projects/Autosave Vault",
+        "match": "*/*.motn"
+      },
+      "timestamp": {
+        "from": "filename",
+        "pattern": "_(\\d{4}-\\d{2}-\\d{2}_\\d{4})\\.motn$",
+        "layout": "2006-01-02_1504"
+      },
+      "project": {
+        "from": "path",
+        "pattern": "Autosave Vault/([^/]+)/"
+      }
+    }
+  ]
+}

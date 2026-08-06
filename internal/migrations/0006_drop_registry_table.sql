@@ -1,0 +1,30 @@
+-- 0006: drop the vestigial "registry" table.
+--
+-- 0001 shipped a registry table (path, client, project, registered_at) meant
+-- to be the record of which directory belongs to which client and project.
+-- It predates the marker-file design that actually shipped: Register
+-- (internal/registry) writes a ".timetattle-project.json" marker into the
+-- directory itself, and List reads it back by walking an index of
+-- directories at ~/.timetattle/registered-directories.json. Nothing in this
+-- codebase ever reads or writes the SQL table — confirmed by grep across
+-- every non-test .go file for "FROM registry" / "INTO registry" /
+-- "UPDATE registry", and specifically checked against
+-- internal/store/attribution.go and its Resolver plumbing, which resolves
+-- through a caller-supplied func(locator) (project, found, err) backed by
+-- internal/registry.Resolve, never SQL.
+--
+-- It is otherwise harmless: nothing writes to it, so nothing can be lost by
+-- dropping it. But it reads as authoritative schema for a storage mechanism
+-- the design abandoned, and this project has a standing rule against
+-- leaving a stale claim standing. BUILD MODE (zero users, zero databases
+-- that depend on this table) means it is dropped outright here rather than
+-- deprecated.
+--
+-- Scoped to exactly this one table. The live store at
+-- ~/.timetattle/timetattle.db is at migration 0004 and holds 44,251
+-- real, irreplaceable harvested events, plus the derived_session and
+-- derived_chain* tables 0003 and 0004 added — none of which reference
+-- "registry" (no foreign key in this schema ever pointed at it; event.project
+-- is a plain nullable TEXT column filled by a resolution pass, not a
+-- reference). DROP TABLE touches only the one table named.
+DROP TABLE registry;

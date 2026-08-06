@@ -1,0 +1,92 @@
+#!/bin/bash
+# Report, for every TEXT timestamp column in a Timetattle store, how many rows
+# hold a value that is not the fixed-width UTC layout internal/store.TimeLayout
+# writes.
+#
+#   ./scripts/timestamp-shape-audit                       # the live store
+#   ./scripts/timestamp-shape-audit /path/to/other.db
+#
+# Three numbers per column, and they are three different facts:
+#
+#   rows     how many rows the table holds
+#   nulls    how many hold NULL, which for a nullable column means the instant
+#            was never observed and is NOT a failure
+#   bad      how many hold a non-NULL value that is not the layout
+#
+# A column with rows=0 reports nothing rather than zero failures. "Observed
+# not-X" and "nothing was recorded" are different claims and this tool refuses
+# to render them alike.
+#
+# The columns are DISCOVERED from the schema rather than listed here, so a
+# migration that adds a timestamp appears without this script being edited. The
+# convention is a TEXT column whose name ends in _at, and there is exactly one
+# column in this schema that carries an instant and does not follow it —
+# harvest_run.since, the exclusive boundary handed to Collect — so it is named
+# below. A first draft of this tool discovered by the pattern alone and silently
+# reported nothing about that column, which is the failure this whole audit is
+# supposed to be about.
+#
+# Read-only throughout: the store is opened with mode=ro and nothing is written.
+#
+# This is the tool that reproduces the population figures quoted in
+# internal/migrations/0009_timestamp_shape.sql. Migration 0009 makes `bad`
+# unreachable for every guarded column by putting the shape in a CHECK; before
+# it, the count was the only thing standing between the store and a same-width
+# non-UTC value. '2026-08-01T08:04:35.0-05:00' is exactly 27 characters and is
+# five hours out of UTC, so a width check reports success on it.
+set -uo pipefail
+
+DB="${1:-$HOME/.timetattle/timetattle.db}"
+if [ ! -f "$DB" ]; then
+	echo "no store at $DB" >&2
+	exit 1
+fi
+
+URI="file:$DB?mode=ro"
+GLOB='[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9]Z'
+
+# Every TEXT column whose name ends in _at, plus the one that carries an instant
+# under another name.
+COLUMNS=$(sqlite3 "$URI" "
+SELECT m.name || '.' || c.name
+FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS c
+WHERE m.type = 'table' AND c.type = 'TEXT'
+  AND (c.name LIKE '%\_at' ESCAPE '\' OR m.name || '.' || c.name IN ('harvest_run.since'))
+ORDER BY m.name, c.name;")
+
+if [ -z "$COLUMNS" ]; then
+	echo "$DB holds no TEXT timestamp columns; either it is not a Timetattle store or this query is wrong" >&2
+	exit 1
+fi
+
+printf '%-34s %10s %8s %8s\n' COLUMN ROWS NULLS BAD
+printf '%-34s %10s %8s %8s\n' "----------------------------------" "----------" "--------" "--------"
+
+total_bad=0
+for qualified in $COLUMNS; do
+	table="${qualified%%.*}"
+	column="${qualified##*.}"
+	read -r rows nulls bad <<<"$(sqlite3 -separator ' ' "$URI" "
+		SELECT count(*),
+		       sum($column IS NULL),
+		       sum(CASE WHEN $column IS NOT NULL AND $column NOT GLOB '$GLOB' THEN 1 ELSE 0 END)
+		FROM $table;")"
+	if [ "$rows" = "0" ]; then
+		printf '%-34s %10s %8s %8s\n' "$qualified" 0 "-" "-"
+		continue
+	fi
+	printf '%-34s %10s %8s %8s\n' "$qualified" "$rows" "$nulls" "$bad"
+	total_bad=$((total_bad + bad))
+done
+
+echo
+if [ "$total_bad" -eq 0 ]; then
+	echo "$total_bad values are not the store's layout, over every row of every column above."
+	echo "That is an observed not-X across the whole population, not an absence of evidence:"
+	echo "a column reading '-' holds no rows at all and reports nothing either way."
+else
+	echo "$total_bad values are NOT the store's layout. Every ORDER BY and every range"
+	echo "read over the affected columns is wrong wherever one of them sorts against a"
+	echo "value of a different width: 'Z' is 0x5A and '.' is 0x2E, so a timestamp"
+	echo "written to the second sorts ABOVE a sub-second one inside the same second."
+fi

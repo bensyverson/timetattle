@@ -1,0 +1,102 @@
+#!/bin/sh
+# foreignsuite — run the test suite as a machine that has never seen Ben's data.
+#
+# The suite FAILS OPEN by nature: a test that cannot find the corpus it needs
+# calls t.Skip, and `go test` prints "ok" either way. That has already cost real
+# coverage three times on 2026-08-02 alone — a pseudonym rename silently
+# unhooked 8 tests, and migration 0011 landing against a store at 0010 unhooked
+# several more. Nothing went red on any occasion.
+#
+# This script is the instrument that makes the fail-open visible. It points HOME
+# at an empty directory, so `os.UserHomeDir` succeeds (tests that expand "~" for
+# a *constructed* path still work) but resolves to a home holding no store, no
+# ~/Library/Biome, no ~/.claude and no vault. Anything that skips under it was
+# reading the machine.
+#
+# `env -u HOME` was considered and rejected: it makes os.UserHomeDir fail
+# outright, which turns 32 portable tests red for a reason that has nothing to
+# do with the corpus. An empty home is the honest simulation of a fresh laptop.
+#
+# Usage:
+#   scripts/foreignsuite [-v] [PKG...]        # default: ./...
+#   scripts/foreignsuite -tags realdata ./internal/fit/
+#
+# Prints the skip census and the list of tests that skipped. A clean untagged
+# run should report ZERO skips whose reason names the machine; every remaining
+# corpus check lives behind `//go:build realdata` and is not compiled at all.
+#
+# Every figure `project/private/2026-08-02-corpus-tests-behind-a-build-tag.md` publishes
+# names this script.
+
+set -eu
+
+verbose=""
+tags=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-v) verbose=1; shift ;;
+	-tags) tags="$2"; shift 2 ;;
+	-tags=*) tags="${1#-tags=}"; shift ;;
+	-*)
+		echo "foreignsuite: unknown flag $1" >&2
+		exit 2
+		;;
+	*) break ;;
+	esac
+done
+
+[ $# -eq 0 ] && set -- ./...
+
+# The build cache, module cache and GOPATH all default to somewhere under HOME.
+# Resolve them against the REAL home first, or the run redownloads the module
+# graph into the throwaway directory and measures nothing but the network.
+GOCACHE=$(go env GOCACHE)
+GOMODCACHE=$(go env GOMODCACHE)
+GOPATH=$(go env GOPATH)
+export GOCACHE GOMODCACHE GOPATH
+
+home=$(mktemp -d)
+trap 'rm -rf "$home"' EXIT INT TERM
+
+out=$(mktemp)
+trap 'rm -rf "$home" "$out"' EXIT INT TERM
+
+# GIT_DIR and its relatives are exported into every git hook, and a suite run
+# from a pre-commit hook inherits them. Unscrubbed they silently override the
+# `-C` of any git a test shells out to, which has twice written fixture commits
+# into the real repository. internal/gitlog/git.go strips the same set.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+	GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM || true
+
+set +e
+if [ -n "$tags" ]; then
+	HOME="$home" go test -tags "$tags" -v "$@" >"$out" 2>&1
+else
+	HOME="$home" go test -v "$@" >"$out" 2>&1
+fi
+status=$?
+set -e
+
+pass=$(grep -cE '^[[:space:]]*--- PASS' "$out" || true)
+skip=$(grep -cE '^[[:space:]]*--- SKIP' "$out" || true)
+fail=$(grep -cE '^[[:space:]]*--- FAIL' "$out" || true)
+
+printf 'foreignsuite: HOME=%s tags=%s\n' "$home" "${tags:-none}"
+printf '%s PASS  %s SKIP  %s FAIL\n' "$pass" "$skip" "$fail"
+
+if [ "$skip" -gt 0 ]; then
+	echo
+	echo 'SKIPPED:'
+	grep -E '^[[:space:]]*--- SKIP' "$out" | sed 's/^[[:space:]]*--- SKIP: /  /'
+fi
+if [ "$fail" -gt 0 ]; then
+	echo
+	echo 'FAILED:'
+	grep -E '^[[:space:]]*--- FAIL' "$out" | sed 's/^[[:space:]]*--- FAIL: /  /'
+fi
+if [ -n "$verbose" ]; then
+	echo
+	cat "$out"
+fi
+
+exit $status

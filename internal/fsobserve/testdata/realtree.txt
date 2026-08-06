@@ -1,0 +1,52 @@
+# A synthetic filesystem corpus with the SHAPE of a real compositor morning.
+#
+# Read by internal/fsobserve/fixturecorpus_test.go, built into a temporary
+# directory by internal/fsfixture. Format: path | birth | mtime, with the mtime
+# omitted where the file was written once and never touched again.
+#
+# NOTHING HERE IS REAL. Every name is invented and the date, 2026-03-04, is
+# deliberately not any day this project has published a figure about, so that a
+# number measured off this corpus can never be mistaken for a measurement of
+# somebody's actual working day. What IS carried across from the real morning
+# realdata_test.go asserts against is the arithmetic between the two stamps on
+# each file, because that arithmetic is the whole subject of this package.
+#
+# Reproduce the real figures this was modelled on with:
+#   stat -f "%SB %Sm" -t "%Y-%m-%d_%H:%M:%S" <the directory realdata_test.go names>
+
+# Saved at the start of the session and again at its end: two events, 50 minutes
+# apart, and the only file in the corpus that spans the whole morning.
+studio/beacon2-face-granted.motn | 2026-03-04 06:00:14.913427472 | 2026-03-04 06:50:34.742495669
+
+# Born in the same gesture as the file above and then touched again the NEXT
+# DAY. Its mtime says nothing whatever about this morning; without the birth
+# time, the whole of its contribution to 06:00 disappears. This is the case the
+# package exists for.
+studio/beacon3-face-granted.motn | 2026-03-04 06:00:14.913427472 | 2026-03-05 13:17:56.000000000
+
+# Written once. Birth and mtime differ by scheduling jitter alone — 185ms, 124µs,
+# 170µs, 51ms — and every one of them stays inside a single Unix second, so each
+# file is one event rather than two.
+studio/panel2.af             | 2026-03-04 06:41:36.799256773 | 2026-03-04 06:41:36.984793537
+studio/big-x-2.png           | 2026-03-04 06:42:13.515838756 | 2026-03-04 06:42:13.515962377
+studio/big-check-2.png       | 2026-03-04 06:42:24.305116437 | 2026-03-04 06:42:24.305286806
+studio/big-check-green-2.png | 2026-03-04 06:48:09.154229300 | 2026-03-04 06:48:09.205948420
+
+# The counter-case, and the reason coincidence is judged at Unix() resolution
+# rather than by elapsed time: 657.8ms apart, which is LESS than a second, and
+# yet in two different seconds. Two writes, two events.
+studio/big-x-red-2.png | 2026-03-04 06:43:11.536758418 | 2026-03-04 06:43:12.194606109
+
+# The same file again inside a nested worktree. A project directory can hold
+# copies of itself, and one measured case in this project was 86x inflated by
+# exactly this — 6103 raw files against 71 once worktree copies were excluded.
+# Counting it would double every figure above.
+.claude/worktrees/agent-1/studio/beacon2-face-granted.motn | 2026-03-04 06:00:14.913427472 | 2026-03-04 06:50:34.742495669
+
+# One of each kind of file this package refuses, so that "nothing was collected
+# from here" is an assertion rather than an accident of what was lying around.
+studio/.DS_Store              | 2026-03-04 06:44:00
+studio/notes.db-wal           | 2026-03-04 06:45:00
+.git/objects/ab/preview.png   | 2026-03-04 06:46:00
+.venv/lib/site/thumbnail.png  | 2026-03-04 06:47:00
+node_modules/kit/logo.png     | 2026-03-04 06:47:30

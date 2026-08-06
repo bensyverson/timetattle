@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "==> go vet"
+go vet ./...
+
+# Analysis tools in scripts/ are ordinary subdirectory packages — one per
+# directory, each its own `package main` — so `go vet ./...` above already
+# covers them and they are tested like anything else.
+#
+# This guard exists because that convention is easy to break by accident. A
+# loose `scripts/foo.go` carrying `//go:build ignore` would vanish from
+# `./...` entirely: it would never be vetted, never be built, and could rot
+# silently until someone tried to run it. Rather than special-case such files
+# the way this hook did when it was inherited, refuse them and point at the
+# convention that keeps them covered.
+echo "==> scripts/ layout"
+shopt -s nullglob
+loose_scripts=(scripts/*.go)
+shopt -u nullglob
+if [ ${#loose_scripts[@]} -gt 0 ]; then
+  echo "these files sit loose in scripts/ and are invisible to go vet ./... :"
+  printf '  %s\n' "${loose_scripts[@]}"
+  echo ""
+  echo "Give each one its own directory so it is covered like the rest:"
+  echo "  mkdir scripts/<name> && git mv scripts/<name>.go scripts/<name>/main.go"
+  exit 1
+fi
+
+echo "==> go fix"
+# `go fix` can rewrite files in place without printing to stdout (the
+# Go 1.22+ loop/modernizers in particular). Capturing stdout isn't enough —
+# silent rewrites slip through and land as follow-up commits. Compare the
+# worktree against the staged set instead: any modification by `go fix` to a
+# file already part of this commit is a hard fail with a re-stage hint.
+#
+# `go fix` also applies OVERLAPPING fixes across SEVERAL PASSES: when two
+# analyzers target the same region (a map-append loop that is then sorted,
+# say) it applies what it can, prints "(Re-run the command to apply more.)"
+# and exits NON-ZERO. Under `set -e` that single informational exit aborted
+# the commit even though nothing was wrong and the check below would pass.
+# So iterate to convergence, and only then let a still-failing run stand as
+# a real failure.
+for _ in 1 2 3 4 5; do
+  if go fix ./... > /dev/null 2>&1; then break; fi
+done
+go fix ./... > /dev/null
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -n "$staged" ]; then
+  # `git diff -- <staged paths>` reports unstaged changes scoped to those
+  # paths; unrelated worktree edits don't trip the hook.
+  modified=$(git diff --name-only -- $staged)
+  if [ -n "$modified" ]; then
+    echo "go fix modified staged files:"
+    echo "$modified"
+    echo ""
+    echo "Re-stage and commit again:"
+    echo "  git add $(echo $modified | tr '\n' ' ') && git commit ..."
+    exit 1
+  fi
+fi
+
+echo "==> gofmt"
+# DOT-DIRECTORIES ARE EXCLUDED, and that is load-bearing rather than tidy.
+# `gofmt -l .` recurses everywhere, including `.claude/worktrees/`, where
+# parallel subagents keep their IN-PROGRESS checkouts. A teammate's half-typed
+# file would then fail THIS commit, in a repo whose whole workflow is fanning
+# work out to worktree agents — so a running agent could block the main thread
+# for a reason that has nothing to do with what is being committed.
+#
+# Excluding `./.*` matches what the Go toolchain itself does (it ignores
+# directories beginning with `.` or `_`), which is why `go vet ./...` and
+# `go test ./...` never had this problem and only gofmt did.
+unformatted=$(find . -name '*.go' -not -path './.*' -exec gofmt -l {} +)
+if [ -n "$unformatted" ]; then
+  echo "gofmt needs to format these files:"
+  echo "$unformatted"
+  echo ""
+  echo "Run: gofmt -w ."
+  exit 1
+fi
+
+echo "==> go mod tidy"
+go mod tidy
+if ! git diff --quiet go.mod go.sum 2>/dev/null; then
+  echo "go.mod or go.sum changed after go mod tidy"
+  echo "Run: go mod tidy && git add go.mod go.sum"
+  exit 1
+fi
+
+echo "==> go test"
+go test ./...
+
+echo "==> go build"
+# -buildvcs=false: this check only needs to know the code builds. Without it,
+# building cmd/timetattle's binary makes the toolchain embed VCS info, which
+# means running `git status` against whatever it resolves as the repository
+# root — and for a worktree checkout it resolves that as the BARE main
+# repository (this project's own layout), which has no working tree to run
+# status against and fails with exit 128. Reproduces on a clean, already
+# committed HEAD with none of a given change's edits applied, so it is not
+# something any one commit can fix by changing source; only the query itself
+# can be skipped.
+go build -buildvcs=false ./...
+
+echo ""
+echo "All checks passed."
