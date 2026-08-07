@@ -57,8 +57,7 @@ the comments, which are written to stand on their own for that reason.
 ## Quick start
 
 ```console
-$ go install ./cmd/timetattle
-$ ./scripts/install-agent.sh   # signs the binary, then schedules it
+$ make agent                   # go install, sign, schedule the harvester
 $ timetattle harvest
 $ timetattle status            # is the evidence still arriving?
 $ timetattle orient            # what should I do about it?
@@ -81,7 +80,9 @@ stored rather than re-clustering the corpus, so it answers in about two seconds
 where a full report takes fifteen, and it says on every run how much evidence
 arrived after that derivation and is therefore in no sitting yet.
 
-`install-agent.sh` signs before scheduling, and that order is deliberate.
+`make agent` (which runs `install-agent.sh`) signs before scheduling, and
+that order is deliberate — and it is why routine rebuilds should go through
+`make install`, which re-signs, rather than a bare `go install`, which does not.
 macOS keys Full Disk Access to a binary's code signature; Go links ad-hoc,
 with no designated requirement to match, so macOS falls back to hashing the
 code and **every `go install` silently revokes the grant** while the entry
