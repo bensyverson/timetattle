@@ -165,22 +165,6 @@ func sourceFamily(id string) (family, bool) {
 		return familyFiles, true
 	case "motion-autosave":
 		return familyMotion, true
-	// "vault-autosave" is NOT a real collector id — no built-in manifest or
-	// Go package in this repo defines it (internal/manifest/builtin/motion.json
-	// defines "motion-autosave"). internal/storefixture.VaultSource uses this
-	// string as its stand-in for "autosaves written by a timer nobody
-	// touches," the same concept motion-autosave names for real, and its own
-	// package doc claims the corpus "carr[ies] the real IDs rather than
-	// invented ones because the ID is not a name, it is a ROLE" — a claim
-	// this one constant does not keep. Mapped here, to Motion, so this
-	// section's storefixture-corpus reconciliation test (which this task
-	// does not own the fixture for) does not fail on a mismatch that belongs
-	// to internal/storefixture/storefixture.go, not to this mapping. Flagged
-	// for the integrator: either storefixture.VaultSource should read
-	// "motion-autosave" to match the real id, or this repo genuinely has two
-	// distinct Motion-shaped ids and both belong here permanently.
-	case "vault-autosave":
-		return familyMotion, true
 	case "blender-backups":
 		return familyBlender, true
 	default:

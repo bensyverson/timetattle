@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bensyverson/timetattle/internal/manifest"
 	"github.com/bensyverson/timetattle/internal/sessions"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
@@ -72,6 +73,36 @@ func TestTheCorpusCarriesEverySourceItNames(t *testing.T) {
 	}
 	if len(seen) < 4 {
 		t.Errorf("the corpus draws on %d sources; the regimes it claims need several", len(seen))
+	}
+}
+
+// This package's own doc comment claims its sources "carry the real IDs
+// rather than invented ones because the ID is not a name, it is a ROLE" —
+// found false 2026-08-07 (task 2CwuI) for VaultSource, which read
+// "vault-autosave", an id no built-in manifest or Go collector in this repo
+// defines. The real id an autosave-by-timer source carries is
+// "motion-autosave" (internal/manifest/builtin/motion.json's own "id"
+// field). This is the drift guard: it fails the moment VaultSource next
+// diverges from a real built-in manifest id, the same way it failed silently
+// last time.
+//
+// manifest.Builtin() only parses the embedded manifest JSON for its
+// declared fields — no root is stat-ed and no Spotlight query runs, the same
+// property internal/manifest/builtin_test.go's own corpusgate exemption
+// already argues for calling it from an untagged test — so reading its
+// Source.ID values back is not a machine coupling.
+func TestVaultSourceIsARealBuiltInManifestID(t *testing.T) {
+	sources, err := manifest.Builtin()
+	if err != nil {
+		t.Fatalf("Builtin: %v", err)
+	}
+	ids := make(map[string]bool, len(sources))
+	for _, s := range sources {
+		ids[s.ID] = true
+	}
+	if !ids[storefixture.VaultSource] {
+		t.Errorf("storefixture.VaultSource = %q, which no built-in manifest declares as a source id",
+			storefixture.VaultSource)
 	}
 }
 

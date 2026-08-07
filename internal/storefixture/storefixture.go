@@ -101,8 +101,11 @@ const (
 	// VaultSource emits autosaves written by a timer nobody touches. Same
 	// Kind and Shape as FileSource, different Cause, and worth measurably
 	// less: one real autosave was written during a confirmed break with the
-	// screen off.
-	VaultSource = "vault-autosave"
+	// screen off. "motion-autosave" is the real built-in manifest id
+	// (internal/manifest/builtin/motion.json's own "id" field) — it read
+	// "vault-autosave", an invented id no manifest or collector defines,
+	// until task 2CwuI corrected it 2026-08-07.
+	VaultSource = "motion-autosave"
 	// LockedSource is read and then dropped. It carries an overnight
 	// interval here precisely so that a derivation which stopped honouring
 	// the ignore list would manufacture a visible eight-hour sitting rather

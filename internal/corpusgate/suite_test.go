@@ -36,7 +36,7 @@ var exempt = map[string]string{
 	filepath.Join("internal", "registry", "vaultroot_test.go"):        "resolves the shipped motion-autosave manifest's root as a STRING, for the consolidate test that asserts on a refusal reason reached before anything is stat-ed. The two tests that go on to stat it are in vault_realdata_test.go.",
 	filepath.Join("internal", "snapshot", "biome_test.go"):            "asserts DefaultBiomeRoot() and DefaultBiomeDir() as strings.",
 	filepath.Join("internal", "snapshot", "snapshot_test.go"):         "asserts DefaultSourcePath() and DefaultDir() as strings.",
-	filepath.Join("internal", "storefixture", "storefixture_test.go"): "guard: names store.DefaultPath() in order to assert the fixture store is NOT it.",
+	filepath.Join("internal", "storefixture", "storefixture_test.go"): "guard: names store.DefaultPath() in order to assert the fixture store is NOT it. Also calls manifest.Builtin() (TestVaultSourceIsARealBuiltInManifestID, task 2CwuI's drift guard), which only parses the embedded manifest JSON for its declared fields — no root is stat-ed and no Spotlight query runs, the same shape internal/manifest/builtin_test.go's own entry above argues for.",
 	filepath.Join("internal", "timestamped", "timestamped_test.go"):   "os.Getwd only to check that a relative root is absolutised against it. The vault tests that read a real one moved to vault_realdata_test.go.",
 }
 

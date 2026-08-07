@@ -193,6 +193,21 @@ func TestSourceFamilyRejectsUnknownSourceID(t *testing.T) {
 	}
 }
 
+// "vault-autosave" was never a real collector or built-in manifest id — it was
+// internal/storefixture.VaultSource's own invented stand-in for
+// "motion-autosave", carried here only as a workaround so this file's
+// storefixture-corpus reconciliation test would not fail on the mismatch
+// (task 2CwuI). Now that storefixture.VaultSource reads "motion-autosave"
+// like the real manifest does, the workaround entry is gone, and this locks
+// it: nothing should reintroduce a mapping for a string that names no real
+// source.
+func TestVaultAutosaveIsNotARecognizedSourceFamily(t *testing.T) {
+	if _, ok := sourceFamily("vault-autosave"); ok {
+		t.Errorf(`sourceFamily("vault-autosave") is mapped; "vault-autosave" names no real collector ` +
+			"or built-in manifest source and the workaround entry for it should not exist")
+	}
+}
+
 // THE UNMAPPED-SOURCE DECISION, locked as a regression test. sourceFamily's
 // own doc comment argues for failing the whole render over inventing an
 // "Unmapped: <id>" catch-all family, on the strength of dashboard.go's own
