@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,9 +15,11 @@ import (
 
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
+	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/sessions"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
+	"github.com/bensyverson/timetattle/internal/transcripts"
 )
 
 // runDashboard is runMetrics's own shape, for the command's own tests.
@@ -505,6 +508,322 @@ func TestDashboardClampNarrowsTheObservedDaysDivisor(t *testing.T) {
 		t.Errorf("observed-days divisor is %d, not narrowed below the requested 10-day window by the clamp:\n%s",
 			total, out)
 	}
+}
+
+// CRITERION Udi. The clamp narrows the DATA every section renders from, not
+// only the header line above them: Filter, Events and Report all describe the
+// same window afterwards.
+//
+// This is the structural half of the fix, asserted on the function itself
+// rather than through rendered text, because "every section sees the clamped
+// window" is a property of the handle and not of any one section's output.
+func TestNarrowDataToPeriodNarrowsFilterEventsAndReportTogether(t *testing.T) {
+	p := clampFixturePeriod(t)
+	clampAt := p.From.Add(48 * time.Hour)
+
+	before := source.NewPoint(p.From.Add(time.Hour), source.Identity{Project: "Site"}, transcripts.ID)
+	after := source.NewPoint(clampAt.Add(time.Hour), source.Identity{Project: "Site"}, transcripts.ID)
+	litBefore := source.NewInterval(p.From.Add(2*time.Hour), p.From.Add(26*time.Hour),
+		source.Identity{}, backlitSourceID)
+	litBefore.State = "on"
+	litAfter := source.NewInterval(clampAt.Add(2*time.Hour), clampAt.Add(4*time.Hour),
+		source.Identity{}, backlitSourceID)
+	litAfter.State = "on"
+
+	data := &dashboardData{
+		Config: config.Default(),
+		Params: sessions.Params{Gap: time.Hour, PresenceSources: []string{backlitSourceID}},
+		Filter: store.Filter{From: p.From, To: p.To},
+		Events: []source.Event{before, litBefore, after, litAfter},
+	}
+	clamped := p
+	clamped.From, clamped.Clamped = clampAt, true
+
+	if err := narrowDataToPeriod(data, clamped); err != nil {
+		t.Fatalf("narrowDataToPeriod: %v", err)
+	}
+	if !data.Filter.From.Equal(clampAt) {
+		t.Errorf("data.Filter.From = %v, want the clamped %v — a section reading the filter "+
+			"would otherwise be told a window the report does not describe", data.Filter.From, clampAt)
+	}
+	if len(data.Events) != 2 {
+		t.Fatalf("data.Events holds %d events, want the 2 that reach into the clamped window", len(data.Events))
+	}
+	for _, e := range data.Events {
+		if last := e.End; last.Before(clampAt) {
+			t.Errorf("data.Events still holds an event ending %v, entirely before the clamp at %v",
+				last, clampAt)
+		}
+	}
+	if got, want := data.Report.Backlight.Lit, 2*time.Hour; got != want {
+		t.Errorf("Report.Backlight.Lit = %v, want %v — the 24h reading before the clamp is "+
+			"outside the window the header states", got, want)
+	}
+}
+
+// CRITERION Udi, the unclamped half: a window that was never narrowed is left
+// exactly as it was, with no second pass over the events at all. The report
+// the pipeline already computed IS the report for the requested window, and
+// recomputing it would buy an identical answer at the price of a second full
+// clustering pass on every ordinary run.
+func TestNarrowDataToPeriodLeavesAnUnclampedWindowAlone(t *testing.T) {
+	p := clampFixturePeriod(t)
+	events := []source.Event{source.NewPoint(p.From.Add(time.Hour), source.Identity{Project: "Site"}, transcripts.ID)}
+	marker := metrics.Report{Presence: metrics.Span{Total: 99 * time.Hour}}
+
+	data := &dashboardData{
+		Config: config.Default(),
+		Filter: store.Filter{From: p.From, To: p.To},
+		Events: events,
+		Report: marker,
+	}
+	if err := narrowDataToPeriod(data, p); err != nil {
+		t.Fatalf("narrowDataToPeriod: %v", err)
+	}
+	if data.Report.Presence.Total != marker.Presence.Total {
+		t.Errorf("an unclamped window recomputed the report anyway (presence %v, want the "+
+			"untouched %v)", data.Report.Presence.Total, marker.Presence.Total)
+	}
+	if len(data.Events) != len(events) || !data.Filter.From.Equal(p.From) {
+		t.Errorf("an unclamped window changed the data: %d events, filter from %v",
+			len(data.Events), data.Filter.From)
+	}
+}
+
+// CRITERION Udi, the cost half — and this guard is load-bearing rather than a
+// micro-optimisation.
+//
+// A clamp that excludes no event leaves the report already computed exactly
+// correct for the clamped window: metrics.Compute is a pure function of the
+// events and the params, so an identical slice yields an identical report.
+// That case is not exotic, it is the DEFAULT: measured against the live store
+// on 2026-08-07 (1,030,041 events in a trailing-year window), a bare `-all`
+// run clamps — the store reaches back 259 days, not 365 — and keeps every one
+// of those events, because the window's own first 106 days predate collection
+// entirely. Recomputing there buys a byte-identical report for a full second
+// clustering pass: 1.58s, 100% of the first Compute, on every default run.
+//
+// Filter.From still moves, because the WINDOW was narrowed even where the
+// evidence in it was not, and a section reading the filter must see the window
+// the header states either way.
+func TestNarrowDataToPeriodSkipsTheRecomputeWhenNothingFallsOutsideTheWindow(t *testing.T) {
+	p := clampFixturePeriod(t)
+	clampAt := p.From.Add(48 * time.Hour)
+	// Every event is inside the clamped window already — the shape a default
+	// -all run takes when the window opens before collection ever started.
+	events := []source.Event{
+		source.NewPoint(clampAt.Add(time.Hour), source.Identity{Project: "Site"}, transcripts.ID),
+		source.NewPoint(clampAt.Add(30*time.Hour), source.Identity{Project: "Site"}, transcripts.ID),
+	}
+	marker := metrics.Report{Presence: metrics.Span{Total: 99 * time.Hour}}
+
+	data := &dashboardData{
+		Config: config.Default(),
+		Params: sessions.Params{Gap: time.Hour, PresenceSources: []string{backlitSourceID}},
+		Filter: store.Filter{From: p.From, To: p.To},
+		Events: events,
+		Report: marker,
+	}
+	clamped := p
+	clamped.From, clamped.Clamped = clampAt, true
+
+	if err := narrowDataToPeriod(data, clamped); err != nil {
+		t.Fatalf("narrowDataToPeriod: %v", err)
+	}
+	if data.Report.Presence.Total != marker.Presence.Total {
+		t.Errorf("the report was recomputed (presence %v, want the untouched %v) though the clamp "+
+			"excluded no event — an identical slice can only produce an identical report, at the "+
+			"price of a second full clustering pass", data.Report.Presence.Total, marker.Presence.Total)
+	}
+	if !data.Filter.From.Equal(clampAt) {
+		t.Errorf("data.Filter.From = %v, want the clamped %v — the window narrowed even where the "+
+			"evidence inside it did not", data.Filter.From, clampAt)
+	}
+}
+
+// THE SHAPE OF THE LIVE-STORE BUG THIS FIXTURE REPRODUCES.
+//
+// A trailing-year request clamps to a scope only days old, and the presence
+// stream reaches back months further than that scope does. The backlight
+// carries no path (see internal/knowledgec: Locator stays empty, because
+// presence is not evidence ABOUT a file), so under a project filter it is
+// never "in scope" and can never pull the clamp earlier — every lit reading
+// predating the scope's own first observation therefore sits OUTSIDE the
+// window the header states, and any figure that counts it is describing a
+// window nobody asked for.
+//
+// The numbers are chosen so the bug is arithmetically impossible to miss:
+// 160h of lit clock 100-odd days before the clamp, against 4h inside it, in a
+// window barely four days wide. A screen-on row of 164h in a four-day window
+// is the exact impossibility that exposed this on the live store.
+//
+// Returns the store path, the instant the clamp must land on (the scoped
+// project's own first observation) and how much lit clock actually falls
+// inside the clamped window.
+func seedBacklightClampFixture(t *testing.T, now time.Time) (storePath string,
+	clampAt time.Time, inWindowLit time.Duration) {
+	t.Helper()
+	storePath = filepath.Join(t.TempDir(), "timetattle.db")
+	st, err := store.Open(storePath)
+	if err != nil {
+		t.Fatalf("open a store to seed: %v", err)
+	}
+	defer st.Close()
+
+	dir := t.TempDir()
+	marker, err := registry.Register(registry.Registration{Dir: dir, Client: "Sondermark", Project: "Site"})
+	if err != nil {
+		t.Fatalf("register the scoped project: %v", err)
+	}
+
+	// The scope's own evidence: two transcript records, three days back and
+	// two. The earlier one is what the clamp must narrow to.
+	clampAt = now.Add(-3 * 24 * time.Hour).Truncate(time.Second)
+	var work []source.Event
+	for i, at := range []time.Time{clampAt, clampAt.Add(24 * time.Hour)} {
+		e := source.NewPoint(at, source.Identity{Document: fmt.Sprintf("notes-%d.md", i)}, transcripts.ID)
+		e.Locator = dir
+		work = append(work, e)
+	}
+
+	// The presence stream, reaching far past the scope. Twenty 8h lit
+	// readings, one a day, ending a hundred days before the clamp: 160h that
+	// the clamped window does not contain any part of.
+	var lit []source.Event
+	for i := range 20 {
+		start := now.AddDate(0, 0, -120+i).Truncate(time.Second)
+		e := source.NewInterval(start, start.Add(8*time.Hour), source.Identity{}, backlitSourceID)
+		e.State = "on"
+		lit = append(lit, e)
+	}
+	// And 4h of lit clock that IS inside the clamped window — the figure the
+	// row must end up reporting. Both readings start after clampAt, so
+	// neither straddles the clamp boundary.
+	for _, start := range []time.Time{clampAt.Add(time.Hour), clampAt.Add(25 * time.Hour)} {
+		e := source.NewInterval(start, start.Add(2*time.Hour), source.Identity{}, backlitSourceID)
+		e.State = "on"
+		lit = append(lit, e)
+	}
+	inWindowLit = 4 * time.Hour
+
+	ctx := context.Background()
+	for _, batch := range []struct {
+		sourceID string
+		events   []source.Event
+	}{{transcripts.ID, work}, {backlitSourceID, lit}} {
+		run, err := st.BeginRun(ctx, store.RunSpec{SourceID: batch.sourceID, Input: "/tmp/seed"})
+		if err != nil {
+			t.Fatalf("begin a %s run: %v", batch.sourceID, err)
+		}
+		if _, err := run.Write(ctx, batch.events); err != nil {
+			t.Fatalf("write the %s events: %v", batch.sourceID, err)
+		}
+		if err := run.Finish(ctx); err != nil {
+			t.Fatalf("finish the %s run: %v", batch.sourceID, err)
+		}
+	}
+	if err := resolveProjects(ctx, st, []*registry.Marker{marker}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("resolve projects: %v", err)
+	}
+	return storePath, clampAt, inWindowLit
+}
+
+// backlitSourceID is internal/knowledgec's own backlight stream id, which is
+// also config.Default()'s single presence source. Written out rather than
+// imported because the constant is unexported there — the test that would
+// catch it drifting is internal/config's own, which asserts the default.
+const backlitSourceID = "knowledgec-backlit"
+
+// CRITERION nfE. Screen-on counts only lit clock inside the clamped window.
+//
+// The clamp narrows the reported window to the scope's first observation, and
+// every figure printed beneath a header stating that window has to describe
+// it. Before this test the report every section received was computed over the
+// raw -days fetch, so the backlight — 160h of it predating the scope entirely —
+// was summed store-wide and printed as though it belonged to four days.
+func TestDashboardScreenOnCountsOnlyLitTimeInsideTheClampedWindow(t *testing.T) {
+	now := time.Now()
+	storePath, _, wantLit := seedBacklightClampFixture(t, now)
+
+	out := runDashboard(t, "-store", storePath, "-config", noConfig(t), "-project", "Site", "-days", "365")
+
+	row := lineWith(t, out, "screen-on")
+	want := fmt.Sprintf("%.1fh", wantLit.Hours())
+	if !strings.Contains(row, want) {
+		t.Errorf("screen-on reads %q, want %s — only the lit clock inside the clamped window",
+			strings.TrimSpace(row), want)
+	}
+	if strings.Contains(row, "164.0h") {
+		t.Errorf("screen-on reads %q — that is the store-wide backlight total, "+
+			"including 160h that predates the window the header states", strings.TrimSpace(row))
+	}
+}
+
+// CRITERION nfE, the invariant half — and it is the property Ben used to spot
+// the bug on the live store rather than a restatement of the test above.
+//
+// No hours row may report more clock than the window it sits under contains,
+// and no per-day average may exceed twenty-four hours in a day. Both are true
+// of ANY correct report of ANY window, which is why they are asserted over
+// every hours row the panel prints rather than over the one row that happened
+// to be wrong: "screen-on 343.8h / 31.25h/day" inside an eleven-day window was
+// diagnosable from nothing but those two rules.
+func TestDashboardNoHoursRowExceedsTheWindowItStates(t *testing.T) {
+	now := time.Now()
+	storePath, clampAt, _ := seedBacklightClampFixture(t, now)
+
+	out := runDashboard(t, "-store", storePath, "-config", noConfig(t), "-project", "Site", "-days", "365")
+
+	cal := mustCalendar(t)
+	_, to := cal.Bounds(cal.DayOf(now))
+	span := to.Sub(clampAt).Hours()
+
+	rows := hoursRowsOf(t, out)
+	if len(rows) == 0 {
+		t.Fatalf("no hours row was rendered at all, so this test would pass vacuously:\n%s", out)
+	}
+	for label, r := range rows {
+		if r.total > span {
+			t.Errorf("%s reports %.1fh inside a window %.1fh wide — a figure cannot exceed "+
+				"the window it is printed under:\n%s", label, r.total, span, out)
+		}
+		if r.perDay > 24 {
+			t.Errorf("%s averages %.2fh/day, and a day holds twenty-four hours:\n%s",
+				label, r.perDay, out)
+		}
+	}
+}
+
+// hoursRow is one rendered duration row: the total and its per-day average.
+type hoursRow struct{ total, perDay float64 }
+
+// hoursRowsOf reads every duration row out of a rendered panel, keyed by
+// label. The two columns are told apart by their own formats rather than by
+// position — a total is "%.1fh" and an average is "%.2fh/day" — so this keeps
+// working if the padding widths move.
+func hoursRowsOf(t *testing.T, out string) map[string]hoursRow {
+	t.Helper()
+	total := regexp.MustCompile(`^\s+(\S.*?)\s\s+(\d+\.\d)h(?:\s|$)`)
+	perDay := regexp.MustCompile(`(\d+\.\d\d)h/day`)
+	rows := map[string]hoursRow{}
+	for line := range strings.SplitSeq(out, "\n") {
+		m := total.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		var r hoursRow
+		var err error
+		if r.total, err = strconv.ParseFloat(m[2], 64); err != nil {
+			t.Fatalf("parse the total %q out of %q: %v", m[2], line, err)
+		}
+		if a := perDay.FindStringSubmatch(line); a != nil {
+			if r.perDay, err = strconv.ParseFloat(a[1], 64); err != nil {
+				t.Fatalf("parse the average %q out of %q: %v", a[1], line, err)
+			}
+		}
+		rows[strings.TrimSpace(m[1])] = r
+	}
+	return rows
 }
 
 // seedSingleEventStore opens a fresh store and writes one event anchored at

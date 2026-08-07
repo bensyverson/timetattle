@@ -196,6 +196,13 @@ both commands share.`,
 		// clampPeriodToFirstObservation's own doc comment and dashboardPeriod's
 		// for why this needs no query beyond the one already run above.
 		period = clampPeriodToFirstObservation(period, scope, data)
+		// AND THE DATA IS NARROWED TO MATCH IT, in the same breath and for the
+		// same reason: a header that states a window and a report computed over
+		// a different one is a lie with arithmetic attached. See
+		// narrowDataToPeriod.
+		if err := narrowDataToPeriod(data, period); err != nil {
+			return err
+		}
 		cc := detectColorCapability(stdout, os.LookupEnv)
 		return renderDashboard(ctx, stdout, scope, period, cc, data, *detailed)
 	}
@@ -227,12 +234,22 @@ type dashboardData struct {
 	// nothing.
 	Params   sessions.Params
 	Excludes sessions.Excludes
-	// Filter is the store query the period resolved to — From/To, half-open.
+	// Filter is the store query the period resolved to — From/To, half-open —
+	// AND IT IS THE CLAMPED PERIOD'S, not the raw -days one. See
+	// narrowDataToPeriod: From is rewritten to match the window the header
+	// states, at the same moment Events and Report are, so a section reading
+	// any one of the three is never reading a different window from the other
+	// two.
 	Filter store.Filter
-	// Drop is what Excludes removed before anything downstream saw it.
+	// Drop is what Excludes removed before anything downstream saw it. It is
+	// the ONE field here that still describes the raw -days fetch: exclusion
+	// happens before the clamp is known, and "what the exclude rules removed"
+	// is a fact about the rules rather than about the window, so re-deriving
+	// it per window would report a smaller number for the same configuration.
 	Drop sessions.Drop
-	// Events is every retained, client-stamped observation in the period —
-	// the exact slice metrics.Compute below was run over. A section wanting
+	// Events is every retained, client-stamped observation in the CLAMPED
+	// period — the exact slice Report below was computed over, and exactly
+	// what a store query for Filter would return. A section wanting
 	// per-source, per-kind detail metrics.Report does not carry (a commit
 	// count, a LOC delta, a file touched) reads this rather than re-querying
 	// the store, since it is already exactly what the aggregate below rests
@@ -245,6 +262,11 @@ type dashboardData struct {
 	// section that filters by scope must use metricsScope's own
 	// showsClient/showsProject, not recompute anything, for exactly the
 	// reason metrics.go's own comment there gives.
+	//
+	// "This period" means the CLAMPED one. Every figure a section takes out
+	// of this describes the window the header states, which is what
+	// narrowDataToPeriod exists to guarantee and what the store-wide
+	// screen-on total printed under an eleven-day header used to disprove.
 	Report metrics.Report
 	// ClientMap is the client-project log Report's own client stamping
 	// already consulted, exposed so a section can ask the same question
@@ -376,6 +398,131 @@ func clampPeriodToFirstObservation(period dashboardPeriod, scope metricsScope, d
 	period.From = earliest
 	period.Clamped = true
 	return period
+}
+
+// narrowDataToPeriod re-derives Filter, Events and Report over the CLAMPED
+// window, so the report every section renders from describes the same window
+// the header states.
+//
+// # The bug this exists to make structurally impossible
+//
+// Clamping used to move period.From alone. data.Report was still
+// metrics.Compute over the whole -days fetch, and dashboard_stats.go prints
+// Report.Backlight.Lit straight out of it: a trailing-YEAR fetch's screen-on
+// total, divided by the handful of days the clamp had narrowed the window to.
+// On the live store that printed 343.8h of screen-on at 31.25h/day inside an
+// eleven-day window — two figures each impossible on their face, and the way
+// the bug was caught. It surfaced on screen-on and not on the scoped rows
+// because the presence sources carry no path (internal/knowledgec leaves
+// Locator empty; presence is not evidence ABOUT a file), so their readings are
+// never in scope, can never pull the clamp earlier, and therefore always have
+// months of history sitting outside a clamped window. Every other
+// report-derived figure had the same exposure and only lacked the arithmetic
+// to make it visible.
+//
+// Fixing the one row would have left that exposure in place for the next
+// section to print. So the narrowing happens ONCE, to the handle, before any
+// section renders — the same shape, and the same reason, as the clamp itself.
+//
+// # Recomputing, rather than clamping before the first compute
+//
+// The clamp is derived FROM the fetched events (see
+// clampPeriodToFirstObservation), so the first Compute cannot already know the
+// clamped window: the order is fetch, clamp, narrow.
+//
+// A second clustering pass over a million events is not free, so it runs only
+// where it can change an answer. metrics.Compute is a pure function of the
+// events and the params, so a narrowing that excludes nothing can only produce
+// the report that is already in hand — and BOTH cases where it excludes
+// nothing are the ordinary ones rather than the exotic ones. Measured on
+// 2026-08-07 by timing each stage of this command's own pipeline against a
+// real store — 1,030,041 events in the trailing-year window, fetched in about
+// three seconds and clustered by the first metrics.Compute in 1.58s:
+//
+//   - Not clamped at all. Nothing to narrow; the report already describes the
+//     window -days asked for.
+//   - Clamped, but every fetched event already falls inside it. This is what a
+//     bare `-all` run does on that store: the window opens 365 days back, the
+//     store reaches back 259, so From moves 106 days and not one of the
+//     1,030,041 events is dropped. Recomputing there cost 1.58s — 100% of the
+//     first Compute — for a byte-identical report, on every default run.
+//
+// What is left is the case the narrowing exists for, and it pays for itself:
+// the latest-starting project on that store clamped away 45% of the events,
+// and recomputing over the remaining 570,756 took 0.96s and 1.10s on two runs
+// (61% and 70% of the first pass). That is the real cost of this fix, and it
+// is paid only by a run whose report would otherwise have been wrong.
+//
+// The pathological end of that is worth stating rather than hiding: a clamp
+// that excludes ONE event of a million still pays the full second pass, since
+// nothing can know the answer moved by an epsilon without computing it. A
+// threshold would be a knob that trades a wrong figure for a fast one, which
+// is the trade this whole function exists to refuse.
+//
+// # What "inside the window" means here is the store's own answer
+//
+// eventsFrom applies exactly the predicate store.Filter's own SQL applies, so
+// data.Events after this call is what a store query for the clamped window
+// would have returned, and data.Report is what `timetattle metrics` would
+// print over the same span. An interval that begins before the clamp and
+// reaches into the window is kept whole, by that same rule — the store cannot
+// cut a row in half and neither does this. Two consequences follow, both
+// bounded and neither the store-wide inflation above: a lit reading straddling
+// the clamp contributes the part of itself that predates the window (at most
+// one such reading, since the clamp lands on an instant), and presence may
+// exceed the window by the configured lead-in and tail-out, which
+// sessions.Params carries and Report.Params reports.
+func narrowDataToPeriod(data *dashboardData, period dashboardPeriod) error {
+	if !period.Clamped {
+		return nil
+	}
+	// The FILTER moves whether or not any evidence did: the window narrowed,
+	// and a section reading Filter must see the window the header states.
+	data.Filter.From = period.From
+
+	events := eventsFrom(data.Events, period.From)
+	if len(events) == len(data.Events) {
+		// eventsFrom only ever drops, and preserves order, so an equal length
+		// is an identical slice — and an identical slice is an identical
+		// report. See this function's own doc comment for what skipping the
+		// pass here is worth on a real store.
+		return nil
+	}
+	report, err := metrics.Compute(events, data.Params)
+	if err != nil {
+		return err
+	}
+	data.Events = events
+	data.Report = report
+	return nil
+}
+
+// eventsFrom keeps the events a store query starting at from would have
+// returned: those whose LAST observed endpoint is at or after it.
+//
+// The rule is store.Filter's own, transcribed — `COALESCE(ended_at,
+// started_at) >= ?` in internal/store's events query — rather than a second
+// idea of what a window contains. An event observed only as it ended (a bare
+// stop; source.NewOpenStart) has no start for the comparison, which is why the
+// end is read first and the start only stands in for it.
+//
+// The filter's To half is deliberately not reapplied: clamping only ever moves
+// From, so every event here already satisfied it when the store returned it,
+// and rewriting a predicate that cannot exclude anything would invite the two
+// copies to drift.
+func eventsFrom(events []source.Event, from time.Time) []source.Event {
+	out := make([]source.Event, 0, len(events))
+	for _, e := range events {
+		last := e.End
+		if last.IsZero() {
+			last = e.Start
+		}
+		if last.Before(from) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // dashboardRenderFunc is the one signature every section's render function
