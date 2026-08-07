@@ -1,0 +1,112 @@
+#!/bin/bash
+# Build a fresh timetattle binary, run one subcommand under CPU profiling, and
+# write both the raw pprof profile and a plain-text top-N summary.
+#
+# WHY THIS EXISTS. Per the analysis rule in AGENTS.md, profiling has to be
+# re-runnable rather than a throwaway `sample` session nobody can reproduce.
+# This backs the maxEnd finding in project/2026-08-07-cli-overhaul-plan.md
+# (metrics took 72.97s real / 74.06s user on 2026-08-07 at commit e3ec48e,
+# with internal/sessions.maxEnd at the top of a 20s `sample`) and exists to
+# catch the next regression the same way, not just to have caught this one.
+#
+# ALWAYS BUILDS FRESH. This script never profiles an installed `timetattle`
+# off PATH — it builds into a scratch directory every run and discards it on
+# exit. A stale installed binary has already cost this project hundreds of
+# hours of misattributed findings once (see the stale-binary note in
+# AGENTS.md's Analysis section); a profiling harness that could silently
+# profile yesterday's code would be exactly that failure mode again.
+#
+# THE PROFILED SUBCOMMAND'S OWN OUTPUT IS NOT PRINTED HERE. `metrics`,
+# `review` and friends print real client names — see AGENTS.md's
+# confidentiality rules. Their stdout/stderr goes to a log file in the output
+# directory instead; the pprof top table is safe to print and to paste
+# anywhere, because function names carry no client data.
+#
+# Usage:
+#   scripts/profile metrics
+#   scripts/profile sessionize -from 2026-08-01
+#   scripts/profile -o dist/profile -n 30 metrics   # choose outdir, node count
+#
+# Writes, under <out> (default dist/profile, already gitignored):
+#   <subcommand>.pprof         raw profile, for `go tool pprof` yourself
+#   <subcommand>.top.txt       `go tool pprof -top -nodecount=<n>` output
+#   <subcommand>.output.log    the subcommand's own stdout+stderr
+#
+# Refuses `harvest`: it mutates the live store, and a profiling run is not a
+# run that should have side effects on your data.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="$REPO_ROOT/dist/profile"
+NODECOUNT=20
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-o)
+		OUT="$2"
+		shift 2
+		;;
+	-n)
+		NODECOUNT="$2"
+		shift 2
+		;;
+	--)
+		shift
+		break
+		;;
+	*)
+		break
+		;;
+	esac
+done
+
+if [ $# -eq 0 ]; then
+	echo "usage: scripts/profile [-o outdir] [-n nodecount] <subcommand> [args...]" >&2
+	exit 2
+fi
+
+SUBCOMMAND="$1"
+shift
+
+if [ "$SUBCOMMAND" = "harvest" ]; then
+	echo "error: refusing to profile harvest — it mutates the live store, and a" >&2
+	echo "profiling run should not have side effects on your data. Profile a" >&2
+	echo "reader (metrics, sessionize, chains, ...), or run harvest yourself" >&2
+	echo "outside this script." >&2
+	exit 1
+fi
+
+mkdir -p "$OUT"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+echo "==> building a fresh binary (never an installed one)"
+go build -o "$WORK/timetattle" "$REPO_ROOT/cmd/timetattle"
+
+PROFILE="$OUT/$SUBCOMMAND.pprof"
+LOG="$OUT/$SUBCOMMAND.output.log"
+TOP="$OUT/$SUBCOMMAND.top.txt"
+rm -f "$PROFILE" "$LOG" "$TOP"
+
+echo "==> running: timetattle $SUBCOMMAND $* (TIMETATTLE_CPUPROFILE=$PROFILE)"
+START=$(date +%s)
+if ! TIMETATTLE_CPUPROFILE="$PROFILE" "$WORK/timetattle" "$SUBCOMMAND" "$@" >"$LOG" 2>&1; then
+	echo "error: timetattle $SUBCOMMAND failed; see $LOG" >&2
+	exit 1
+fi
+END=$(date +%s)
+echo "    elapsed: $((END - START))s wall (own stdout/stderr at $LOG — not printed here, see header)"
+
+if [ ! -s "$PROFILE" ]; then
+	echo "error: no profile written to $PROFILE — did the TIMETATTLE_CPUPROFILE hook in cmd/timetattle/main.go fire?" >&2
+	exit 1
+fi
+
+echo "==> go tool pprof -top -nodecount=$NODECOUNT"
+go tool pprof -top -nodecount="$NODECOUNT" "$WORK/timetattle" "$PROFILE" | tee "$TOP"
+
+echo
+echo "==> wrote:"
+echo "    $PROFILE"
+echo "    $TOP"
+echo "    $LOG  (subcommand's own stdout — may name real clients; do not paste into anything tracked)"

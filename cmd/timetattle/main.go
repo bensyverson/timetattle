@@ -51,6 +51,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/pprof"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, "", "")) }
@@ -78,6 +79,14 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, "", "")) }
 // and the bare invocation by definition has no arguments at all; main passes
 // them empty, which resolves the defaults under the home directory.
 func run(args []string, stdout, stderr io.Writer, storePath, configPath string) int {
+	if path := os.Getenv("TIMETATTLE_CPUPROFILE"); path != "" {
+		stop, err := startCPUProfile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "timetattle: cpuprofile: %v\n", err)
+			return 1
+		}
+		defer stop()
+	}
 	if len(args) == 0 {
 		if err := bare(stdout, storePath, configPath); err != nil {
 			fmt.Fprintf(stderr, "timetattle: %v\n", err)
@@ -86,6 +95,28 @@ func run(args []string, stdout, stderr io.Writer, storePath, configPath string) 
 		return 0
 	}
 	return dispatch(args, stdout, stderr)
+}
+
+// startCPUProfile begins a pprof CPU profile at path and returns a func that
+// stops it and closes the file. It lives in `run`, wrapping every subcommand
+// uniformly, rather than in an individual subcommand's own main, because the
+// whole point is to profile ANY subcommand without that subcommand knowing
+// profiling exists. scripts/profile is the re-runnable harness that drives
+// this — see its doc comment for why a throwaway `sample` session is not
+// good enough here.
+func startCPUProfile(path string) (func(), error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() {
+		pprof.StopCPUProfile()
+		f.Close()
+	}, nil
 }
 
 // dispatch runs a named subcommand.
