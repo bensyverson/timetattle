@@ -39,6 +39,12 @@ defaults to 365: a full year, because the activity heatmap this command
 builds toward is a GitHub-style year grid, and a shorter default would hand
 that section less than a year to draw before anyone had a reason to widen it.
 
+The window then **clamps to the first observation in scope**: a project
+registered in July does not open with months of unobserved cells drawn for a
+window that predates it. The header states the range actually used —
+"N days requested, clamped to the first observation in scope" — so the
+divisor under every per-day average describes days the report really covers.
+
 ## Color: detected once, shared by every section
 
 Every section of the report paints through one color-capability value,
@@ -64,11 +70,13 @@ stat the sources never observed is drawn or labeled distinctly from one they
 observed as idle. Where the two cannot be told apart, the section says so
 rather than choosing.
 
-### Activity heatmap
+### Activity Heatmap
 
 A GitHub-style year grid: one column per week (weeks start where the
-configured calendar starts them), seven day-of-week rows, drawn with
-half-blocks so two day-rows share each terminal line. A cell's color is that
+configured calendar starts them), seven day-of-week rows, one terminal line
+per row. Observed days paint as background-filled cells — a fill is the
+terminal cell's own attribute, so the grid stays seamless in fonts that
+don't draw block glyphs flush. A cell's color is that
 day's hours — presence when unscoped, the scoped engaged share under a
 project or client — never the per-project sum, which double-counts concurrent
 work. The ramp anchors at eight hours: darkness to green up to the anchor,
@@ -81,27 +89,31 @@ day the other project worked reads as measured idle, not as a gap. Without
 color the grid falls back to one plain row per weekday with distinct
 characters per bucket.
 
-### Source freshness
+### Source Freshness
 
-One line per source the store has ever attempted: its last successful
-harvest as an age and an absolute instant, `STALE` when nothing landed inside
-the window, `NEVER HARVESTED` when nothing ever has. A source configured but
-never once attempted cannot appear here — the harvest log is the authority,
-and it has no row to show.
+Shown only under `-detailed`. One line per source the store has ever
+attempted: its last successful harvest as an age and an absolute instant,
+`STALE` when nothing landed inside the window, `NEVER HARVESTED` when
+nothing ever has. A source configured but never once attempted cannot appear
+here — the harvest log is the authority, and it has no row to show.
 
-### Component stats
+### Component Stats
 
 Per-source counts for the window with per-day averages — presence and
 screen-on hours, commits and line counts from the git log, file writes and
 files touched, task actions from the jobs source, Claude records and prompts.
 Averages divide by *observed* days, not calendar days, so a year-long window
-over a two-month store reports a rate somebody actually measured. Every row
-distinguishes three states: `0` means observed and nothing happened;
-`unrecorded` means the sources were not collecting; `not measured` means the
-store cannot hold that quantity at all, and the row says why rather than
-vanishing.
+over a two-month store reports a rate somebody actually measured. A row
+prints `0` only when the sources were collecting and nothing happened;
+`unrecorded` means they were not collecting. Two caveats the terse rows no
+longer carry themselves: **screen-on is store-wide** — the presence sources
+record no path and attribute to no project, so that figure does not narrow
+under a scope; and merge commits carry no diff, so they count as commits but
+contribute to neither line count. When a collection run inside the window is
+recorded as lost or partial, a closing line says the counts are lower
+bounds.
 
-### Time-of-day
+### Time of Day
 
 A 24-column strip of when work fell across the day, in the configured
 calendar's timezone, cut from the same sittings every command shares —
@@ -109,17 +121,20 @@ a sitting spanning an hour boundary contributes exactly its minutes to each
 side. Hours weight by observed days, and when the window is partially
 observed the strip says over how many days it is averaging.
 
-### Source attribution
+### Source Attribution
 
-A stacked bar of the window's sitting hours by the exact combination of
-sources that evidenced them — `biome-appusage only` and
-`biome-appusage+fs-observations` are different segments, never a collapsed
-"multiple". The segments sum exactly to the presence total the report
-states; a day resting on a single source is visibly different from a
-corroborated one, which is the point. Beyond eight combinations the rest
-fold into one labeled remainder.
+A stacked bar of the window's sitting hours by the combination of source
+*families* that evidenced them — Apps (biome and knowledgeC), Claude, Files,
+Git, Jobs, Motion, Blender. `Claude` alone and `Claude, Files, Git` are
+different segments, never a collapsed "multiple", and each legend line reads
+hours first: `403.1h (36.2%): Claude, Files, Git`. The segments sum exactly
+to the presence total the report states; a sitting resting on a single
+family is visibly different from a corroborated one, which is the point.
+Beyond eight combinations the rest fold into one labeled remainder, and a
+source id the family map does not know fails the render rather than falling
+out of the chart silently.
 
-### Filetype breakdown
+### Filetype Breakdown
 
 A stacked bar of file-touch activity by category — documentation, tests,
 code, graphics, config, and an explicit **other** that always prints and
@@ -128,7 +143,7 @@ extension. The counts come from the fs-observations source, which walks
 registered project roots; the separately-scoped filedays snapshot records
 no per-file events, so its wider roots list is out of this panel's reach.
 
-### Allocation and effective rate
+### Allocation & Effective Rate
 
 Still a placeholder: nothing in the configuration yet models an hour budget
 or a rate to divide by. **When it lands it will print money**, the same way
@@ -136,7 +151,7 @@ a `review` or `metrics -client` capture already can. Treat a `dashboard`
 capture under the same rule: fine on your own machine, never in anything
 that ships — `scripts/confidential` is the check.
 
-### Scope caveat
+### Scope Caveat
 
 The source-attribution and time-of-day sections are cut from sittings, which
 are deliberately not per-project — so those two sections show the same

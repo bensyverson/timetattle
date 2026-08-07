@@ -56,6 +56,14 @@ The `metrics` scoping task is wiring, not new machinery.
    lines. Allocation-aware ramp where an allocation is known: 0–8h clear→green,
    8h+ green→yellow→red→white, so overwork is visible rather than rewarded.
 
+   > **Correction (2026-08-07, evening):** the half-block was built as
+   > specified here, and Ben's review of the result retired it the same day —
+   > two days per line reads "squinty" at one-cell-per-day density. The grid
+   > now draws its full seven rows in every capability, one line per weekday,
+   > observed days as background-filled cells (a fill is the terminal cell's
+   > own attribute, so no glyph-seam artifacts in bitmap fonts). The ramp
+   > half of this principle stands unchanged.
+
 ## Plan
 
 Sequencing: the perf fix first (everything else is nicer when the tool is
