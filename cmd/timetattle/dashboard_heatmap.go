@@ -282,15 +282,18 @@ func heatmapStyleOf(name string) heatmapStyle {
 // for the identical reason; U+25FE BLACK MEDIUM-SMALL SQUARE is the same
 // family again.
 //
-// U+2B1D BLACK VERY SMALL SQUARE is the pick: added in Unicode 7.0, in the
-// Miscellaneous Symbols and Arrows block, specifically as a square that was
-// NOT swept into the emoji additions its 25xx-block siblings received — no
-// font stack has a colour glyph to substitute it with. It still carries the
-// same Ambiguous East Asian Width every block/geometric character in this
-// file already does (heatmapHatch and this file's own legend swatch
+// U+25A0 BLACK SQUARE is the pick. The first choice here was U+2B1D BLACK
+// VERY SMALL SQUARE, for the same emoji-avoidance reason, and Ben's own
+// terminal retired it in one look: "very small" is the literal truth of the
+// glyph, and a cell that small defeats the purpose of a heatmap cell. U+25A0
+// shares the property that matters — it was never swept into the emoji
+// additions its 25xx-block siblings (U+25AA/25AB, U+25FB–25FE) received, so
+// no font stack has a colour glyph to substitute it with — while rendering
+// at a legible medium size in the monospace fonts that matter here. It
+// carries the same Ambiguous East Asian Width every block/geometric
+// character in this file already does (heatmapHatch and the legend swatch
 // heatmapFull are both Ambiguous too, and that risk already ships
-// unconditionally), so this is not a NEW hazard; only the emoji-
-// substitution hazard is new here, and it is the one this glyph avoids.
+// unconditionally), so this is not a NEW hazard.
 //
 // NEVER APPEND A VARIATION SELECTOR (U+FE0F or U+FE0E) where this constant
 // is written: that is the one thing that WOULD force emoji presentation on
@@ -298,9 +301,9 @@ func heatmapStyleOf(name string) heatmapStyle {
 //
 // This is a single named constant precisely so it stays one-line swappable:
 // Ben's own terminal, with his own font, is the final judge of what actually
-// renders monospace there, and if U+2B1D turns out wrong the fix is
+// renders monospace there, and if U+25A0 turns out wrong the fix is
 // changing this one rune, nothing that reads it.
-const heatmapSquareGlyph = '⬝' // U+2B1D BLACK VERY SMALL SQUARE
+const heatmapSquareGlyph = '■' // U+25A0 BLACK SQUARE
 
 // heatmapIdleGlyphInk is the fixed colour an IDLE day's square draws in
 // under a Glyph style — a day heatmapColorOf would otherwise colour with
