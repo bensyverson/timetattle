@@ -221,9 +221,63 @@ func TestOrientRollsAStrandedSubdirectoryIntoTheVanishedRootConsolidateWouldName
 // It looks for the flag rather than the word: the census names every verb it
 // knows in its left-hand column, including the ones whose count is zero,
 // because a row that vanishes when empty reads as "not measured". Only a
-// command line with a -dir in it is a recommendation.
+// command line with a -path in it is a recommendation.
 func orientRecommendsRegistering(out string) bool {
-	return strings.Contains(out, "register -dir")
+	return strings.Contains(out, "register -path")
+}
+
+// The recommendation orient prints has no compiler checking it against
+// register's actual flags — it is a format string with a directory dropped
+// in. It named `-dir` for the whole time register's flag has been `-path`,
+// and nothing failed until someone tried to run it: `-dir` has never been a
+// register flag on either the pre- or post-Cobra command. This test closes
+// that gap by extracting the invocation orient prints and parsing it against
+// registerCmd's REAL flag set — the same constructor register() itself calls
+// — through the same longFlags rewrite dispatch applies to every real
+// invocation, so a future rename of a register flag fails this test rather
+// than rotting silently again.
+func TestOrientRegisterRecommendationParsesAgainstRegistersRealFlags(t *testing.T) {
+	dir := t.TempDir()
+	index := filepath.Join(t.TempDir(), "registered-directories.json")
+	path := seedOrient(t, map[string]int{dir: 9}, 0)
+
+	out := runOrient(t, "-store", path, "-index", index)
+
+	args := orientRecommendedRegisterArgs(t, out)
+
+	cmd := registerCmd()
+	prepareSubcommand(cmd)
+	if err := cmd.ParseFlags(longFlags(cmd.Flags(), args)); err != nil {
+		t.Errorf("orient recommends `timetattle register %s`, which register's own flag "+
+			"set refuses to parse: %v", strings.Join(args, " "), err)
+	}
+}
+
+// orientRecommendedRegisterArgs extracts the flags orient recommends passing
+// to register, so a test can hand them to register's real flag set instead of
+// eyeballing the printed string. It knows only the two-line shape orientNext
+// prints: a command line ending in a continuation backslash, and the
+// remaining flags on the line after it.
+func orientRecommendedRegisterArgs(t *testing.T, out string) []string {
+	t.Helper()
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "NEXT  timetattle register") {
+			continue
+		}
+		first := strings.TrimSuffix(strings.TrimSpace(line), "\\")
+		rest := ""
+		if i+1 < len(lines) {
+			rest = strings.TrimSpace(lines[i+1])
+		}
+		fields := strings.Fields(strings.TrimSpace(first) + " " + rest)
+		if len(fields) < 3 || fields[0] != "NEXT" || fields[1] != "timetattle" || fields[2] != "register" {
+			t.Fatalf("could not parse the register recommendation out of:\n%s", out)
+		}
+		return fields[3:]
+	}
+	t.Fatalf("orient does not recommend registering:\n%s", out)
+	return nil
 }
 
 // The rule registry.Register enforces, restated where it can be recommended.
@@ -331,7 +385,7 @@ func TestOrientNeverRecommendsADirectoryAboveOneAlreadyRegistered(t *testing.T) 
 // locator "/", because an agent session's cwd really was the root. Appending a
 // separator to "/" gives "//", which is a prefix of nothing, so the container
 // rule silently passed it and the first run against real data recommended
-// `timetattle register -dir /` as the highest-value action on the machine —
+// `timetattle register -path /` as the highest-value action on the machine —
 // a marker that would have claimed every unregistered directory on the volume.
 func TestOrientNeverRecommendsTheFilesystemRoot(t *testing.T) {
 	if !orientContains("/", "/Users/ben/git/acorn") {

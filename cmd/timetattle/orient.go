@@ -366,7 +366,7 @@ func orientClassify(locator string, registered []*registry.Marker) (orientRemedy
 // one run. filepath.Clean("/") is "/", so the obvious
 // HasPrefix(inner, outer+"/") asks whether inner starts with "//" and nothing
 // does. The filesystem root therefore passed the container check, and the first
-// run against the live store recommended `timetattle register -dir /` as the
+// run against the live store recommended `timetattle register -path /` as the
 // highest-value action on the machine — 1,311 Claude transcript observations
 // really do carry "/" as their cwd. A marker there would have owned every
 // unregistered directory on the volume. internal/registry.isAncestorOrSame had
@@ -545,7 +545,7 @@ func orientNext(out io.Writer, c orientCensus, cols int) {
 			worth, top.Observations), cols)
 	case orientRegisterable:
 		top := c.RegisterableRoots[0]
-		fmt.Fprintf(out, "\nNEXT  timetattle register -dir %s \\\n"+
+		fmt.Fprintf(out, "\nNEXT  timetattle register -path %s \\\n"+
 			"            -client <client> -project <project>\n", top.Dir)
 		wrap(out, "      ", fmt.Sprintf("%s sit in directories that exist, are "+
 			"unregistered, and that register would accept; %d of them under the one above. "+
