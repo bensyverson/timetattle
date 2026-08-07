@@ -81,8 +81,9 @@ day's hours — presence when unscoped, the scoped engaged share under a
 project or client — never the per-project sum, which double-counts concurrent
 work. The ramp anchors at eight hours: darkness to green up to the anchor,
 then green through yellow and red to white beyond it, so overwork is visible
-rather than rewarded with deeper green. The anchor is a parameter awaiting a
-per-project allocation config. A day is *observed* if it carries recorded
+rather than rewarded with deeper green. The anchor is a parameter; an
+engagement's budgeted hours can supply it per scope, a wiring that is filed
+but not yet made. A day is *observed* if it carries recorded
 presence or a logged collection run; only a day with neither draws the dim
 unobserved hatch, and observedness is judged unscoped — under `-project`, a
 day the other project worked reads as measured idle, not as a gap. Without
