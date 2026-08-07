@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
+	"github.com/bensyverson/timetattle/internal/transcripts"
 	"github.com/bensyverson/timetattle/internal/usage"
 )
 
@@ -142,6 +145,91 @@ func TestHarvestingTheSameEventsTwiceWithPayloadsChangesNothing(t *testing.T) {
 	}
 	if before != after {
 		t.Errorf("the rows changed across two harvests of identical evidence:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// The same property END TO END, through the real parser rather than through
+// events a test built: a transcript corpus on disk, collected and written
+// twice, exactly as two harvests of an unchanged corpus would.
+//
+// It is not the same test as the one above and neither replaces the other. That
+// one poses the events directly, so it says what the STORE does with a payload.
+// This one goes through internal/transcripts, so it also says that the payload
+// a re-parse produces is byte-identical to the first — a collector that encoded
+// its JSON non-deterministically (a map, a set, an iteration order) would pass
+// the first test and duplicate nothing here either, but would leave the two
+// harvests disagreeing about what the record said.
+func TestCollectingAndStoringOneTranscriptCorpusTwiceChangesNothing(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "-work-project")
+	if err := os.MkdirAll(filepath.Join(project, "session-a", "subagents"), 0o755); err != nil {
+		t.Fatalf("build the corpus: %v", err)
+	}
+	write := func(path string, lines ...string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(filepath.Join(project, "session-a.jsonl"),
+		`{"type":"user","timestamp":"2026-08-07T09:00:00Z","cwd":"/work/project","sessionId":"session-a","uuid":"u1","message":{"role":"user","content":"do the thing"}}`,
+		`{"type":"assistant","timestamp":"2026-08-07T09:00:05Z","cwd":"/work/project","sessionId":"session-a","uuid":"u2","message":{"role":"assistant","usage":{"input_tokens":2,"output_tokens":214,"cache_read_input_tokens":0,"cache_creation_input_tokens":46724}}}`,
+	)
+	write(filepath.Join(project, "session-a", "subagents", "agent-1.jsonl"),
+		`{"type":"assistant","timestamp":"2026-08-07T09:01:00Z","cwd":"/work/project/sub","sessionId":"session-a","uuid":"u3","message":{"role":"assistant","usage":{"input_tokens":5,"output_tokens":91,"cache_read_input_tokens":12000,"cache_creation_input_tokens":0}}}`,
+	)
+	// A replayed human turn, which is the case internal/transcripts resolves
+	// before the store sees it. Harvesting twice must not turn it into two
+	// rows either.
+	write(filepath.Join(project, "session-a", "subagents", "agent-acompact-1.jsonl"),
+		`{"type":"user","timestamp":"2026-08-07T09:00:00Z","cwd":"/work/project","sessionId":"session-a","uuid":"u1","message":{"role":"user","content":"do the thing"}}`,
+	)
+
+	ctx := context.Background()
+	reader := transcripts.NewReader(root)
+	f := newStore(t)
+
+	collectAndWrite := func() int {
+		t.Helper()
+		events, err := reader.Collect(ctx, time.Time{})
+		if err != nil {
+			t.Fatalf("collect: %v", err)
+		}
+		if len(events) != 3 {
+			t.Fatalf("collected %d events from the corpus, want 3", len(events))
+		}
+		return harvest(t, f, events)
+	}
+
+	if added := collectAndWrite(); added != 3 {
+		t.Fatalf("the first harvest stored %d of 3 events", added)
+	}
+	before := payloadDigest(t, f)
+
+	if added := collectAndWrite(); added != 0 {
+		t.Errorf("the second harvest of an unchanged corpus stored %d new events", added)
+	}
+	if after := payloadDigest(t, f); after != before {
+		t.Errorf("the rows changed across two harvests of an unchanged corpus:\nbefore:\n%s\nafter:\n%s",
+			before, after)
+	}
+
+	got, err := f.Usage(ctx, store.UsageFilter{})
+	if err != nil {
+		t.Fatalf("Usage: %v", err)
+	}
+	if got.Observations != 3 || got.Sessions != 1 {
+		t.Errorf("the corpus rolled up to %d observations across %d sessions, want 3 and 1",
+			got.Observations, got.Sessions)
+	}
+	if got.Output.Records != 2 || got.Output.Total != 305 {
+		t.Errorf("output came back as %d records totalling %d, want 2 totalling 305",
+			got.Output.Records, got.Output.Total)
+	}
+	// The human turn spent nothing, and that is a third state: it carries a
+	// payload (its session) while stating no figure at all.
+	if got.Observations-got.Output.Records != 1 {
+		t.Errorf("%d observations state no output figure, want 1", got.Observations-got.Output.Records)
 	}
 }
 
