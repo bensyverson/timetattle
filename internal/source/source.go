@@ -352,11 +352,18 @@ type Event struct {
 	// equality to recognise one document seen in two places. What a record
 	// cost is not what it is about.
 	//
-	// A payload is written ONCE, when the observation is first stored. An
-	// event that already exists is not rewritten to carry one, because events
-	// are observations and never change — so rows stored before a source began
-	// emitting payloads carry none, permanently, and that is "nothing was
-	// recorded" rather than zero.
+	// A payload is written ONCE, when the observation is first stored, and no
+	// harvest ever rewrites one: a re-read of a stored observation conflicts on
+	// identity and does nothing, whatever it now says the record cost.
+	//
+	// Rows stored before a source began emitting payloads therefore carry none,
+	// and a payload that is absent is "nothing was recorded" rather than zero —
+	// which is why every figure store.Usage returns carries its own count of the
+	// records that stated it. Such a row can be filled once, by the deliberate
+	// one-shot pass store.Store.BackfillPayloads, which offers the collector's
+	// own output back to the rows it made and writes only where there is
+	// nothing. That is a repair of a schema boundary and not part of any
+	// collector's path: nothing a source does can rewrite a payload.
 	//
 	// IT IS EMPTY ON EVERY EVENT READ BACK OUT OF THE STORE, and that is a
 	// deliberate asymmetry rather than a gap. store.Events does not select

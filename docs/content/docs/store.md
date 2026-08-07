@@ -360,13 +360,63 @@ token figures (`go run ./scripts/sessioncensus`). In the key those become 52
 duplicate observations of records that happened once; outside it the first
 reading is stored and the second does nothing.
 
-A payload is written **once**, when the observation is first stored. There is no
-update path, because an event is an observation and is never rewritten — so a
-row stored before its source emitted payloads carries none for ever. That reads
-as *nothing was recorded*, never as zero, and `Store.Usage` reports it that way:
+A payload is written **once**, when the observation is first stored, and no
+harvest ever rewrites one: a re-read of a stored observation conflicts on
+identity and does nothing, whatever it now says the record cost. A row stored
+before its source emitted payloads therefore carries none. That reads as
+*nothing was recorded*, never as zero, and `Store.Usage` reports it that way:
 its `Observations` count is how many rows carried a payload at all, and every
 token figure carries its own count of the records that stated it beside the
 total they add up to.
+
+### Backfilling history, the one write that changes an observation
+
+Payloads began at migration 0014, which left every transcript row harvested
+before it carrying none — so session counts and token sums would have read as
+*nothing was recorded* for all of history and as real figures from that date
+onwards, with the boundary visible in every chart and explainable to nobody.
+
+`scripts/payloadbackfill` ends that discontinuity once. It re-reads the corpus
+through the collector itself, matches each record to its row by the seven
+columns of `event_identity`, and writes the payload **only where the column is
+NULL**:
+
+```
+go run ./scripts/payloadbackfill                  # dry run: reports, writes nothing
+go run ./scripts/payloadbackfill -dry-run=false   # the real pass
+```
+
+It is a script rather than a `timetattle` verb because it is a one-shot repair
+with nothing to do afterwards, and because this is the only thing in Timetattle
+that changes a stored observation — a daily command set is the wrong place to
+advertise that. Four properties make it safe to say that history and the present
+now mean the same thing, and each is pinned by a test rather than promised:
+
+- **It fills only where there is nothing.** A payload already stored is never
+  rewritten, so the first reading of a record stays the stored one — the same
+  rule `ON CONFLICT DO NOTHING` applies on the way in. Both guards were removed
+  in turn to measure what they buy: with neither, a second pass refilled every
+  row and changed one record's output figure from 91 to 92, silently, since no
+  row count moves.
+- **It is idempotent.** A second pass finds every row already carrying a payload
+  and writes nothing at all — same rows, same bytes.
+- **It inserts nothing.** A record the store has never seen is counted and
+  skipped, because an event created here would carry provenance no harvest run
+  ever had.
+- **Absence stays absence.** A row no re-read record speaks for — its transcript
+  deleted or rewritten — keeps its NULL and is counted as unmatched. It never
+  becomes a zero.
+
+The dry run is the real run with the write withheld: the same traversal and the
+same matching produce its counts, and it opens the store read-only, so "it wrote
+nothing" is a property of the connection rather than of a flag. It is the
+default, so running the command by accident does nothing.
+
+One count it deliberately does not report is how many transcript FILES have gone
+missing. An event records the working directory its record named, never the file
+it was read from, so no row can be traced to a file that is or is not still
+there; "the transcript was deleted" and "the root was wrong" are one figure —
+`unmatched` — and splitting them would mean inventing the difference.
 
 A payload that is not a JSON object is refused at write time by the triggers
 migration 0014 adds, for a measured reason: `json_extract` answers NULL for

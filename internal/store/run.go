@@ -120,10 +120,15 @@ func (s *Store) BeginRun(ctx context.Context, spec RunSpec) (*Run, error) {
 // payload IS written here, and it is written ONCE. It names no column of
 // event_identity, so a re-read of the same observation conflicts on identity
 // and DO NOTHING applies — the row already there keeps the payload it was
-// stored with. There is deliberately no DO UPDATE: an event is an observation
-// and is never rewritten, so a row stored before its source emitted payloads
-// carries none permanently, which is "nothing was recorded" and not zero. See
-// migration 0014.
+// stored with. There is deliberately no DO UPDATE on this path: an event is an
+// observation and a harvest never rewrites one. See migration 0014.
+//
+// A row stored before its source emitted payloads therefore carries none, and no
+// harvest will ever change that — the re-read conflicts and does nothing. Such a
+// row reads as "nothing was recorded" and not as zero. Filling it is a separate,
+// deliberate pass (Store.BackfillPayloads) that a harvest does not call and
+// cannot trigger, precisely so that the write path's guarantee stays the simple
+// one it is.
 const insertEvent = `INSERT INTO event
 	(first_seen_run, source_id, shape, unknown, started_at, ended_at, app, document, state, locator, cause, payload)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

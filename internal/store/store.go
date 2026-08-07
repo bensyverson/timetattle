@@ -29,6 +29,15 @@
 // nothing writes it at collect time: registering a folder later, or fixing a
 // mapping, has to re-attribute events that already exist.
 //
+// There is a second, deliberate and one-shot: BackfillPayloads fills event.payload
+// where it is NULL, for the rows stored before migration 0014 gave the column a
+// meaning. It writes no new evidence — the payload is the part of an observation
+// the collector always read and had nowhere to put — it never overwrites a
+// payload already stored, and it is invoked separately rather than from any
+// harvest. See backfill.go for the argument and the guards; the point of naming
+// it here is that "an event is never rewritten" now has an exception, and an
+// exception nobody wrote down is how a rule quietly becomes a habit.
+//
 // The CLIENT a project belongs to is deliberately NOT here. It has 38 distinct
 // values across ~973,000 events, it changes as a whole rather than per event,
 // and it is a fact about a moment in time — so it lives in the append-only

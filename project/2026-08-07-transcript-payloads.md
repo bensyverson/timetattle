@@ -231,6 +231,19 @@ holds the 1,590 distinct sessions rather than the rows.
 
 ## History does not backfill, and that is the honest answer
 
+> **Corrected the same evening, 2026-08-07.** Ben took the decision this section
+> names but declines to make: *"We can backfill the existing sessions."* The
+> section below is still true of the HARVEST path — no re-read will ever fill a
+> stored row, and there is still no `DO UPDATE` — but "carry no payload,
+> permanently" is no longer true of the store. A separate one-shot pass,
+> `Store.BackfillPayloads` behind `scripts/payloadbackfill`, fills
+> `payload` where it IS NULL from the collector's own output, and only there. It
+> is the first write in this project that changes an observed field, and
+> `project/2026-08-07-payload-backfill.md` carries the design, the guards
+> measured by removing them, and the live counts. Read the two paragraphs about
+> `Store.Usage` below as unchanged: a row nothing re-read still carries NULL,
+> and `Observations` still tells that apart from a zero.
+
 `ON CONFLICT DO NOTHING` and no `DO UPDATE`: an event is an observation and is
 never rewritten. The 822,387 transcript rows already in the live store were
 stored before this change and **carry no payload, permanently**. Nothing in a

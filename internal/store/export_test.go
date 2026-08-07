@@ -13,3 +13,12 @@ var EventsQuery = eventsQuery
 // UsageQuery is the SQL a usage roll-up issues, exposed for the same reason and
 // asked the same question: which rows does SQLite have to touch to answer it.
 var UsageQuery = usageQuery
+
+// MatchIdentityQuery and FillPayloadQuery are the two statements a payload
+// backfill issues, exposed for the same reason EventsQuery is: the question the
+// plan test asks is about the TEXT, and asking it of a copy would answer it
+// about the copy.
+var (
+	MatchIdentityQuery = matchIdentityQuery
+	FillPayloadQuery   = fillPayloadQuery
+)
