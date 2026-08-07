@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -12,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/bensyverson/timetattle/internal/filedays"
 	"github.com/bensyverson/timetattle/internal/registry"
@@ -110,20 +111,13 @@ type statusOptions struct {
 	cols int
 }
 
-func status(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
-	dir := fs.String("dir", "", "snapshot directory to check (default: ~/.timetattle/snapshots)")
-	indexPath := fs.String("index", "",
-		"registry index of registered directories (default: ~/.timetattle/registered-directories.json)")
-	stale := fs.Duration("stale", 24*time.Hour,
-		"how old the newest harvest may be before the schedule is called stale")
-	inputs := fs.Bool("inputs", false,
-		"list every input each source read on its most recent harvest, one line each")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: timetattle status [flags]
+func status(args []string) error { return executeSubcommand(statusCmd(), args) }
 
-Reports whether the harvest is still running and what each source last did.
+func statusCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Report whether the harvest is still working",
+		Long: `Reports whether the harvest is still running and what each source last did.
 
 One line per source, from harvest_run: when it last ran, whether it succeeded,
 how many inputs it read, how much it saw and how much was new, and when it last
@@ -164,40 +158,44 @@ what is installed and registered, and a check that cries wolf is a check nobody
 reads.
 
 The default -stale of 24h is twice the 12h interval scripts/install-agent.sh
-schedules, so one missed run is tolerated and two are not.
-
-Flags:
-`)
-		fs.PrintDefaults()
+schedules, so one missed run is tolerated and two are not.`,
 	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	var err error
-	if *storePath == "" {
-		if *storePath, err = store.DefaultPath(); err != nil {
-			return err
+	fs := cmd.Flags()
+	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
+	dir := fs.String("dir", "", "snapshot directory to check (default: ~/.timetattle/snapshots)")
+	indexPath := fs.String("index", "",
+		"registry index of registered directories (default: ~/.timetattle/registered-directories.json)")
+	stale := fs.Duration("stale", 24*time.Hour,
+		"how old the newest harvest may be before the schedule is called stale")
+	inputs := fs.Bool("inputs", false,
+		"list every input each source read on its most recent harvest, one line each")
+	cmd.RunE = func(*cobra.Command, []string) error {
+		var err error
+		if *storePath == "" {
+			if *storePath, err = store.DefaultPath(); err != nil {
+				return err
+			}
 		}
-	}
-	if *dir == "" {
-		if *dir, err = snapshot.DefaultDir(); err != nil {
-			return err
+		if *dir == "" {
+			if *dir, err = snapshot.DefaultDir(); err != nil {
+				return err
+			}
 		}
-	}
-	if *indexPath == "" {
-		if *indexPath, err = registry.DefaultIndexPath(); err != nil {
-			return err
+		if *indexPath == "" {
+			if *indexPath, err = registry.DefaultIndexPath(); err != nil {
+				return err
+			}
 		}
+		return reportStatus(os.Stdout, statusOptions{
+			store:     *storePath,
+			snapshots: *dir,
+			index:     *indexPath,
+			stale:     *stale,
+			now:       time.Now(),
+			inputs:    *inputs,
+		})
 	}
-	return reportStatus(os.Stdout, statusOptions{
-		store:     *storePath,
-		snapshots: *dir,
-		index:     *indexPath,
-		stale:     *stale,
-		now:       time.Now(),
-		inputs:    *inputs,
-	})
+	return cmd
 }
 
 // sourceStatus is one source's whole history, collapsed to what a reader needs.

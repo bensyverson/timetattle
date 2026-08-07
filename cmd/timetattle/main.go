@@ -25,6 +25,15 @@
 // ingestion plan and runner, which harvest drives but does not own, and which
 // have their own tests.
 //
+// Each of those files exposes a constructor named for its subcommand —
+// orientCmd, harvestCmd, metricsCmd — returning a *cobra.Command with its own
+// freshly bound flag variables, plus the plain xxx(args []string) error entry
+// point its tests drive. rootCommand below is the only place that says which
+// constructors exist. command.go holds the argument handling they all share,
+// including longFlags, which is the one thing here Cobra does not do: every
+// flag in this CLI is spelled with a single dash in the documentation and in
+// the tests, and pflag reads a single-dash -store as bundled shorthands.
+//
 // Go package scope spans every file in this directory, so the file a helper
 // sits in does not protect its name. Two agents working in parallel on
 // 2026-07-31 each declared report() and parseBoundary() at package level and
@@ -52,6 +61,8 @@ import (
 	"io"
 	"os"
 	"runtime/pprof"
+
+	"github.com/spf13/cobra"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, "", "")) }
@@ -119,78 +130,87 @@ func startCPUProfile(path string) (func(), error) {
 	}, nil
 }
 
-// dispatch runs a named subcommand.
+// rootCommand is the command tree. It holds no flags and does no work of its
+// own: every subcommand is built by a constructor in its own file, and this is
+// the one place that says which of them exist.
 //
 // Each subcommand owns its own output and writes to os.Stdout itself; the
-// writers here are for what DISPATCH says, which is the usage and the line
-// naming a command that failed. Rewiring thirteen subcommands to take a writer
-// would be a change to every one of them for the benefit of this one function,
-// and each already has a *To variant its own tests use.
-func dispatch(args []string, stdout, stderr io.Writer) int {
-	fail := func(name string, err error) int {
-		fmt.Fprintf(stderr, "timetattle %s: %v\n", name, err)
-		return 1
+// writers dispatch takes are for what DISPATCH says, which is the usage and the
+// line naming a command that failed. Rewiring twelve subcommands to take a
+// writer would be a change to every one of them for the benefit of one
+// function, and each already has a *To variant its own tests use.
+//
+// Cobra's own conveniences are declined here rather than left switched on. The
+// generated `completion` subcommand would be a thirteenth command that usageTo
+// does not name, and Cobra's generated root help would replace a usage block
+// the bare invocation prints verbatim; both are behaviour this command's tests
+// pin. What Cobra is taken for is the per-subcommand flag parsing and help.
+func rootCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "timetattle",
+		Short:         "Reconstruct when work happened, and for whom",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return flagError{err} })
+	root.AddCommand(
+		orientCmd(os.Stdout),
+		harvestCmd(),
+		statusCmd(),
+		registerCmd(),
+		consolidateCmd(),
+		sessionizeCmd(os.Stdout),
+		chainsCmd(),
+		metricsCmd(os.Stdout),
+		reviewCmd(os.Stdout, os.Stdin),
+		fitCmd(os.Stdout),
+		adjustCmd(os.Stdout),
+		versionCmd(os.Stdout),
+	)
+	return root
+}
+
+// dispatch runs a named subcommand.
+//
+// The name is resolved against the root's own children BEFORE Cobra is asked to
+// execute anything, because Cobra's answer to an unrecognised name is a
+// different sentence and its own generated usage. An UNKNOWN COMMAND is 2, a
+// command that ran and failed is 1, and a command line that could not be parsed
+// is 2 — which is what stdlib flag's ExitOnError exited with, and what a script
+// telling "you typed it wrong" from "it did not work" reads.
+func dispatch(args []string, stdout, stderr io.Writer) int {
 	name, rest := args[0], args[1:]
 	switch name {
-	case "orient":
-		if err := orient(rest); err != nil {
-			return fail(name, err)
-		}
-	case "harvest":
-		if err := harvest(rest); err != nil {
-			return fail(name, err)
-		}
-	case "register":
-		if err := register(rest); err != nil {
-			return fail(name, err)
-		}
-	case "consolidate":
-		if err := consolidateCommand(rest); err != nil {
-			return fail(name, err)
-		}
-	case "status":
-		if err := status(rest); err != nil {
-			return fail(name, err)
-		}
-	case "sessionize":
-		if err := sessionize(rest); err != nil {
-			return fail(name, err)
-		}
-	case "chains":
-		if err := chainsCommand(rest); err != nil {
-			return fail(name, err)
-		}
-	case "metrics":
-		if err := metricsCommand(rest); err != nil {
-			return fail(name, err)
-		}
-	case "review":
-		if err := review(rest); err != nil {
-			return fail(name, err)
-		}
-	case "fit":
-		if err := fitCommand(rest); err != nil {
-			return fail(name, err)
-		}
-	case "adjust":
-		if err := adjust(rest); err != nil {
-			return fail(name, err)
-		}
-	case "version":
-		if err := versionCommand(rest); err != nil {
-			return fail(name, err)
-		}
 	case "-h", "--help", "help":
 		// Asked for on purpose, so it goes to stdout and succeeds. It used to
 		// go to stderr, which meant `timetattle -h | less` showed nothing.
 		usageTo(stdout)
-	default:
+		return 0
+	}
+
+	root := rootCommand()
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	cmd, ok := subcommandNamed(root, name)
+	if !ok {
 		fmt.Fprintf(stderr, "timetattle: unknown command %q\n\n", name)
 		usageTo(stderr)
 		return 2
 	}
-	return 0
+
+	prepareSubcommand(cmd)
+	root.SetArgs(append([]string{name}, longFlags(cmd.Flags(), rest)...))
+	err := root.Execute()
+	if err == nil {
+		return 0
+	}
+	fmt.Fprintf(stderr, "timetattle %s: %v\n", name, err)
+	if isFlagError(err) {
+		fmt.Fprint(stderr, cmd.UsageString())
+		return 2
+	}
+	return 1
 }
 
 // usageTo prints the map of the tool. The bare invocation prints it BENEATH the

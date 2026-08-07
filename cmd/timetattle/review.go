@@ -4,13 +4,14 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/bensyverson/timetattle/internal/adjustments"
 	"github.com/bensyverson/timetattle/internal/config"
@@ -44,7 +45,16 @@ func review(args []string) error { return reviewTo(os.Stdout, os.Stdin, args) }
 // reviewTo is review with both ends redirected, so that a whole session can be
 // scripted in a test and asserted on rather than merely not crashing.
 func reviewTo(stdout io.Writer, stdin io.Reader, args []string) error {
-	fs := flag.NewFlagSet("review", flag.ExitOnError)
+	return executeSubcommand(reviewCmd(stdout, stdin), args)
+}
+
+func reviewCmd(stdout io.Writer, stdin io.Reader) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "review",
+		Short: "Confirm a whole day at a time, and correct it",
+		Long:  reviewUsage,
+	}
+	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to read and record into (default: ~/.timetattle/timetattle.db)")
 	configPath := fs.String("config", "", "configuration to read (default: ~/.timetattle/config.json)")
 	date := fs.String("date", "", "one working day, as 2026-07-28; without it, the queue is walked")
@@ -69,198 +79,186 @@ func reviewTo(stdout io.Writer, stdin io.Reader, args []string) error {
 		"the shortest silence a blind pass will ask about; shorter ones are asserted nothing")
 	ask := fs.Int("ask", 40,
 		"how many silences a blind pass will put to you, longest first; 0 for all of them")
-	// PrintDefaults, not merely the prose: every other subcommand ends its
-	// usage this way, and without it the "Flags:" heading below prints an
-	// empty section. That is worse than no heading at all — review carries
-	// seventeen flags, including the -oldest that reverses the queue and the
-	// -limit that bounds it, and a reader who sees an empty list concludes
-	// there are none rather than that they are hidden.
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, reviewUsage)
-		fs.PrintDefaults()
-	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+	cmd.RunE = func(*cobra.Command, []string) error {
+		// The day view is laid out for the terminal it is going into, and clipped
+		// as a backstop. columnsOf returns 0 for a pipe, which leaves both alone:
+		// -print and -list are read by callers that are not people.
+		cols := columnsOf(stdout)
+		stdout = clipTo(stdout, cols)
 
-	// The day view is laid out for the terminal it is going into, and clipped
-	// as a backstop. columnsOf returns 0 for a pipe, which leaves both alone:
-	// -print and -list are read by callers that are not people.
-	cols := columnsOf(stdout)
-	stdout = clipTo(stdout, cols)
-
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	if !set["width"] {
-		*width = reviewTimeline(cols)
-	}
-
-	switch {
-	case *confirm && *unremembered:
-		return errors.New("a day was both confirmed and not remembered; one of those is false")
-	case (*confirm || *unremembered) && *date == "":
-		return errors.New("-confirm and -unremembered record a verdict on one day, so they need -date")
-	case *list && (*confirm || *unremembered):
-		return errors.New("-list reports and writes nothing; drop it, or drop the verdict")
-	case *width < 12:
-		return fmt.Errorf("a timeline %d cells wide cannot show a working day", *width)
-	// -blind and -confirm are opposite claims about what was in front of the
-	// reviewer, and the whole value of a blind pass is that the claim is true.
-	case *blind && (*confirm || *unremembered):
-		return errors.New("-blind reviews a day from its observations and -confirm records the " +
-			"derivation as right; they cannot both describe the same review")
-	case *blind && *list:
-		return errors.New("-list reports the queue and asks nothing, so there is nothing for " +
-			"-blind to hide from anybody")
-	case *floor < 0:
-		return fmt.Errorf("-silence is %v; a silence cannot be shorter than no time at all", *floor)
-	}
-
-	var err error
-	if *storePath == "" {
-		if *storePath, err = store.DefaultPath(); err != nil {
-			return err
+		set := flagsSet(fs)
+		if !set["width"] {
+			*width = reviewTimeline(cols)
 		}
-	}
-	if *configPath == "" {
-		if *configPath, err = config.DefaultPath(); err != nil {
-			return err
+
+		switch {
+		case *confirm && *unremembered:
+			return errors.New("a day was both confirmed and not remembered; one of those is false")
+		case (*confirm || *unremembered) && *date == "":
+			return errors.New("-confirm and -unremembered record a verdict on one day, so they need -date")
+		case *list && (*confirm || *unremembered):
+			return errors.New("-list reports and writes nothing; drop it, or drop the verdict")
+		case *width < 12:
+			return fmt.Errorf("a timeline %d cells wide cannot show a working day", *width)
+		// -blind and -confirm are opposite claims about what was in front of the
+		// reviewer, and the whole value of a blind pass is that the claim is true.
+		case *blind && (*confirm || *unremembered):
+			return errors.New("-blind reviews a day from its observations and -confirm records the " +
+				"derivation as right; they cannot both describe the same review")
+		case *blind && *list:
+			return errors.New("-list reports the queue and asks nothing, so there is nothing for " +
+				"-blind to hide from anybody")
+		case *floor < 0:
+			return fmt.Errorf("-silence is %v; a silence cannot be shorter than no time at all", *floor)
 		}
-	}
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-	// The day view draws a project row for every project with ANY evidence in
-	// the day, so machine activity has to be removed before it is assembled
-	// rather than after somebody has read it.
-	excludes, err := sessionExcludesFrom(cfg, "", false)
-	if err != nil {
-		return err
-	}
-	cal, err := cfg.Calendar.Sessions()
-	if err != nil {
-		return err
-	}
 
-	who := *origin
-	if who == "" {
-		who = os.Getenv("USER")
-	}
-
-	// Read-only wherever nothing can be written, so that drawing a day cannot
-	// appear in the store's own history and cannot create a database.
-	reads := *list || *print
-	open := store.Open
-	if reads {
-		open = store.OpenReadOnly
-	}
-	st, err := open(*storePath)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	ctx := context.Background()
-	window, err := reviewWindow(cal, *date, *from, *to)
-	if err != nil {
-		return err
-	}
-
-	derivation, err := st.Sittings(ctx, window.Start, window.End)
-	if err != nil {
-		return err
-	}
-	// Three states, and this is the one a day view would otherwise turn into
-	// "you did no work". A window with no sittings and a database nobody has
-	// ever sessionized are different facts.
-	if !derivation.ComputedAt.IsZero() && len(derivation.Sittings) == 0 && *date == "" {
-		fmt.Fprintf(stdout, "%s\nthe clustering has run and found no sittings in this window. "+
-			"That is a fact about the window, not about the work.\n", *storePath)
-		return nil
-	}
-	if derivation.ComputedAt.IsZero() {
-		fmt.Fprintf(stdout, "%s\nnothing has been derived from this store, so there is no day to "+
-			"confirm — which is not the same as a store with no work in it.\n"+
-			"\nNEXT  timetattle sessionize\n", *storePath)
-		return nil
-	}
-
-	reviews, err := st.Reviews(ctx, window.Start, window.End)
-	if err != nil {
-		return err
-	}
-	corrections, err := st.Adjustments(ctx, window.Start, window.End)
-	if err != nil {
-		return err
-	}
-
-	queue, err := reviewQueue(cal, derivation, reviews, corrections, window)
-	if err != nil {
-		return err
-	}
-	reach, err := reviewReach(ctx, st, derivation)
-	if err != nil {
-		return err
-	}
-	sess := &reviewSession{
-		out: stdout, in: bufio.NewReader(stdin), store: st, cal: cal,
-		derivation: derivation, reach: reach, excludes: excludes, origin: who, note: *note,
-		width: *width, cols: cols, drillEvery: *drillEvery,
-		blind: *blind, floor: *floor, askAtMost: *ask,
-	}
-	fmt.Fprintf(stdout, "%s\n", *storePath)
-	reviewSayIfTheConfigMoved(stdout, derivation, cfg)
-	if patterns := excludes.Patterns(); len(patterns) > 0 {
-		wrap(stdout, "", fmt.Sprintf("NOTE: sessions.exclude is removing %s from the evidence "+
-			"every day below is drawn from. The blocks come from the stored derivation and the "+
-			"rows from the events; re-run `timetattle sessionize` if the two disagree.",
-			strings.Join(patterns, ", ")), cols)
-	}
-
-	if *list {
-		return reviewList(ctx, sess, queue, *all, *limit, *oldest, cols)
-	}
-
-	offered := reviewOffered(queue, *all || *date != "", *limit, *oldest)
-	if len(offered) == 0 {
-		fmt.Fprint(stdout, "every day carrying sittings in this window has been looked at. "+
-			"Add -all to go over one again.\n")
-		return nil
-	}
-
-	switch {
-	case *print:
-		day, err := sess.load(ctx, offered[0])
+		var err error
+		if *storePath == "" {
+			if *storePath, err = store.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		if *configPath == "" {
+			if *configPath, err = config.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		cfg, err := config.Load(*configPath)
 		if err != nil {
 			return err
 		}
-		if *blind {
-			sess.drawBlind(day)
+		// The day view draws a project row for every project with ANY evidence in
+		// the day, so machine activity has to be removed before it is assembled
+		// rather than after somebody has read it.
+		excludes, err := sessionExcludesFrom(cfg, "", false)
+		if err != nil {
+			return err
+		}
+		cal, err := cfg.Calendar.Sessions()
+		if err != nil {
+			return err
+		}
+
+		who := *origin
+		if who == "" {
+			who = os.Getenv("USER")
+		}
+
+		// Read-only wherever nothing can be written, so that drawing a day cannot
+		// appear in the store's own history and cannot create a database.
+		reads := *list || *print
+		open := store.Open
+		if reads {
+			open = store.OpenReadOnly
+		}
+		st, err := open(*storePath)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+
+		ctx := context.Background()
+		window, err := reviewWindow(cal, *date, *from, *to)
+		if err != nil {
+			return err
+		}
+
+		derivation, err := st.Sittings(ctx, window.Start, window.End)
+		if err != nil {
+			return err
+		}
+		// Three states, and this is the one a day view would otherwise turn into
+		// "you did no work". A window with no sittings and a database nobody has
+		// ever sessionized are different facts.
+		if !derivation.ComputedAt.IsZero() && len(derivation.Sittings) == 0 && *date == "" {
+			fmt.Fprintf(stdout, "%s\nthe clustering has run and found no sittings in this window. "+
+				"That is a fact about the window, not about the work.\n", *storePath)
 			return nil
 		}
-		sess.draw(day, true)
-		return nil
-	case *confirm, *unremembered:
-		day, err := sess.load(ctx, offered[0])
+		if derivation.ComputedAt.IsZero() {
+			fmt.Fprintf(stdout, "%s\nnothing has been derived from this store, so there is no day to "+
+				"confirm — which is not the same as a store with no work in it.\n"+
+				"\nNEXT  timetattle sessionize\n", *storePath)
+			return nil
+		}
+
+		reviews, err := st.Reviews(ctx, window.Start, window.End)
 		if err != nil {
 			return err
 		}
-		answer := dayview.Answer{Mode: dayview.Wholesale, Origin: who, At: time.Now().UTC(), Note: *note}
-		if *unremembered {
-			return sess.record(ctx, day, day.CannotRemember(answer))
-		}
-		plan, err := day.Confirm(answer)
+		corrections, err := st.Adjustments(ctx, window.Start, window.End)
 		if err != nil {
 			return err
 		}
-		return sess.record(ctx, day, plan)
+
+		queue, err := reviewQueue(cal, derivation, reviews, corrections, window)
+		if err != nil {
+			return err
+		}
+		reach, err := reviewReach(ctx, st, derivation)
+		if err != nil {
+			return err
+		}
+		sess := &reviewSession{
+			out: stdout, in: bufio.NewReader(stdin), store: st, cal: cal,
+			derivation: derivation, reach: reach, excludes: excludes, origin: who, note: *note,
+			width: *width, cols: cols, drillEvery: *drillEvery,
+			blind: *blind, floor: *floor, askAtMost: *ask,
+		}
+		fmt.Fprintf(stdout, "%s\n", *storePath)
+		reviewSayIfTheConfigMoved(stdout, derivation, cfg)
+		if patterns := excludes.Patterns(); len(patterns) > 0 {
+			wrap(stdout, "", fmt.Sprintf("NOTE: sessions.exclude is removing %s from the evidence "+
+				"every day below is drawn from. The blocks come from the stored derivation and the "+
+				"rows from the events; re-run `timetattle sessionize` if the two disagree.",
+				strings.Join(patterns, ", ")), cols)
+		}
+
+		if *list {
+			return reviewList(ctx, sess, queue, *all, *limit, *oldest, cols)
+		}
+
+		offered := reviewOffered(queue, *all || *date != "", *limit, *oldest)
+		if len(offered) == 0 {
+			fmt.Fprint(stdout, "every day carrying sittings in this window has been looked at. "+
+				"Add -all to go over one again.\n")
+			return nil
+		}
+
+		switch {
+		case *print:
+			day, err := sess.load(ctx, offered[0])
+			if err != nil {
+				return err
+			}
+			if *blind {
+				sess.drawBlind(day)
+				return nil
+			}
+			sess.draw(day, true)
+			return nil
+		case *confirm, *unremembered:
+			day, err := sess.load(ctx, offered[0])
+			if err != nil {
+				return err
+			}
+			answer := dayview.Answer{Mode: dayview.Wholesale, Origin: who, At: time.Now().UTC(), Note: *note}
+			if *unremembered {
+				return sess.record(ctx, day, day.CannotRemember(answer))
+			}
+			plan, err := day.Confirm(answer)
+			if err != nil {
+				return err
+			}
+			return sess.record(ctx, day, plan)
+		}
+		if who == "" {
+			return errors.New("-origin is required here, because $USER is unset; " +
+				"a review that names nobody cannot be traced back and re-examined")
+		}
+		return sess.walk(ctx, offered)
 	}
-	if who == "" {
-		return errors.New("-origin is required here, because $USER is unset; " +
-			"a review that names nobody cannot be traced back and re-examined")
-	}
-	return sess.walk(ctx, offered)
+	return cmd
 }
 
 // reviewWindow is the span of instants the queue is drawn from.
@@ -1430,9 +1428,10 @@ func reviewShare(part, whole time.Duration) float64 {
 	return part.Seconds() / whole.Seconds()
 }
 
-const reviewUsage = `Usage: timetattle review [flags]
-
-Puts a whole working day on one screen and asks whether it is right.
+// reviewUsage is this command's Long help. It is a constant rather than a
+// literal inside reviewCmd only because seventeen flag declarations would
+// otherwise sit a page and a half below the command they belong to.
+const reviewUsage = `Puts a whole working day on one screen and asks whether it is right.
 
 Nothing downstream is believable until the clustering parameters are fitted, and
 this is where the ground truth to fit them against comes from. 75.7% of the
@@ -1481,7 +1480,4 @@ Non-interactive, for a caller that is not sitting at a terminal:
                                                which of the four states
   timetattle review -date 2026-07-28 -print    draw one day and stop
   timetattle review -date 2026-07-28 -confirm  record it as right, no prompting
-  timetattle review -date 2026-07-28 -unremembered
-
-Flags:
-`
+  timetattle review -date 2026-07-28 -unremembered`

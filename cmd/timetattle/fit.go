@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -10,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/bensyverson/timetattle/internal/adjustments"
 	"github.com/bensyverson/timetattle/internal/config"
@@ -36,35 +37,14 @@ import (
 func fitCommand(args []string) error { return fitCommandTo(os.Stdout, args) }
 
 func fitCommandTo(stdout io.Writer, args []string) error {
-	fs := flag.NewFlagSet("fit", flag.ExitOnError)
-	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
-	configPath := fs.String("config", "", "configuration to read (default: ~/.timetattle/config.json)")
-	gaps := fs.String("gaps", "11m,12m,15m,20m,25m,30m,45m,1h", "comma-separated gap thresholds to search")
-	leadIns := fs.String("lead-ins", "0,1m,2m,5m,10m,15m", "comma-separated lead-ins to search")
-	tailOuts := fs.String("tail-outs", "0,30s,1m,2m,5m,10m", "comma-separated tail-outs to search")
-	tolerance := fs.Duration("tolerance", 0,
-		"how much worse than the best a point may score and still be inside the reported interval")
-	includeInert := fs.Bool("include-inert", false,
-		"evaluate the points whose gap is inert too, and check each against the top of its band")
-	reference := fs.String("reference", "",
-		"the parameters the reviewer was shown, as gap/lead-in/tail-out; \"none\" to omit the circularity check "+
-			"(default: the configured parameters)")
-	population := fs.String("shown", "all",
-		"which labels to fit against: \"all\", \"derivation\" (a reviewer confirming blocks he was "+
-			"shown) or \"observations\", spelt \"blind\", (a reviewer shown where evidence was seen)")
-	skipDays := fs.String("skip-days", "2026-08-01", "comma-separated reviewed days to leave out")
-	minReview := fs.Duration("min-review", 20*time.Hour,
-		"how long a review has to be to count as a whole working day")
-	coverageFloor := fs.Float64("coverage-floor", 0.01,
-		"a day whose asserted work is covered by duration-bearing observations below this share "+
-			"is reported as point-only")
-	narrow := fs.Bool("narrow", true,
-		"read only the events that can affect the labelled days; -narrow=false searches the whole corpus")
-	exclude := fs.String("exclude", "", excludeFlagUsage)
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: timetattle fit [flags]
+	return executeSubcommand(fitCmd(stdout), args)
+}
 
-Searches the gap, lead-in and tail-out against the corrections already in the
+func fitCmd(stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "fit",
+		Short: "Search the clustering parameters against the corrections",
+		Long: `Searches the gap, lead-in and tail-out against the corrections already in the
 store, and writes nothing at all.
 
 WHAT THIS COMMAND IS FOR IS REFUSING TO OVERSTATE ITS ANSWER. Three things make
@@ -110,122 +90,142 @@ THIS IS SLOW AND IT IS MEANT TO BE. The default grid is 288 parameter sets, each
 of which re-derives every sitting on the labelled days from scratch, and on a
 corpus of a million observations that is tens of minutes. Narrow it with -gaps,
 -lead-ins and -tail-outs while you are exploring; run the whole thing when you
-mean to publish a figure.
-
-Flags:
-`)
-		fs.PrintDefaults()
+mean to publish a figure.`,
 	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	fs := cmd.Flags()
+	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
+	configPath := fs.String("config", "", "configuration to read (default: ~/.timetattle/config.json)")
+	gaps := fs.String("gaps", "11m,12m,15m,20m,25m,30m,45m,1h", "comma-separated gap thresholds to search")
+	leadIns := fs.String("lead-ins", "0,1m,2m,5m,10m,15m", "comma-separated lead-ins to search")
+	tailOuts := fs.String("tail-outs", "0,30s,1m,2m,5m,10m", "comma-separated tail-outs to search")
+	tolerance := fs.Duration("tolerance", 0,
+		"how much worse than the best a point may score and still be inside the reported interval")
+	includeInert := fs.Bool("include-inert", false,
+		"evaluate the points whose gap is inert too, and check each against the top of its band")
+	reference := fs.String("reference", "",
+		"the parameters the reviewer was shown, as gap/lead-in/tail-out; \"none\" to omit the circularity check "+
+			"(default: the configured parameters)")
+	population := fs.String("shown", "all",
+		"which labels to fit against: \"all\", \"derivation\" (a reviewer confirming blocks he was "+
+			"shown) or \"observations\", spelt \"blind\", (a reviewer shown where evidence was seen)")
+	skipDays := fs.String("skip-days", "2026-08-01", "comma-separated reviewed days to leave out")
+	minReview := fs.Duration("min-review", 20*time.Hour,
+		"how long a review has to be to count as a whole working day")
+	coverageFloor := fs.Float64("coverage-floor", 0.01,
+		"a day whose asserted work is covered by duration-bearing observations below this share "+
+			"is reported as point-only")
+	narrow := fs.Bool("narrow", true,
+		"read only the events that can affect the labelled days; -narrow=false searches the whole corpus")
+	exclude := fs.String("exclude", "", excludeFlagUsage)
+	cmd.RunE = func(*cobra.Command, []string) error {
+		set := flagsSet(fs)
 
-	var err error
-	if *storePath == "" {
-		if *storePath, err = store.DefaultPath(); err != nil {
+		var err error
+		if *storePath == "" {
+			if *storePath, err = store.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		if *configPath == "" {
+			if *configPath, err = config.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		cfg, err := config.Load(*configPath)
+		if err != nil {
 			return err
 		}
-	}
-	if *configPath == "" {
-		if *configPath, err = config.DefaultPath(); err != nil {
+		cal, err := cfg.Calendar.Sessions()
+		if err != nil {
 			return err
 		}
-	}
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-	cal, err := cfg.Calendar.Sessions()
-	if err != nil {
-		return err
-	}
-	excludes, err := sessionExcludesFrom(cfg, *exclude, set["exclude"])
-	if err != nil {
-		return err
-	}
-	want, err := fitShown(*population)
-	if err != nil {
-		return err
-	}
-
-	grid := fit.Grid{}
-	if grid.Gaps, err = fitDurations(*gaps, "gaps"); err != nil {
-		return err
-	}
-	if grid.LeadIns, err = fitDurations(*leadIns, "lead-ins"); err != nil {
-		return err
-	}
-	if grid.TailOuts, err = fitDurations(*tailOuts, "tail-outs"); err != nil {
-		return err
-	}
-	if err := grid.Validate(); err != nil {
-		return err
-	}
-
-	base := sittings.Params{
-		Gap: cfg.Sessions.Gap.Duration(), LeadIn: cfg.Sessions.LeadIn.Duration(),
-		TailOut:         cfg.Sessions.TailOut.Duration(),
-		PresenceSources: cfg.Sessions.PresenceSources, IgnoreSources: cfg.Sessions.IgnoreSources,
-	}
-	shown := &fit.Point{Gap: base.Gap, LeadIn: base.LeadIn, TailOut: base.TailOut}
-	switch {
-	case *reference == "none":
-		shown = nil
-	case *reference != "":
-		if shown, err = fitPoint(*reference); err != nil {
+		excludes, err := sessionExcludesFrom(cfg, *exclude, set["exclude"])
+		if err != nil {
 			return err
 		}
-	}
+		want, err := fitShown(*population)
+		if err != nil {
+			return err
+		}
 
-	// The store is READ. Opening read-only is what makes "writes nothing" a
-	// property of the handle rather than of every branch below being right.
-	st, err := store.OpenReadOnly(*storePath)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	ctx := context.Background()
+		grid := fit.Grid{}
+		if grid.Gaps, err = fitDurations(*gaps, "gaps"); err != nil {
+			return err
+		}
+		if grid.LeadIns, err = fitDurations(*leadIns, "lead-ins"); err != nil {
+			return err
+		}
+		if grid.TailOuts, err = fitDurations(*tailOuts, "tail-outs"); err != nil {
+			return err
+		}
+		if err := grid.Validate(); err != nil {
+			return err
+		}
 
-	truth, ground, err := fitTruth(ctx, st, cal, *minReview, splitCommaList(*skipDays), want)
-	if err != nil {
-		return err
-	}
+		base := sittings.Params{
+			Gap: cfg.Sessions.Gap.Duration(), LeadIn: cfg.Sessions.LeadIn.Duration(),
+			TailOut:         cfg.Sessions.TailOut.Duration(),
+			PresenceSources: cfg.Sessions.PresenceSources, IgnoreSources: cfg.Sessions.IgnoreSources,
+		}
+		shown := &fit.Point{Gap: base.Gap, LeadIn: base.LeadIn, TailOut: base.TailOut}
+		switch {
+		case *reference == "none":
+			shown = nil
+		case *reference != "":
+			if shown, err = fitPoint(*reference); err != nil {
+				return err
+			}
+		}
 
-	events, err := st.Events(ctx, store.Filter{})
-	if err != nil {
-		return err
-	}
-	events, drop := sessions.Retain(events, excludes)
+		// The store is READ. Opening read-only is what makes "writes nothing" a
+		// property of the handle rather than of every branch below being right.
+		st, err := store.OpenReadOnly(*storePath)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		ctx := context.Background()
 
-	// Coverage is measured on the WHOLE corpus, before narrowing, because it is
-	// a statement about what was observed rather than about what this run read.
-	coverage := truth.Coverage(events, base)
-	for i := range truth.Labels {
-		truth.Labels[i].Regime = fitRegime(coverage[truth.Labels[i].Day], *coverageFloor)
-	}
+		truth, ground, err := fitTruth(ctx, st, cal, *minReview, splitCommaList(*skipDays), want)
+		if err != nil {
+			return err
+		}
 
-	var narrowing fit.Narrowing
-	if *narrow {
-		events, narrowing = fit.Narrow(events, truth.Span(), grid.Reach(), base)
-	}
+		events, err := st.Events(ctx, store.Filter{})
+		if err != nil {
+			return err
+		}
+		events, drop := sessions.Retain(events, excludes)
 
-	res, err := fit.Search{
-		Grid: grid, Objective: truth, Base: base,
-		Tolerance: *tolerance, IncludeInert: *includeInert, Reference: shown,
-	}.Run(events)
-	if err != nil {
-		return err
-	}
+		// Coverage is measured on the WHOLE corpus, before narrowing, because it is
+		// a statement about what was observed rather than about what this run read.
+		coverage := truth.Coverage(events, base)
+		for i := range truth.Labels {
+			truth.Labels[i].Regime = fitRegime(coverage[truth.Labels[i].Day], *coverageFloor)
+		}
 
-	// The width is read from the ORIGINAL writer. clipTo wraps it, and a wrapped
-	// writer is not a terminal, so asking the wrapper would report zero and every
-	// table below would lay itself out for a pipe on a narrow screen.
-	width := columnsOf(stdout)
-	out := clipTo(stdout, width)
-	fitReport(out, *storePath, res, ground, coverage, *coverageFloor, truth.Regimes(), base, excludes, drop, narrowing, *narrow, width)
-	return nil
+		var narrowing fit.Narrowing
+		if *narrow {
+			events, narrowing = fit.Narrow(events, truth.Span(), grid.Reach(), base)
+		}
+
+		res, err := fit.Search{
+			Grid: grid, Objective: truth, Base: base,
+			Tolerance: *tolerance, IncludeInert: *includeInert, Reference: shown,
+		}.Run(events)
+		if err != nil {
+			return err
+		}
+
+		// The width is read from the ORIGINAL writer. clipTo wraps it, and a wrapped
+		// writer is not a terminal, so asking the wrapper would report zero and every
+		// table below would lay itself out for a pipe on a narrow screen.
+		width := columnsOf(stdout)
+		out := clipTo(stdout, width)
+		fitReport(out, *storePath, res, ground, coverage, *coverageFloor, truth.Regimes(), base, excludes, drop, narrowing, *narrow, width)
+		return nil
+	}
+	return cmd
 }
 
 // fitGround is what the ground truth turned out to be, kept beside the Truth

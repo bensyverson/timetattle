@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/bensyverson/timetattle/internal/clientmap"
 	"github.com/bensyverson/timetattle/internal/config"
@@ -29,29 +30,14 @@ func metricsCommand(args []string) error { return metricsTo(os.Stdout, args) }
 // metricsTo is metricsCommand with the report redirected, so that what the
 // command prints can be asserted on rather than merely not crashing.
 func metricsTo(stdout io.Writer, args []string) error {
-	fs := flag.NewFlagSet("metrics", flag.ExitOnError)
-	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
-	configPath := fs.String("config", "", "configuration to read (default: ~/.timetattle/config.json)")
-	gap := fs.Duration("gap", 0, "idle gap that separates one sitting from the next (default: from the config file)")
-	leadIn := fs.Duration("lead-in", 0, "how long before its first observation a sitting is assumed to have begun")
-	tailOut := fs.Duration("tail-out", 0, "how long after its last observation a sitting is assumed to have run on")
-	presence := fs.String("presence-sources", "",
-		"comma-separated sources read as presence, which bounds sittings without creating them")
-	ignore := fs.String("ignore-sources", "", "comma-separated sources to read and drop")
-	exclude := fs.String("exclude", "", excludeFlagUsage)
-	from := fs.String("from", "", "earliest instant to consider, as 2026-07-11 or 2026-07-11T09:00:00Z")
-	to := fs.String("to", "", "latest instant to consider; a bare date means the END of that day")
-	client := fs.String("client", "", "report only this client, and only their projects")
-	project := fs.String("project", "", "report only this project")
-	by := fs.String("by", "", "cut the span into a series of periods: day, week, month or span")
-	asCSV := fs.Bool("csv", false, "write the series as CSV instead of a report, for another program to read")
-	dayStart := fs.String("day-start", "", "wall clock a working day begins at, as 05:00 (default: from the config file)")
-	weekStart := fs.String("week-start", "", "weekday a week begins on, as monday (default: from the config file)")
-	timezone := fs.String("timezone", "", "IANA zone the working day is local to, as America/Chicago")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: timetattle metrics [flags]
+	return executeSubcommand(metricsCmd(stdout), args)
+}
 
-Reports the two metrics a working day is judged by, from the events already in
+func metricsCmd(stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "metrics",
+		Short: "Report engaged time per project, and presence",
+		Long: `Reports the two metrics a working day is judged by, from the events already in
 the store. Nothing is captured, nothing is derived into a table, and the store
 is opened read-only.
 
@@ -155,183 +141,196 @@ Parameters come from ~/.timetattle/config.json, and any flag below overrides
 the file for that one run without changing it. THE GAP THRESHOLD IS NOT A
 SETTLED VALUE: total engaged time ranged 2.3x across the plausible range and
 nothing has yet fitted it against ground truth. Use "timetattle sessionize
--sweep" to see the spread on your own data before quoting a figure.
-
-Flags:
-`)
-		fs.PrintDefaults()
+-sweep" to see the spread on your own data before quoting a figure.`,
 	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+	fs := cmd.Flags()
+	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
+	configPath := fs.String("config", "", "configuration to read (default: ~/.timetattle/config.json)")
+	gap := fs.Duration("gap", 0, "idle gap that separates one sitting from the next (default: from the config file)")
+	leadIn := fs.Duration("lead-in", 0, "how long before its first observation a sitting is assumed to have begun")
+	tailOut := fs.Duration("tail-out", 0, "how long after its last observation a sitting is assumed to have run on")
+	presence := fs.String("presence-sources", "",
+		"comma-separated sources read as presence, which bounds sittings without creating them")
+	ignore := fs.String("ignore-sources", "", "comma-separated sources to read and drop")
+	exclude := fs.String("exclude", "", excludeFlagUsage)
+	from := fs.String("from", "", "earliest instant to consider, as 2026-07-11 or 2026-07-11T09:00:00Z")
+	to := fs.String("to", "", "latest instant to consider; a bare date means the END of that day")
+	client := fs.String("client", "", "report only this client, and only their projects")
+	project := fs.String("project", "", "report only this project")
+	by := fs.String("by", "", "cut the span into a series of periods: day, week, month or span")
+	asCSV := fs.Bool("csv", false, "write the series as CSV instead of a report, for another program to read")
+	dayStart := fs.String("day-start", "", "wall clock a working day begins at, as 05:00 (default: from the config file)")
+	weekStart := fs.String("week-start", "", "weekday a week begins on, as monday (default: from the config file)")
+	timezone := fs.String("timezone", "", "IANA zone the working day is local to, as America/Chicago")
+	cmd.RunE = func(*cobra.Command, []string) error {
+		set := flagsSet(fs)
 
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-
-	var err error
-	if *storePath == "" {
-		if *storePath, err = store.DefaultPath(); err != nil {
+		var err error
+		if *storePath == "" {
+			if *storePath, err = store.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		if *configPath == "" {
+			if *configPath, err = config.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		cfg, err := config.Load(*configPath)
+		if err != nil {
 			return err
 		}
-	}
-	if *configPath == "" {
-		if *configPath, err = config.DefaultPath(); err != nil {
+
+		p := sessions.Params{
+			Gap:             cfg.Sessions.Gap.Duration(),
+			LeadIn:          cfg.Sessions.LeadIn.Duration(),
+			TailOut:         cfg.Sessions.TailOut.Duration(),
+			PresenceSources: cfg.Sessions.PresenceSources,
+			IgnoreSources:   cfg.Sessions.IgnoreSources,
+		}
+		if set["gap"] {
+			p.Gap = *gap
+		}
+		if set["lead-in"] {
+			p.LeadIn = *leadIn
+		}
+		if set["tail-out"] {
+			p.TailOut = *tailOut
+		}
+		if set["presence-sources"] {
+			p.PresenceSources = splitCommaList(*presence)
+		}
+		if set["ignore-sources"] {
+			p.IgnoreSources = splitCommaList(*ignore)
+		}
+		if err := p.Validate(); err != nil {
 			return err
 		}
-	}
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-
-	p := sessions.Params{
-		Gap:             cfg.Sessions.Gap.Duration(),
-		LeadIn:          cfg.Sessions.LeadIn.Duration(),
-		TailOut:         cfg.Sessions.TailOut.Duration(),
-		PresenceSources: cfg.Sessions.PresenceSources,
-		IgnoreSources:   cfg.Sessions.IgnoreSources,
-	}
-	if set["gap"] {
-		p.Gap = *gap
-	}
-	if set["lead-in"] {
-		p.LeadIn = *leadIn
-	}
-	if set["tail-out"] {
-		p.TailOut = *tailOut
-	}
-	if set["presence-sources"] {
-		p.PresenceSources = splitCommaList(*presence)
-	}
-	if set["ignore-sources"] {
-		p.IgnoreSources = splitCommaList(*ignore)
-	}
-	if err := p.Validate(); err != nil {
-		return err
-	}
-	excludes, err := sessionExcludesFrom(cfg, *exclude, set["exclude"])
-	if err != nil {
-		return err
-	}
-
-	// -csv with no -by is the whole span as one period, which is a real answer
-	// rather than a degenerate one: a program asking for a total wants the same
-	// columns as one asking for a series.
-	unit := unitSpan
-	if set["by"] {
-		if unit, err = parseSeriesUnit(*by); err != nil {
+		excludes, err := sessionExcludesFrom(cfg, *exclude, set["exclude"])
+		if err != nil {
 			return err
 		}
-	}
-	// The calendar goes through the config types rather than being assembled
-	// here, so that a flag and a file are parsed by the same code and cannot
-	// disagree about what "05:00" or "monday" means. Same path sessionize uses.
-	calCfg := cfg.Calendar
-	if set["timezone"] {
-		calCfg.Timezone = *timezone
-	}
-	if set["day-start"] {
-		if err := calCfg.DayStart.UnmarshalJSON([]byte(strconv.Quote(*dayStart))); err != nil {
-			return fmt.Errorf("-day-start: %w", err)
+
+		// -csv with no -by is the whole span as one period, which is a real answer
+		// rather than a degenerate one: a program asking for a total wants the same
+		// columns as one asking for a series.
+		unit := unitSpan
+		if set["by"] {
+			if unit, err = parseSeriesUnit(*by); err != nil {
+				return err
+			}
 		}
-	}
-	if set["week-start"] {
-		if err := calCfg.WeekStart.UnmarshalJSON([]byte(strconv.Quote(*weekStart))); err != nil {
-			return fmt.Errorf("-week-start: %w", err)
+		// The calendar goes through the config types rather than being assembled
+		// here, so that a flag and a file are parsed by the same code and cannot
+		// disagree about what "05:00" or "monday" means. Same path sessionize uses.
+		calCfg := cfg.Calendar
+		if set["timezone"] {
+			calCfg.Timezone = *timezone
 		}
-	}
-	cal, err := calCfg.Sessions()
-	if err != nil {
-		return err
-	}
-
-	filter := store.Filter{}
-	if filter.From, err = parseBoundary(*from, "from"); err != nil {
-		return err
-	}
-	// A bare date on -to means the END of that day; see parseUpperBoundary for
-	// why that differs from -from and why it is not a break with the shared
-	// parser. -from wants the start of the day it names, which is what a bare
-	// date already parses to.
-	if filter.To, err = parseUpperBoundary(*to, "to"); err != nil {
-		return err
-	}
-
-	// Read-only: this command has no business appearing in the store's own
-	// history, and a check that CREATED or MIGRATED the database would report
-	// on a schema no harvest had ever run against.
-	st, err := store.OpenReadOnly(*storePath)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	events, err := st.Events(context.Background(), filter)
-	if err != nil {
-		return err
-	}
-	// Machine activity is removed before anything is clustered or attributed,
-	// so a project whose only trace on a day was a log rotation does not
-	// appear on it at all rather than appearing with an unexplained hour.
-	events, drop := sessions.Retain(events, excludes)
-
-	// THE CLIENT IS STAMPED HERE, not read from a column, because no column
-	// holds it: the client-project log (migration 0012) is folded and each
-	// event asks which client its project belonged to AT ITS OWN INSTANT. A
-	// project reassigned in June therefore reports the old client for May's
-	// work and the new one for July's, from one pass over ~38 rows.
-	//
-	// This is still the whole of what `metrics` reads — the store, and nothing
-	// else. The log lives in the same database as the events, so the command's
-	// designed property of consulting neither the registry nor the filesystem
-	// is untouched.
-	cm, err := st.ClientMap(context.Background(), time.Time{})
-	if err != nil {
-		return err
-	}
-	for i := range events {
-		if events[i].Identity.Project == "" {
-			continue
+		if set["day-start"] {
+			if err := calCfg.DayStart.UnmarshalJSON([]byte(strconv.Quote(*dayStart))); err != nil {
+				return fmt.Errorf("-day-start: %w", err)
+			}
 		}
-		if client, ok := cm.At(events[i].Identity.Project, events[i].Anchor()); ok {
-			events[i].Identity.Client = client
+		if set["week-start"] {
+			if err := calCfg.WeekStart.UnmarshalJSON([]byte(strconv.Quote(*weekStart))); err != nil {
+				return fmt.Errorf("-week-start: %w", err)
+			}
 		}
-	}
+		cal, err := calCfg.Sessions()
+		if err != nil {
+			return err
+		}
 
-	report, err := metrics.Compute(events, p)
-	if err != nil {
-		return err
-	}
+		filter := store.Filter{}
+		if filter.From, err = parseBoundary(*from, "from"); err != nil {
+			return err
+		}
+		// A bare date on -to means the END of that day; see parseUpperBoundary for
+		// why that differs from -from and why it is not a break with the shared
+		// parser. -from wants the start of the day it names, which is what a bare
+		// date already parses to.
+		if filter.To, err = parseUpperBoundary(*to, "to"); err != nil {
+			return err
+		}
 
-	// What the store recorded about collection, read once and asked per period.
-	// It is what stops a 0.0h row from being a confident nothing.
-	log, err := readCollectionLog(context.Background(), st)
-	if err != nil {
-		return err
-	}
-	scope := metricsScope{Client: *client, Project: *project}
-	rows, err := seriesOf(report, cal, unit, sessions.Window{From: filter.From, To: filter.To}, log)
-	if err != nil {
-		return err
-	}
+		// Read-only: this command has no business appearing in the store's own
+		// history, and a check that CREATED or MIGRATED the database would report
+		// on a schema no harvest had ever run against.
+		st, err := store.OpenReadOnly(*storePath)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
 
-	// CSV REPLACES THE REPORT RATHER THAN JOINING IT. A data interchange format
-	// with prose in it is neither, and every caveat the report carries is
-	// carried in the CSV as a column instead — the collection state, whether a
-	// period was only partly covered, and which level each figure belongs to.
-	if *asCSV {
-		return csvSeries(stdout, cal, unit, rows, scope, report.Clients)
-	}
+		events, err := st.Events(context.Background(), filter)
+		if err != nil {
+			return err
+		}
+		// Machine activity is removed before anything is clustered or attributed,
+		// so a project whose only trace on a day was a log rotation does not
+		// appear on it at all rather than appearing with an unexplained hour.
+		events, drop := sessions.Retain(events, excludes)
 
-	// The report is laid out for the terminal it is going into, and clipped as a
-	// backstop. columnsOf returns 0 for a pipe, which leaves both alone.
-	cols := columnsOf(stdout)
-	out := clipTo(stdout, cols)
-	reported := reportMetrics(out, *storePath, report, cols, excludes, drop, scope, cm.Collisions())
-	if set["by"] && reported {
-		reportSeries(out, report, cal, unit, rows, log, scope, cols)
+		// THE CLIENT IS STAMPED HERE, not read from a column, because no column
+		// holds it: the client-project log (migration 0012) is folded and each
+		// event asks which client its project belonged to AT ITS OWN INSTANT. A
+		// project reassigned in June therefore reports the old client for May's
+		// work and the new one for July's, from one pass over ~38 rows.
+		//
+		// This is still the whole of what `metrics` reads — the store, and nothing
+		// else. The log lives in the same database as the events, so the command's
+		// designed property of consulting neither the registry nor the filesystem
+		// is untouched.
+		cm, err := st.ClientMap(context.Background(), time.Time{})
+		if err != nil {
+			return err
+		}
+		for i := range events {
+			if events[i].Identity.Project == "" {
+				continue
+			}
+			if client, ok := cm.At(events[i].Identity.Project, events[i].Anchor()); ok {
+				events[i].Identity.Client = client
+			}
+		}
+
+		report, err := metrics.Compute(events, p)
+		if err != nil {
+			return err
+		}
+
+		// What the store recorded about collection, read once and asked per period.
+		// It is what stops a 0.0h row from being a confident nothing.
+		log, err := readCollectionLog(context.Background(), st)
+		if err != nil {
+			return err
+		}
+		scope := metricsScope{Client: *client, Project: *project}
+		rows, err := seriesOf(report, cal, unit, sessions.Window{From: filter.From, To: filter.To}, log)
+		if err != nil {
+			return err
+		}
+
+		// CSV REPLACES THE REPORT RATHER THAN JOINING IT. A data interchange format
+		// with prose in it is neither, and every caveat the report carries is
+		// carried in the CSV as a column instead — the collection state, whether a
+		// period was only partly covered, and which level each figure belongs to.
+		if *asCSV {
+			return csvSeries(stdout, cal, unit, rows, scope, report.Clients)
+		}
+
+		// The report is laid out for the terminal it is going into, and clipped as a
+		// backstop. columnsOf returns 0 for a pipe, which leaves both alone.
+		cols := columnsOf(stdout)
+		out := clipTo(stdout, cols)
+		reported := reportMetrics(out, *storePath, report, cols, excludes, drop, scope, cm.Collisions())
+		if set["by"] && reported {
+			reportSeries(out, report, cal, unit, rows, log, scope, cols)
+		}
+		return nil
 	}
-	return nil
+	return cmd
 }
 
 // metricsScope is which rows the reader asked to see. It is NOT which events

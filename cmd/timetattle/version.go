@@ -1,11 +1,12 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"runtime/debug"
+
+	"github.com/spf13/cobra"
 )
 
 // version exists so a released binary is traceable to a commit — see
@@ -24,11 +25,14 @@ var readBuildInfo = debug.ReadBuildInfo
 func versionCommand(args []string) error { return versionTo(os.Stdout, args) }
 
 func versionTo(stdout io.Writer, args []string) error {
-	fs := flag.NewFlagSet("version", flag.ExitOnError)
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: timetattle version
+	return executeSubcommand(versionCmd(stdout), args)
+}
 
-Prints the version this binary was built from: the module pseudo-version, the
+func versionCmd(stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the commit this binary was built from",
+		Long: `Prints the version this binary was built from: the module pseudo-version, the
 git commit it was built at, and whether the working tree had uncommitted
 changes at build time. Takes no arguments.
 
@@ -36,13 +40,12 @@ The commit comes from the VCS stamp the Go toolchain embeds automatically, not
 from anything this command computes, so it is only as trustworthy as the build
 that produced the binary. A binary built with -buildvcs=false, or built
 outside a git checkout entirely, reports the commit as unknown rather than
-guessing.
-`)
+guessing.`,
+		RunE: func(*cobra.Command, []string) error { return versionRun(stdout) },
 	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+}
 
+func versionRun(stdout io.Writer) error {
 	info, ok := readBuildInfo()
 
 	revision := "unknown"

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,34 +10,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/bensyverson/timetattle/internal/chains"
 	"github.com/bensyverson/timetattle/internal/fsobserve"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
 )
 
-func chainsCommand(args []string) error {
-	fs := flag.NewFlagSet("chains", flag.ExitOnError)
-	storePath := fs.String("store", "", "event store to read and derive into (default: ~/.timetattle/timetattle.db)")
-	sourceID := fs.String("source", fsobserve.ID, "source whose observations to cluster")
-	classes := fs.String("class", string(fsobserve.ClassSource),
-		"comma-separated file classes to consider: source, output, other")
-	extensions := fs.String("ext", "",
-		"comma-separated file extensions to restrict to, e.g. .blend (default: every extension the classes admit)")
-	minPrefix := fs.Int("min-prefix", chains.DefaultMinSharedPrefix,
-		"characters two names must share to be relatives where neither is the other's prefix")
-	coincidence := fs.Duration("coincidence", chains.DefaultCoincidence,
-		"how close two births must be to count as one action")
-	from := fs.String("from", "", "consider observations at or after this time (2006-01-02 or RFC3339)")
-	to := fs.String("to", "", "consider observations at or before this time")
-	roots := fs.String("roots", "",
-		"comma-separated directories to walk directly instead of reading the store; diagnostic, never writes")
-	dryRun := fs.Bool("dry-run", false, "print the chains without replacing the derived tables")
-	quiet := fs.Bool("quiet", false, "write nothing to stdout")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: timetattle chains [flags]
+func chainsCommand(args []string) error { return executeSubcommand(chainsCmd(), args) }
 
-Reconstructs save-as chains from filesystem observations, and replaces the
+func chainsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "chains",
+		Short: "Reconstruct save-as chains from filenames",
+		Long: `Reconstructs save-as chains from filesystem observations, and replaces the
 derived chain tables with the result.
 
 Blender and Motion are used by branching rather than editing: a file is
@@ -62,105 +48,117 @@ family, and the only thing compared is how far two whole names already agree
 -roots walks the given directories directly rather than reading the store. It
 is for looking at a project the store has not ingested yet, it never writes
 the derived tables, and what it reports is what the model makes of the disk
-right now rather than of recorded evidence.
-
-Flags:
-`)
-		fs.PrintDefaults()
+right now rather than of recorded evidence.`,
 	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	opts := chains.Options{
-		Source:          *sourceID,
-		Classes:         splitCommaList(*classes),
-		Extensions:      splitCommaList(*extensions),
-		MinSharedPrefix: *minPrefix,
-		Coincidence:     *coincidence,
-	}
-	if opts.MinSharedPrefix < 1 {
-		return errors.New("timetattle chains: -min-prefix must be at least 1")
-	}
-	if opts.Coincidence <= 0 {
-		return errors.New("timetattle chains: -coincidence must be positive")
-	}
-	fromTime, err := parseBoundary(*from, "from")
-	if err != nil {
-		return err
-	}
-	toTime, err := parseBoundary(*to, "to")
-	if err != nil {
-		return err
-	}
-
-	out := io.Writer(os.Stdout)
-	if *quiet {
-		out = io.Discard
-	}
-	ctx := context.Background()
-
-	if *roots != "" {
-		// Deliberately does not write. These observations were never ingested,
-		// so a derived table built from them would claim the store holds
-		// evidence it does not, and the next honest rebuild would silently
-		// contradict it.
-		events, err := fsobserve.New(splitCommaList(*roots)...).Collect(ctx, time.Time{})
-		if err != nil {
-			return fmt.Errorf("walk %s: %w", *roots, err)
+	fs := cmd.Flags()
+	storePath := fs.String("store", "", "event store to read and derive into (default: ~/.timetattle/timetattle.db)")
+	sourceID := fs.String("source", fsobserve.ID, "source whose observations to cluster")
+	classes := fs.String("class", string(fsobserve.ClassSource),
+		"comma-separated file classes to consider: source, output, other")
+	extensions := fs.String("ext", "",
+		"comma-separated file extensions to restrict to, e.g. .blend (default: every extension the classes admit)")
+	minPrefix := fs.Int("min-prefix", chains.DefaultMinSharedPrefix,
+		"characters two names must share to be relatives where neither is the other's prefix")
+	coincidence := fs.Duration("coincidence", chains.DefaultCoincidence,
+		"how close two births must be to count as one action")
+	from := fs.String("from", "", "consider observations at or after this time (2006-01-02 or RFC3339)")
+	to := fs.String("to", "", "consider observations at or before this time")
+	roots := fs.String("roots", "",
+		"comma-separated directories to walk directly instead of reading the store; diagnostic, never writes")
+	dryRun := fs.Bool("dry-run", false, "print the chains without replacing the derived tables")
+	quiet := fs.Bool("quiet", false, "write nothing to stdout")
+	cmd.RunE = func(*cobra.Command, []string) error {
+		opts := chains.Options{
+			Source:          *sourceID,
+			Classes:         splitCommaList(*classes),
+			Extensions:      splitCommaList(*extensions),
+			MinSharedPrefix: *minPrefix,
+			Coincidence:     *coincidence,
 		}
-		events = window(events, fromTime, toTime)
-		reportChains(out, chains.Reconstruct(events, opts), *roots+" (walked directly; nothing was written)")
-		return nil
-	}
-
-	path := *storePath
-	if path == "" {
-		if path, err = store.DefaultPath(); err != nil {
+		if opts.MinSharedPrefix < 1 {
+			return errors.New("timetattle chains: -min-prefix must be at least 1")
+		}
+		if opts.Coincidence <= 0 {
+			return errors.New("timetattle chains: -coincidence must be positive")
+		}
+		fromTime, err := parseBoundary(*from, "from")
+		if err != nil {
 			return err
 		}
-	}
-	// store.Open runs the migrations, which is what guarantees the derived
-	// tables exist before anything writes to them.
-	st, err := store.Open(path)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
+		toTime, err := parseBoundary(*to, "to")
+		if err != nil {
+			return err
+		}
 
-	events, err := st.Events(ctx, store.Filter{From: fromTime, To: toTime, Source: opts.Source})
-	if err != nil {
-		return err
-	}
-	result := chains.Reconstruct(events, opts)
+		out := io.Writer(os.Stdout)
+		if *quiet {
+			out = io.Discard
+		}
+		ctx := context.Background()
 
-	if len(events) == 0 {
-		// Not the same as finding no chains, and the difference decides what
-		// the reader should do next. Said on stderr so it survives -quiet:
-		// silence here would read as "no chains", which is a conclusion nobody
-		// is entitled to draw from an unharvested store.
-		fmt.Fprintf(os.Stderr,
-			"timetattle chains: %s holds no %s observations. "+
-				"Nothing was measured — this is not a finding that no chains exist. "+
-				"Register a directory with 'timetattle register' and run 'timetattle harvest', "+
-				"or pass -roots to look at the disk directly.\n", path, opts.Source)
-	}
+		if *roots != "" {
+			// Deliberately does not write. These observations were never ingested,
+			// so a derived table built from them would claim the store holds
+			// evidence it does not, and the next honest rebuild would silently
+			// contradict it.
+			events, err := fsobserve.New(splitCommaList(*roots)...).Collect(ctx, time.Time{})
+			if err != nil {
+				return fmt.Errorf("walk %s: %w", *roots, err)
+			}
+			events = window(events, fromTime, toTime)
+			reportChains(out, chains.Reconstruct(events, opts), *roots+" (walked directly; nothing was written)")
+			return nil
+		}
 
-	reportChains(out, result, path)
-	if *dryRun {
-		fmt.Fprintln(out, "\ndry run: the derived tables were not replaced")
+		path := *storePath
+		if path == "" {
+			if path, err = store.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		// store.Open runs the migrations, which is what guarantees the derived
+		// tables exist before anything writes to them.
+		st, err := store.Open(path)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+
+		events, err := st.Events(ctx, store.Filter{From: fromTime, To: toTime, Source: opts.Source})
+		if err != nil {
+			return err
+		}
+		result := chains.Reconstruct(events, opts)
+
+		if len(events) == 0 {
+			// Not the same as finding no chains, and the difference decides what
+			// the reader should do next. Said on stderr so it survives -quiet:
+			// silence here would read as "no chains", which is a conclusion nobody
+			// is entitled to draw from an unharvested store.
+			fmt.Fprintf(os.Stderr,
+				"timetattle chains: %s holds no %s observations. "+
+					"Nothing was measured — this is not a finding that no chains exist. "+
+					"Register a directory with 'timetattle register' and run 'timetattle harvest', "+
+					"or pass -roots to look at the disk directly.\n", path, opts.Source)
+		}
+
+		reportChains(out, result, path)
+		if *dryRun {
+			fmt.Fprintln(out, "\ndry run: the derived tables were not replaced")
+			return nil
+		}
+
+		// Four tables are cleared and repopulated by this one call, through the
+		// handle store.Open already returned. The store owns the transaction, so
+		// there is no state in which some of them describe this derivation and the
+		// rest the last one — see store.ReplaceDerived.
+		if err := st.ReplaceDerived(ctx, chains.Rebuild(result, time.Now())); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "\n%s written to %s\n", plural(len(result.Chains), "chain"), path)
 		return nil
 	}
-
-	// Four tables are cleared and repopulated by this one call, through the
-	// handle store.Open already returned. The store owns the transaction, so
-	// there is no state in which some of them describe this derivation and the
-	// rest the last one — see store.ReplaceDerived.
-	if err := st.ReplaceDerived(ctx, chains.Rebuild(result, time.Now())); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "\n%s written to %s\n", plural(len(result.Chains), "chain"), path)
-	return nil
+	return cmd
 }
 
 // window filters events to a span. store.Filter does this for a store read;

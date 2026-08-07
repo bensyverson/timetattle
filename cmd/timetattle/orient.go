@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/store"
@@ -99,20 +100,20 @@ func orient(args []string) error { return orientTo(os.Stdout, args) }
 // orientTo is orient with the report redirected, so what the command prints can
 // be asserted on rather than merely not crashing.
 func orientTo(stdout io.Writer, args []string) error {
-	fs := flag.NewFlagSet("orient", flag.ExitOnError)
-	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
-	indexPath := fs.String("index", "",
-		"registry index to resolve against (default: ~/.timetattle/registered-directories.json)")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: timetattle orient
+	return executeSubcommand(orientCmd(stdout), args)
+}
 
-Says what the state is and what to do about it. Takes no arguments: it is meant
+func orientCmd(stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "orient",
+		Short: "Say what the state is and what to do next",
+		Long: `Says what the state is and what to do about it. Takes no arguments: it is meant
 to be the first thing run in a session, by someone or something with no memory
 of the last one.
 
 It reports every observation carrying a path that no project owns, grouped by
 WHAT WOULD CLEAR IT rather than by size, and names the single remedy that would
-clear the most. A directory is only ever recommended if `+"`timetattle register`"+`
+clear the most. A directory is only ever recommended if ` + "`timetattle register`" + `
 would actually accept it, and a subdirectory is never recommended separately
 from the directory whose marker would already cover it.
 
@@ -122,61 +123,60 @@ number of hours. Run "timetattle metrics" for time, and "timetattle status" for
 whether collection itself is still working; this command answers neither and
 points at both.
 
-Nothing is written and the store is opened read-only.
-
-Flags:
-`)
-		fs.PrintDefaults()
+Nothing is written and the store is opened read-only.`,
 	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+	fs := cmd.Flags()
+	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
+	indexPath := fs.String("index", "",
+		"registry index to resolve against (default: ~/.timetattle/registered-directories.json)")
+	cmd.RunE = func(*cobra.Command, []string) error {
+		var err error
+		if *storePath == "" {
+			if *storePath, err = store.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		if *indexPath == "" {
+			if *indexPath, err = registry.DefaultIndexPath(); err != nil {
+				return err
+			}
+		}
 
-	var err error
-	if *storePath == "" {
-		if *storePath, err = store.DefaultPath(); err != nil {
+		registered, err := registry.List(*indexPath)
+		if err != nil {
+			return fmt.Errorf("read the registry: %w", err)
+		}
+
+		// Read-only for the same reason status and metrics are: a command that
+		// created or migrated the store would be reporting on a schema no harvest
+		// had ever run against.
+		st, err := store.OpenReadOnly(*storePath)
+		if err != nil {
 			return err
 		}
-	}
-	if *indexPath == "" {
-		if *indexPath, err = registry.DefaultIndexPath(); err != nil {
+		defer st.Close()
+
+		ctx := context.Background()
+		counts, err := st.LocatorCounts(ctx)
+		if err != nil {
 			return err
 		}
-	}
+		runs, err := st.Runs(ctx, store.Filter{})
+		if err != nil {
+			return err
+		}
 
-	registered, err := registry.List(*indexPath)
-	if err != nil {
-		return fmt.Errorf("read the registry: %w", err)
+		census := orientCensusOf(counts, registered)
+		census.Store = *storePath
+		census.Registered = len(registered)
+		census.LastHarvest = orientLastHarvest(runs)
+		// The report is laid out for the terminal it is going into, and clipped as
+		// a backstop. columnsOf returns 0 for a pipe, which leaves both alone.
+		cols := columnsOf(stdout)
+		orientReport(clipTo(stdout, cols), census, time.Now(), cols)
+		return nil
 	}
-
-	// Read-only for the same reason status and metrics are: a command that
-	// created or migrated the store would be reporting on a schema no harvest
-	// had ever run against.
-	st, err := store.OpenReadOnly(*storePath)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	ctx := context.Background()
-	counts, err := st.LocatorCounts(ctx)
-	if err != nil {
-		return err
-	}
-	runs, err := st.Runs(ctx, store.Filter{})
-	if err != nil {
-		return err
-	}
-
-	census := orientCensusOf(counts, registered)
-	census.Store = *storePath
-	census.Registered = len(registered)
-	census.LastHarvest = orientLastHarvest(runs)
-	// The report is laid out for the terminal it is going into, and clipped as
-	// a backstop. columnsOf returns 0 for a pipe, which leaves both alone.
-	cols := columnsOf(stdout)
-	orientReport(clipTo(stdout, cols), census, time.Now(), cols)
-	return nil
+	return cmd
 }
 
 // orientRemedy is what has to happen for a class of unattributed evidence to

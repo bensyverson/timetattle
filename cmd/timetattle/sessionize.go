@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/sessions"
@@ -29,32 +30,14 @@ func sessionize(args []string) error { return sessionizeTo(os.Stdout, args) }
 // sessionizeTo is sessionize with the report redirected, so that what the
 // command prints can be asserted on rather than merely not crashing.
 func sessionizeTo(stdout io.Writer, args []string) error {
-	fs := flag.NewFlagSet("sessionize", flag.ExitOnError)
-	storePath := fs.String("store", "", "event store to read and write (default: ~/.timetattle/timetattle.db)")
-	configPath := fs.String("config", "", "configuration to read (default: ~/.timetattle/config.json)")
-	gap := fs.Duration("gap", 0, "idle gap that separates one sitting from the next (default: from the config file)")
-	leadIn := fs.Duration("lead-in", 0, "how long before its first observation a sitting is assumed to have begun")
-	tailOut := fs.Duration("tail-out", 0, "how long after its last observation a sitting is assumed to have run on")
-	presence := fs.String("presence-sources", "",
-		"comma-separated sources read as presence, which bounds sittings without creating them")
-	ignore := fs.String("ignore-sources", "", "comma-separated sources to read and drop")
-	exclude := fs.String("exclude", "", excludeFlagUsage)
-	from := fs.String("from", "", "earliest instant to consider, as 2026-07-11 or 2026-07-11T09:00:00Z")
-	to := fs.String("to", "", "latest instant to consider")
-	sweep := fs.String("sweep", "",
-		"comma-separated gaps to report side by side, writing nothing; e.g. 2m,15m,2h")
-	dryRun := fs.Bool("dry-run", false,
-		"compute and report, but leave the stored sessions alone; says whether they are stale")
-	quiet := fs.Bool("quiet", false, "print nothing on success; for scheduled runs")
-	byDay := fs.Bool("by-day", false, "report engaged time per working day")
-	byWeek := fs.Bool("by-week", false, "report engaged time per week")
-	dayStart := fs.String("day-start", "", "wall clock a working day begins at, as 05:00 (default: from the config file)")
-	weekStart := fs.String("week-start", "", "weekday a week begins on, as monday (default: from the config file)")
-	timezone := fs.String("timezone", "", "IANA zone the working day is local to, as America/Chicago")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: timetattle sessionize [flags]
+	return executeSubcommand(sessionizeCmd(stdout), args)
+}
 
-Groups the events already in the store into sittings, and replaces
+func sessionizeCmd(stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "sessionize",
+		Short: "Group events into sittings and store them",
+		Long: `Groups the events already in the store into sittings, and replaces
 derived_session with the result.
 
 Nothing is captured and no source is read. The derivation is a pure function of
@@ -112,214 +95,230 @@ reader can now see rather than something it has to be told.
 -dry-run computes everything, writes nothing, and compares what it would have
 written against what is already stored: whether the table is this same answer,
 whether it is stale, and — separately from both — whether nothing has ever been
-derived into this store at all.
-
-Flags:
-`)
-		fs.PrintDefaults()
+derived into this store at all.`,
 	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+	fs := cmd.Flags()
+	storePath := fs.String("store", "", "event store to read and write (default: ~/.timetattle/timetattle.db)")
+	configPath := fs.String("config", "", "configuration to read (default: ~/.timetattle/config.json)")
+	gap := fs.Duration("gap", 0, "idle gap that separates one sitting from the next (default: from the config file)")
+	leadIn := fs.Duration("lead-in", 0, "how long before its first observation a sitting is assumed to have begun")
+	tailOut := fs.Duration("tail-out", 0, "how long after its last observation a sitting is assumed to have run on")
+	presence := fs.String("presence-sources", "",
+		"comma-separated sources read as presence, which bounds sittings without creating them")
+	ignore := fs.String("ignore-sources", "", "comma-separated sources to read and drop")
+	exclude := fs.String("exclude", "", excludeFlagUsage)
+	from := fs.String("from", "", "earliest instant to consider, as 2026-07-11 or 2026-07-11T09:00:00Z")
+	to := fs.String("to", "", "latest instant to consider")
+	sweep := fs.String("sweep", "",
+		"comma-separated gaps to report side by side, writing nothing; e.g. 2m,15m,2h")
+	dryRun := fs.Bool("dry-run", false,
+		"compute and report, but leave the stored sessions alone; says whether they are stale")
+	quiet := fs.Bool("quiet", false, "print nothing on success; for scheduled runs")
+	byDay := fs.Bool("by-day", false, "report engaged time per working day")
+	byWeek := fs.Bool("by-week", false, "report engaged time per week")
+	dayStart := fs.String("day-start", "", "wall clock a working day begins at, as 05:00 (default: from the config file)")
+	weekStart := fs.String("week-start", "", "weekday a week begins on, as monday (default: from the config file)")
+	timezone := fs.String("timezone", "", "IANA zone the working day is local to, as America/Chicago")
+	cmd.RunE = func(*cobra.Command, []string) error {
+		set := flagsSet(fs)
 
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-
-	var err error
-	if *storePath == "" {
-		if *storePath, err = store.DefaultPath(); err != nil {
+		var err error
+		if *storePath == "" {
+			if *storePath, err = store.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		if *configPath == "" {
+			if *configPath, err = config.DefaultPath(); err != nil {
+				return err
+			}
+		}
+		cfg, err := config.Load(*configPath)
+		if err != nil {
 			return err
 		}
-	}
-	if *configPath == "" {
-		if *configPath, err = config.DefaultPath(); err != nil {
+
+		// The file is the parameter set; a flag replaces one value of it for this
+		// run only. Nothing here writes the config back, so a swept threshold
+		// cannot become the configured one by accident.
+		p := sessions.Params{
+			Gap:             cfg.Sessions.Gap.Duration(),
+			LeadIn:          cfg.Sessions.LeadIn.Duration(),
+			TailOut:         cfg.Sessions.TailOut.Duration(),
+			PresenceSources: cfg.Sessions.PresenceSources,
+			IgnoreSources:   cfg.Sessions.IgnoreSources,
+		}
+		if set["gap"] {
+			p.Gap = *gap
+		}
+		if set["lead-in"] {
+			p.LeadIn = *leadIn
+		}
+		if set["tail-out"] {
+			p.TailOut = *tailOut
+		}
+		if set["presence-sources"] {
+			p.PresenceSources = splitCommaList(*presence)
+		}
+		if set["ignore-sources"] {
+			p.IgnoreSources = splitCommaList(*ignore)
+		}
+		if err := p.Validate(); err != nil {
 			return err
 		}
-	}
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-
-	// The file is the parameter set; a flag replaces one value of it for this
-	// run only. Nothing here writes the config back, so a swept threshold
-	// cannot become the configured one by accident.
-	p := sessions.Params{
-		Gap:             cfg.Sessions.Gap.Duration(),
-		LeadIn:          cfg.Sessions.LeadIn.Duration(),
-		TailOut:         cfg.Sessions.TailOut.Duration(),
-		PresenceSources: cfg.Sessions.PresenceSources,
-		IgnoreSources:   cfg.Sessions.IgnoreSources,
-	}
-	if set["gap"] {
-		p.Gap = *gap
-	}
-	if set["lead-in"] {
-		p.LeadIn = *leadIn
-	}
-	if set["tail-out"] {
-		p.TailOut = *tailOut
-	}
-	if set["presence-sources"] {
-		p.PresenceSources = splitCommaList(*presence)
-	}
-	if set["ignore-sources"] {
-		p.IgnoreSources = splitCommaList(*ignore)
-	}
-	if err := p.Validate(); err != nil {
-		return err
-	}
-	excludes, err := sessionExcludesFrom(cfg, *exclude, set["exclude"])
-	if err != nil {
-		return err
-	}
-
-	// The calendar goes through the config types rather than being assembled
-	// here, so that a flag and a file are parsed by the same code and cannot
-	// disagree about what "05:00" or "monday" means.
-	calCfg := cfg.Calendar
-	if set["timezone"] {
-		calCfg.Timezone = *timezone
-	}
-	if set["day-start"] {
-		if err := calCfg.DayStart.UnmarshalJSON([]byte(strconv.Quote(*dayStart))); err != nil {
-			return fmt.Errorf("-day-start: %w", err)
+		excludes, err := sessionExcludesFrom(cfg, *exclude, set["exclude"])
+		if err != nil {
+			return err
 		}
-	}
-	if set["week-start"] {
-		if err := calCfg.WeekStart.UnmarshalJSON([]byte(strconv.Quote(*weekStart))); err != nil {
-			return fmt.Errorf("-week-start: %w", err)
+
+		// The calendar goes through the config types rather than being assembled
+		// here, so that a flag and a file are parsed by the same code and cannot
+		// disagree about what "05:00" or "monday" means.
+		calCfg := cfg.Calendar
+		if set["timezone"] {
+			calCfg.Timezone = *timezone
 		}
-	}
-	cal, err := calCfg.Sessions()
-	if err != nil {
-		return err
-	}
-
-	filter := store.Filter{}
-	if filter.From, err = parseBoundary(*from, "from"); err != nil {
-		return err
-	}
-	if filter.To, err = parseBoundary(*to, "to"); err != nil {
-		return err
-	}
-
-	st, err := store.Open(*storePath)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	ctx := context.Background()
-	// The canonical view, never the table. Summing over every observation
-	// ever made double-counts each horizon that a later harvest completed,
-	// which is the exact inflation Timetattle exists to catch.
-	events, err := st.Events(ctx, filter)
-	if err != nil {
-		return err
-	}
-	// Machine activity is removed BEFORE the observed window is computed as
-	// well as before the clustering, so a day whose only trace was a log
-	// rotation reads as a day nothing was recorded on rather than as a day
-	// observed to hold no work. Those are different claims and this is the one
-	// place the difference can still be made.
-	events, drop := sessions.Retain(events, excludes)
-
-	out := stdout
-	if *quiet {
-		out = io.Discard
-	}
-
-	if *sweep != "" {
-		reportExclusions(out, excludes, drop)
-		return sweepGaps(*sweep, events, p, out)
-	}
-
-	res, err := sessions.Cluster(events, p)
-	if err != nil {
-		return err
-	}
-	reportSessions(out, *storePath, res, excludes, drop)
-
-	// The observed window is the span the events themselves cover, and it is
-	// what separates "no work on this day" from "nobody looked at this day".
-	// It is computed from the events already read rather than from a second
-	// query, so the two can never describe different corpora.
-	if *byDay || *byWeek {
-		reportByPeriod(out, cal, res, observedWindow(events), *byWeek)
-	}
-
-	// The corpus this run was drawn from: which observations it was allowed to
-	// see, as against what it did with them. It is built from the excludes
-	// actually applied above and the filter actually read with, rather than
-	// from the config, so that a -exclude or a -from given for one run is
-	// recorded as the thing that produced these rows.
-	corpus := sittings.Corpus{
-		Exclude: excludes.Patterns(),
-		From:    filter.From,
-		To:      filter.To,
-	}
-
-	if *dryRun {
-		// A dry run leaves the table alone, so the useful thing it can say is
-		// whether the table it left alone is still this answer. Both halves
-		// count: a derivation at a different gap and a derivation drawn from a
-		// different corpus are equally stale, and until the corpus was stored
-		// the second kind could not be seen from here at all.
-		//
-		// window names an unbounded end as unbounded rather than printing the
-		// zero time. It is a local rather than a helper beside plural and
-		// listOrNone because it is wanted in exactly one place.
-		window := func(c sittings.Corpus) string {
-			from, to := "the beginning", "now"
-			if !c.From.IsZero() {
-				from = c.From.UTC().Format(store.TimeLayout)
+		if set["day-start"] {
+			if err := calCfg.DayStart.UnmarshalJSON([]byte(strconv.Quote(*dayStart))); err != nil {
+				return fmt.Errorf("-day-start: %w", err)
 			}
-			if !c.To.IsZero() {
-				to = c.To.UTC().Format(store.TimeLayout)
-			}
-			return from + ".." + to
 		}
-		stored, err := st.Sittings(ctx, time.Time{}, time.Time{})
-		switch {
-		case err != nil:
-			fmt.Fprintf(out, "dry run: the stored sessions were left alone, and could not be read "+
-				"to compare against: %v\n", err)
-		case stored.ComputedAt.IsZero():
-			fmt.Fprintln(out, "dry run: the stored sessions were left alone. Nothing has been derived "+
-				"into this store at all, which is not the same as a store with no work in it.")
-		case stored.Params.Equal(res.Params) && stored.Corpus.Equal(corpus):
-			fmt.Fprintf(out, "dry run: the stored sessions were left alone. They hold %s "+
-				"derived at %s under these same parameters and this same corpus.\n",
-				plural(len(stored.Sittings), "sitting"), stored.ComputedAt.UTC().Format(store.TimeLayout))
-		default:
-			fmt.Fprintf(out, "dry run: the stored sessions were left alone, and they are STALE. "+
-				"They hold %s derived at %s; this run would write %d.\n",
-				plural(len(stored.Sittings), "sitting"), stored.ComputedAt.UTC().Format(store.TimeLayout),
-				len(res.Sessions))
-			if !stored.Params.Equal(res.Params) {
-				fmt.Fprintf(out, "  parameters: stored gap %v, lead-in %v, tail-out %v; now %v, %v, %v\n",
-					stored.Params.Gap, stored.Params.LeadIn, stored.Params.TailOut,
-					res.Params.Gap, res.Params.LeadIn, res.Params.TailOut)
+		if set["week-start"] {
+			if err := calCfg.WeekStart.UnmarshalJSON([]byte(strconv.Quote(*weekStart))); err != nil {
+				return fmt.Errorf("-week-start: %w", err)
 			}
-			if !stored.Corpus.Equal(corpus) {
-				fmt.Fprintf(out, "  excluded: stored %s; now %s\n",
-					listOrNone(stored.Corpus.Canonical().Exclude), listOrNone(corpus.Canonical().Exclude))
-				fmt.Fprintf(out, "  window:   stored %s; now %s\n", window(stored.Corpus), window(corpus))
-			}
-			fmt.Fprintln(out, "  re-run without -dry-run to make the stored derivation this one.")
 		}
+		cal, err := calCfg.Sessions()
+		if err != nil {
+			return err
+		}
+
+		filter := store.Filter{}
+		if filter.From, err = parseBoundary(*from, "from"); err != nil {
+			return err
+		}
+		if filter.To, err = parseBoundary(*to, "to"); err != nil {
+			return err
+		}
+
+		st, err := store.Open(*storePath)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+
+		ctx := context.Background()
+		// The canonical view, never the table. Summing over every observation
+		// ever made double-counts each horizon that a later harvest completed,
+		// which is the exact inflation Timetattle exists to catch.
+		events, err := st.Events(ctx, filter)
+		if err != nil {
+			return err
+		}
+		// Machine activity is removed BEFORE the observed window is computed as
+		// well as before the clustering, so a day whose only trace was a log
+		// rotation reads as a day nothing was recorded on rather than as a day
+		// observed to hold no work. Those are different claims and this is the one
+		// place the difference can still be made.
+		events, drop := sessions.Retain(events, excludes)
+
+		out := stdout
+		if *quiet {
+			out = io.Discard
+		}
+
+		if *sweep != "" {
+			reportExclusions(out, excludes, drop)
+			return sweepGaps(*sweep, events, p, out)
+		}
+
+		res, err := sessions.Cluster(events, p)
+		if err != nil {
+			return err
+		}
+		reportSessions(out, *storePath, res, excludes, drop)
+
+		// The observed window is the span the events themselves cover, and it is
+		// what separates "no work on this day" from "nobody looked at this day".
+		// It is computed from the events already read rather than from a second
+		// query, so the two can never describe different corpora.
+		if *byDay || *byWeek {
+			reportByPeriod(out, cal, res, observedWindow(events), *byWeek)
+		}
+
+		// The corpus this run was drawn from: which observations it was allowed to
+		// see, as against what it did with them. It is built from the excludes
+		// actually applied above and the filter actually read with, rather than
+		// from the config, so that a -exclude or a -from given for one run is
+		// recorded as the thing that produced these rows.
+		corpus := sittings.Corpus{
+			Exclude: excludes.Patterns(),
+			From:    filter.From,
+			To:      filter.To,
+		}
+
+		if *dryRun {
+			// A dry run leaves the table alone, so the useful thing it can say is
+			// whether the table it left alone is still this answer. Both halves
+			// count: a derivation at a different gap and a derivation drawn from a
+			// different corpus are equally stale, and until the corpus was stored
+			// the second kind could not be seen from here at all.
+			//
+			// window names an unbounded end as unbounded rather than printing the
+			// zero time. It is a local rather than a helper beside plural and
+			// listOrNone because it is wanted in exactly one place.
+			window := func(c sittings.Corpus) string {
+				from, to := "the beginning", "now"
+				if !c.From.IsZero() {
+					from = c.From.UTC().Format(store.TimeLayout)
+				}
+				if !c.To.IsZero() {
+					to = c.To.UTC().Format(store.TimeLayout)
+				}
+				return from + ".." + to
+			}
+			stored, err := st.Sittings(ctx, time.Time{}, time.Time{})
+			switch {
+			case err != nil:
+				fmt.Fprintf(out, "dry run: the stored sessions were left alone, and could not be read "+
+					"to compare against: %v\n", err)
+			case stored.ComputedAt.IsZero():
+				fmt.Fprintln(out, "dry run: the stored sessions were left alone. Nothing has been derived "+
+					"into this store at all, which is not the same as a store with no work in it.")
+			case stored.Params.Equal(res.Params) && stored.Corpus.Equal(corpus):
+				fmt.Fprintf(out, "dry run: the stored sessions were left alone. They hold %s "+
+					"derived at %s under these same parameters and this same corpus.\n",
+					plural(len(stored.Sittings), "sitting"), stored.ComputedAt.UTC().Format(store.TimeLayout))
+			default:
+				fmt.Fprintf(out, "dry run: the stored sessions were left alone, and they are STALE. "+
+					"They hold %s derived at %s; this run would write %d.\n",
+					plural(len(stored.Sittings), "sitting"), stored.ComputedAt.UTC().Format(store.TimeLayout),
+					len(res.Sessions))
+				if !stored.Params.Equal(res.Params) {
+					fmt.Fprintf(out, "  parameters: stored gap %v, lead-in %v, tail-out %v; now %v, %v, %v\n",
+						stored.Params.Gap, stored.Params.LeadIn, stored.Params.TailOut,
+						res.Params.Gap, res.Params.LeadIn, res.Params.TailOut)
+				}
+				if !stored.Corpus.Equal(corpus) {
+					fmt.Fprintf(out, "  excluded: stored %s; now %s\n",
+						listOrNone(stored.Corpus.Canonical().Exclude), listOrNone(corpus.Canonical().Exclude))
+					fmt.Fprintf(out, "  window:   stored %s; now %s\n", window(stored.Corpus), window(corpus))
+				}
+				fmt.Fprintln(out, "  re-run without -dry-run to make the stored derivation this one.")
+			}
+			return nil
+		}
+
+		// One call, through the handle already open. The store owns the
+		// transaction, so derived_session comes out holding either this derivation
+		// or the previous one and never a mixture — see store.ReplaceDerived.
+		if err := st.ReplaceDerived(ctx, sessions.Replace(res, corpus, time.Now())); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "%s: %s written\n", *storePath, plural(len(res.Sessions), "session"))
 		return nil
 	}
-
-	// One call, through the handle already open. The store owns the
-	// transaction, so derived_session comes out holding either this derivation
-	// or the previous one and never a mixture — see store.ReplaceDerived.
-	if err := st.ReplaceDerived(ctx, sessions.Replace(res, corpus, time.Now())); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "%s: %s written\n", *storePath, plural(len(res.Sessions), "session"))
-	return nil
+	return cmd
 }
 
 // sweepGaps reports the same events clustered at several thresholds, and
