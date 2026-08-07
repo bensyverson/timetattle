@@ -632,7 +632,7 @@ var dashboardSections = []dashboardSection{
 func renderDashboard(ctx context.Context, out io.Writer, scope metricsScope, period dashboardPeriod,
 	cc colorCapability, data *dashboardData, detailed bool) error {
 	fmt.Fprintf(out, "%s\n", data.Store.Path())
-	fmt.Fprintf(out, "%s\n", dashboardHeaderLine(scope, period))
+	fmt.Fprintf(out, "%s\n", dashboardHeaderLine(scope, period, data))
 
 	for _, s := range dashboardSections {
 		if s.Detailed && !detailed {
@@ -646,18 +646,49 @@ func renderDashboard(ctx context.Context, out io.Writer, scope metricsScope, per
 	return nil
 }
 
-// dashboardHeaderLine states the scope and the window actually used — the
-// clamped From/To, never the raw -days computation alone — so a reader is
-// never guessing which window the numbers below cover. period.Days (what
-// -days asked for) is printed either way, so a clamped run still says what
-// was requested alongside what was used.
-func dashboardHeaderLine(scope metricsScope, period dashboardPeriod) string {
+// dashboardHeaderLine states the scope, the window's own attributed (or
+// presence, under -all) hours, and the window actually used — the clamped
+// From/To, never the raw -days computation alone — so a reader is never
+// guessing which window the numbers below cover. period.Days (what -days
+// asked for) is printed either way, so a clamped run still says what was
+// requested alongside what was used.
+//
+// # The hours figure, job MAABc
+//
+// Ben's ask was one glanceable place printing the hours the selected scope
+// consumed within the window — "project \"timetattle\" - 38.9h attributed"
+// before the range, or "- 224.1h presence" under -all — and the figure has
+// to be the exact one dashboard_stats.go's Component Stats row already
+// prints, reused rather than recomputed (AGENTS.md's "two figures" rule:
+// a figure printed twice that nobody has reconciled is a bug waiting to
+// happen, and this is literally the bug Ben caught — see
+// dashboardAttributedLabel's own doc comment). dashboardHeaderHours below is
+// that reuse: it calls statsPresence, the same function statsHourRows
+// (dashboard_stats.go) calls for the row, and nothing here re-derives
+// anything from data.Events or data.Report on its own.
+func dashboardHeaderLine(scope metricsScope, period dashboardPeriod, data *dashboardData) string {
 	from, to := period.From.Local().Format("2006-01-02"), period.To.Local().Format("2006-01-02")
+	scopeLine := fmt.Sprintf("%s - %s", dashboardScopeLabel(scope), dashboardHeaderHours(scope, data))
 	if !period.Clamped {
-		return fmt.Sprintf("%s, %s to %s (%d days)", dashboardScopeLabel(scope), from, to, period.Days)
+		return fmt.Sprintf("%s, %s to %s (%d days)", scopeLine, from, to, period.Days)
 	}
 	return fmt.Sprintf("%s, %s to %s (%d days requested, clamped to the first observation in scope)",
-		dashboardScopeLabel(scope), from, to, period.Days)
+		scopeLine, from, to, period.Days)
+}
+
+// dashboardHeaderHours is the header's own scoped-hours phrase — the same
+// duration statsPresence computes for the Component Stats row, reused rather
+// than recomputed (see dashboardHeaderLine's own doc comment). !known is the
+// same "nothing to report" state statsHourRows renders as statUnrecorded: a
+// scope statsPresence has no row for at all is not zero hours, it is nothing
+// measured, so the header says so rather than printing a number nobody
+// counted.
+func dashboardHeaderHours(scope metricsScope, data *dashboardData) string {
+	d, known := statsPresence(scope, data)
+	if !known {
+		return statUnrecorded
+	}
+	return fmt.Sprintf("%.1fh %s", d.Hours(), dashboardAttributedLabel(scope))
 }
 
 // dashboardHeading bolds title (ANSI SGR 1) under any color capability and

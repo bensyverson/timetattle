@@ -485,6 +485,93 @@ func TestDashboardHeaderStatesTheClampedRangeWhenScopeStartsLate(t *testing.T) {
 	}
 }
 
+// CRITERION uhc, the scoped half, red-first: Ben's ask (job MAABc) is one
+// glanceable place printing the hours the selected scope consumed within the
+// window, stated as "attributed" — before dashboardHeaderLine grew a data
+// argument this figure did not exist in the header at all. The figure is
+// EXACTLY statsPresence's own (see TestDashboardHeaderAndStatsRowPrintTheSameAttributedFigure
+// for the pinned equality against dashboard_stats.go's own row).
+func TestDashboardHeaderPrintsAttributedHoursUnderAScope(t *testing.T) {
+	p := statsPeriod(t)
+	data := statsData(nil, collectedThroughout(p))
+	data.Report = metrics.Report{
+		Projects: []metrics.Project{{Name: "alpha", Engaged: metrics.Span{Total: 3*time.Hour + 54*time.Minute}}},
+		Clients:  []metrics.Client{{Name: "c1", Projects: []string{"alpha"}}},
+	}
+
+	header := dashboardHeaderLine(metricsScope{Project: "alpha"}, p, data)
+	if !strings.Contains(header, "3.9h attributed") {
+		t.Errorf("header %q does not print the scope's attributed hours (want \"3.9h attributed\")", header)
+	}
+}
+
+// CRITERION uhc, the -all half: under -all the header reads "presence",
+// matching the existing unscoped form (dashboardScopeLabel's own "every
+// client and project" is untouched by this task).
+func TestDashboardHeaderPrintsPresenceHoursUnderAll(t *testing.T) {
+	p := statsPeriod(t)
+	data := statsData(nil, collectedThroughout(p))
+	data.Report = metrics.Report{Presence: metrics.Span{Total: 10*time.Hour + 12*time.Minute}}
+
+	header := dashboardHeaderLine(metricsScope{}, p, data)
+	if !strings.Contains(header, "10.2h presence") {
+		t.Errorf("header %q does not print presence hours under -all (want \"10.2h presence\")", header)
+	}
+	if strings.Contains(header, "attributed") {
+		t.Errorf("header %q prints \"attributed\" under -all, want that label reserved for a scope", header)
+	}
+}
+
+// CRITERION 3Y5: the header's scoped hours and the Component Stats row's
+// hours row must be the SAME figure — a figure printed twice is exactly what
+// AGENTS.md's "two figures" rule is about, and this is why: job MAABc's own
+// bug was the row printing a mislabeled but otherwise correct figure, and a
+// second, independently-computed header figure would have been free to
+// silently disagree with it. Both dashboardHeaderLine (dashboard.go) and
+// statsHourRows (dashboard_stats.go) call statsPresence once each, on the
+// same data — this pins that the two calls can never print different text.
+func TestDashboardHeaderAndStatsRowPrintTheSameAttributedFigure(t *testing.T) {
+	p := statsPeriod(t)
+	data := statsData(nil, collectedThroughout(p))
+	data.Report = metrics.Report{
+		Projects: []metrics.Project{{Name: "alpha", Engaged: metrics.Span{Total: 3*time.Hour + 54*time.Minute}}},
+		Clients:  []metrics.Client{{Name: "c1", Projects: []string{"alpha"}}},
+	}
+	scope := metricsScope{Project: "alpha"}
+
+	header := dashboardHeaderLine(scope, p, data)
+	row := lineWith(t, renderStats(t, scope, p, data), "attributed")
+
+	figure := regexp.MustCompile(`\d+\.\d+h`)
+	headerFigure, rowFigure := figure.FindString(header), figure.FindString(row)
+	if headerFigure == "" || rowFigure == "" {
+		t.Fatalf("could not find an hours figure in header %q or row %q", header, row)
+	}
+	if headerFigure != rowFigure {
+		t.Errorf("header prints %s but the stats row prints %s for the same scope", headerFigure, rowFigure)
+	}
+}
+
+// CRITERION 3Y5's -all half: the same pinned equality, under the unfiltered
+// scope where both figures are "presence" rather than "attributed".
+func TestDashboardHeaderAndStatsRowPrintTheSamePresenceFigureUnderAll(t *testing.T) {
+	p := statsPeriod(t)
+	data := statsData(nil, collectedThroughout(p))
+	data.Report = metrics.Report{Presence: metrics.Span{Total: 10*time.Hour + 12*time.Minute}}
+
+	header := dashboardHeaderLine(metricsScope{}, p, data)
+	row := lineWith(t, renderStats(t, metricsScope{}, p, data), "presence")
+
+	figure := regexp.MustCompile(`\d+\.\d+h`)
+	headerFigure, rowFigure := figure.FindString(header), figure.FindString(row)
+	if headerFigure == "" || rowFigure == "" {
+		t.Fatalf("could not find an hours figure in header %q or row %q", header, row)
+	}
+	if headerFigure != rowFigure {
+		t.Errorf("header prints %s but the stats row prints %s under -all", headerFigure, rowFigure)
+	}
+}
+
 // CRITERION vGU's own justification: clamping the period is what makes the
 // COMPONENT STATS "observed days" divisor honest, automatically, with no
 // change to dashboard_stats.go — the divisor is derived from the period a

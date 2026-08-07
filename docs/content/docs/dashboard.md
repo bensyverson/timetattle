@@ -44,6 +44,10 @@ registered in July does not open with months of unobserved cells drawn for a
 window that predates it. The header states the range actually used —
 "N days requested, clamped to the first observation in scope" — so the
 divisor under every per-day average describes days the report really covers.
+The header also states the window's own hours before the range — `38.9h
+attributed` under any scope, `224.1h presence` under `-all` — and it is the
+exact figure the Component Stats row below prints, never a second
+computation of it.
 
 ## Color: detected once, shared by every section
 
@@ -100,10 +104,15 @@ here — the harvest log is the authority, and it has no row to show.
 
 ### Component Stats
 
-Per-source counts for the window with per-day averages — presence and
-screen-on hours, commits and line counts from the git log, file writes and
-files touched, task actions from the jobs source, Claude records, prompts,
-sessions and four token figures. The token figures stay separate — on a real
+Per-source counts for the window with per-day averages — the window's hours
+and screen-on hours, commits and line counts from the git log, file writes
+and files touched, task actions from the jobs source, Claude records,
+prompts, sessions and four token figures. The hours row labels itself
+`attributed` under any scope and `presence` only under `-all` — the same
+figure the header states above the table, restated here per source alongside
+everything else this panel counts. "Attributed" is this dashboard's own
+human name for what `metrics` calls engaged time, so the two vocabularies
+never drift apart silently. The token figures stay separate — on a real
 corpus cache reads outweigh output tokens by hundreds to one, so a single
 "tokens" number would be the cheapest figure wearing a general name. A
 session counts toward every scope it *touched*, so per-project session
@@ -116,7 +125,7 @@ prints `0` only when the sources were collecting and nothing happened;
 `unrecorded` means they were not collecting. Under a scope the screen-on row
 labels itself "screen-on, machine-wide": the presence sources record no path
 and attribute to no project, so that figure never narrows — comparing it to
-the scoped presence row reads as "how much of the machine's lit time went
+the scoped attributed row reads as "how much of the machine's lit time went
 here". Merge commits carry no diff, so they count as commits but contribute
 to neither line count. When a collection run inside the window is
 recorded as lost or partial, a closing line says the counts are lower

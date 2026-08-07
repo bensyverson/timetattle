@@ -340,11 +340,23 @@ func TestComponentStatsTakesPresenceHoursFromTheReport(t *testing.T) {
 	if row := lineWith(t, out, "presence"); !strings.Contains(row, "10.0") {
 		t.Errorf("presence reads %q, want the report's own 10h", strings.TrimSpace(row))
 	}
+	// CRITERION dbI, the -all half: "attributed" is reserved for a scope and
+	// must never appear on an unfiltered run.
+	if strings.Contains(out, "attributed") {
+		t.Errorf("an unscoped (-all) run prints \"attributed\" somewhere, want that label reserved for a "+
+			"scope:\n%s", out)
+	}
 }
 
 // A filtered scope takes the SCOPED figure out of the same report — a
 // project's Engaged span — rather than the store-wide presence total, which
 // would credit one project with every other project's hours.
+//
+// UPDATED BY job MAABc: this row was labeled "presence" under every scope,
+// which Ben caught as a mislabel — the figure it prints under a scope is
+// already Engaged.Total, not presence, and the row's own label now says so
+// ("attributed"). The lineWith lookup below moved from "presence" to
+// "attributed" for that reason; the figures asserted are unchanged.
 func TestComponentStatsTakesTheScopedProjectsOwnHours(t *testing.T) {
 	p := statsPeriod(t)
 	data := statsData(nil, collectedThroughout(p))
@@ -355,9 +367,38 @@ func TestComponentStatsTakesTheScopedProjectsOwnHours(t *testing.T) {
 	}
 
 	out := renderStats(t, metricsScope{Project: "alpha"}, p, data)
-	row := lineWith(t, out, "presence")
+	row := lineWith(t, out, "attributed")
 	if !strings.Contains(row, "3.0") || strings.Contains(row, "100.0") {
-		t.Errorf("presence reads %q, want alpha's own 3h and not the store's 100h", strings.TrimSpace(row))
+		t.Errorf("attributed reads %q, want alpha's own 3h and not the store's 100h", strings.TrimSpace(row))
+	}
+}
+
+// CRITERION dbI, the scoped half, red-first: under any scope the hours row
+// reads "attributed", and the panel prints no bare "presence" row at all —
+// that label is reserved for -all (see
+// TestComponentStatsTakesPresenceHoursFromTheReport for the unscoped half,
+// which already exercises "presence" and is unchanged by this task).
+func TestComponentStatsLabelsTheHoursRowAttributedUnderAScope(t *testing.T) {
+	p := statsPeriod(t)
+	data := statsData(nil, collectedThroughout(p))
+	data.Report = metrics.Report{
+		Projects: []metrics.Project{{Name: "alpha", Engaged: metrics.Span{Total: 3 * time.Hour}}},
+		Clients: []metrics.Client{{Name: "c1", Projects: []string{"alpha"},
+			Engaged: metrics.Span{Total: 3 * time.Hour}}},
+	}
+
+	for _, scope := range []metricsScope{{Project: "alpha"}, {Client: "c1"}} {
+		out := renderStats(t, scope, p, data)
+		row := lineWith(t, out, "attributed")
+		if !strings.Contains(row, "3.0") {
+			t.Errorf("scope %+v: attributed reads %q, want alpha's/c1's own 3h", scope, strings.TrimSpace(row))
+		}
+		for line := range strings.SplitSeq(out, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "presence") {
+				t.Errorf("scope %+v: still prints a bare \"presence\" row, want it reserved for -all: %q",
+					scope, line)
+			}
+		}
 	}
 }
 

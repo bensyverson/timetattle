@@ -373,6 +373,25 @@ func statRows(ctx context.Context, scope metricsScope, cal sessions.Calendar, ob
 	return append(rows, usageRows...), nil
 }
 
+// dashboardAttributedLabel is the word both the Component Stats hours row
+// (statsHourRows below) and the dashboard header (dashboard.go's
+// dashboardHeaderHours) use for the identical statsPresence figure —
+// "attributed" under any scope, "presence" only when nothing narrows the
+// report (-all, or an unfiltered run).
+//
+// Job MAABc: this row printed "presence" under every scope, which Ben caught
+// as a mislabel — under a scope the figure is already a project's or a
+// client's Engaged.Total (statsPresence's own doc comment below), not the
+// store-wide presence total "presence" names everywhere else in this panel
+// and in metrics.Report. "Attributed" is Ben's own word for it (see
+// docs/content/docs/dashboard.md).
+func dashboardAttributedLabel(scope metricsScope) string {
+	if scope.filtering() {
+		return "attributed"
+	}
+	return "presence"
+}
+
 // statsHourRows are the two duration rows, and both are REUSED from the report
 // metrics already computed rather than re-derived from the events. Presence is
 // wall clock across every source at once; a second summation here would be a
@@ -380,7 +399,7 @@ func statRows(ctx context.Context, scope metricsScope, cal sessions.Calendar, ob
 // would drift.
 func statsHourRows(scope metricsScope, observed int, data *dashboardData) []statRow {
 	presence, known := statsPresence(scope, data)
-	presenceRow := statRow{Label: "presence", Emphasis: true}
+	presenceRow := statRow{Label: dashboardAttributedLabel(scope), Emphasis: true}
 	switch {
 	case !known && observed == 0:
 		presenceRow.Marker = statUnrecorded
