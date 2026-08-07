@@ -69,6 +69,29 @@ func Union(spans []Span) []Span {
 	if len(spans) == 0 {
 		return nil
 	}
+	// A run that is already a union is copied and returned, without sorting or
+	// rebuilding it.
+	//
+	// The result is IDENTICAL rather than merely equivalent, which is what
+	// makes the shortcut safe. Under the condition below the sort is a no-op
+	// (a stable sort of a run already ascending by Start leaves it alone) and
+	// the merge loop takes its first arm every time, appending each span
+	// unchanged. Both halves of the condition are needed: the gap test alone
+	// would admit a malformed span whose End precedes its Start, and on such a
+	// run the sort is not a no-op.
+	// TestUnionOfARunThatIsAlreadyAUnionOnlyCopiesIt pins both halves of that:
+	// that the spans come back unchanged and unaliased, and that reaching them
+	// costs one allocation.
+	//
+	// What this is NOT worth, measured rather than assumed: on the live corpus
+	// it saved 9MB of 6GB. Almost nothing this pipeline hands Union is already
+	// a union — clustering unions raw backlight readings and overlapping
+	// clipped member spans, and neither is. The place where the redundancy was
+	// real is Subtract, which is why Subtract skips Union outright rather than
+	// relying on this arm to be cheap.
+	if isUnioned(spans) {
+		return slices.Clone(spans)
+	}
 	sorted := slices.Clone(spans)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Start.Before(sorted[j].Start) })
 
@@ -84,6 +107,24 @@ func Union(spans []Span) []Span {
 	return out
 }
 
+// isUnioned reports whether spans is already what Union would produce from it:
+// ascending by Start, and with every span beginning strictly after the previous
+// one ends, so that no pair overlaps or even touches.
+//
+// Touching counts as needing a merge, because Union merges touching spans; the
+// test is therefore After rather than !Before.
+func isUnioned(spans []Span) bool {
+	for i := 1; i < len(spans); i++ {
+		if spans[i].Start.Before(spans[i-1].Start) {
+			return false
+		}
+		if !spans[i].Start.After(spans[i-1].End) {
+			return false
+		}
+	}
+	return true
+}
+
 // Subtract removes every instant of cut from each span in from, keeping from's
 // order and never returning a slice that shares memory with it.
 //
@@ -94,8 +135,35 @@ func Subtract(from, cut []Span) []Span {
 	if len(cut) == 0 {
 		return remaining
 	}
-	for _, c := range Union(cut) {
-		next := make([]Span, 0, len(remaining)+1)
+	// TWO BUFFERS, SWAPPED, rather than a fresh run allocated per cut. Each
+	// pass reads one run and writes the next, so only two ever exist, and the
+	// one just read becomes the one written to on the pass after. Allocating
+	// inside the loop instead made the allocation count the CUT count, which
+	// on a real corpus — a metrics pass subtracts a long run of observed
+	// darkness once per project and once per client — was the largest single
+	// allocating line in the clustering pipeline.
+	//
+	// The initial capacity is a floor and not a bound: a cut lying strictly
+	// inside a span splits it in two, and `from` is not required to be
+	// disjoint, so a run really can grow. append is left to grow the buffer
+	// when it does, which happens a handful of times rather than once per cut.
+	// TestSubtractAllocationsDoNotScaleWithTheNumberOfCuts pins that
+	// difference.
+	// THE CUT IS UNIONED ONLY IF IT NEEDS TO BE. Subtract reads cuts and never
+	// writes to it, so when the caller's run is already sorted and disjoint
+	// there is nothing to derive and nothing to copy — and that is the common
+	// case rather than the lucky one: internal/sessions.Cluster subtracts the
+	// same run of observed darkness once for every cluster it built, and that
+	// run is a union it computed once. Re-deriving it per cluster cost a sort
+	// and a rebuilt run each time, 706MB of the 6GB a full metrics pass
+	// allocated.
+	cuts := cut
+	if !isUnioned(cuts) {
+		cuts = Union(cuts)
+	}
+	next := make([]Span, 0, len(remaining)+1)
+	for _, c := range cuts {
+		next = next[:0]
 		for _, s := range remaining {
 			if !s.End.After(s.Start) {
 				// A point. It is inside the cut or it is not; there is no
@@ -117,7 +185,7 @@ func Subtract(from, cut []Span) []Span {
 				next = append(next, Span{Start: c.End, End: s.End})
 			}
 		}
-		remaining = next
+		remaining, next = next, remaining
 	}
 	return remaining
 }

@@ -239,7 +239,15 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 	}
 
 	var (
-		evidence  []observation
+		// Sized for the worst case — every event is evidence — rather than
+		// grown. A slice grown by append allocates roughly five times the
+		// bytes it ends up holding, since every regrowth abandons the array
+		// before it, and over a corpus of a million events that was one of
+		// this function's two largest allocating lines. Presence and ignored
+		// events make this an overestimate; the unused tail costs one
+		// allocation that is never touched, against the several hundred
+		// megabytes of abandoned arrays it replaces.
+		evidence  = make([]observation, 0, len(events))
 		lit, dark []timespan.Span
 	)
 	for _, e := range events {
@@ -288,11 +296,31 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 	litU, darkU := timespan.Union(lit), timespan.Union(dark)
 	// Darkness is only established where nothing read it as lit. Where the two
 	// contradict, neither wins and nothing is deleted.
-	absent := timespan.Subtract(darkU, litU)
+	//
+	// UNIONED, not merely subtracted. Subtract leaves a run that is sorted and
+	// non-overlapping but can still TOUCH: a zero-length lit reading strictly
+	// inside a dark span splits it into two pieces that meet at an instant,
+	// and the live corpus has such readings. Touching is not a difference
+	// anything downstream can see — the same instants are covered, the same
+	// total elapses, and subtracting [a,b) then [b,c) removes what [a,c) does —
+	// but it is the difference between a run Subtract and Covers can take
+	// cheaply and one they cannot, and this run is handed to Subtract once per
+	// cluster and to Covers once per observation. Merging the joins here, once,
+	// is what makes both of those free.
+	absent := timespan.Union(timespan.Subtract(darkU, litU))
 	res.Stats.Contested = timespan.Total(timespan.Intersect(darkU, litU))
 	res.Stats.ObservedAbsence = timespan.Total(absent)
 
-	kept := evidence[:0:0]
+	// FILTERED IN PLACE, over evidence's own array. This is the standard Go
+	// filter, and it is safe here for one reason that must stay true: evidence
+	// is dead the moment this loop ends. Nothing below reads it, and everything
+	// that takes an observation out of kept — the clusters' members, the
+	// sessions' sources — copies the value rather than holding the slice. The
+	// write index never runs ahead of the read index, so an element is only
+	// ever overwritten after it has been read. Reading evidence after this loop
+	// would see kept's contents, so if a future change needs it, allocate a
+	// second slice here rather than restoring the read.
+	kept := evidence[:0]
 	for _, s := range evidence {
 		if timespan.Covers(absent, s.span.Start) {
 			res.Stats.SuppressedByAbsence++
@@ -368,6 +396,11 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 		expanded = append(expanded, next)
 	}
 
+	// One buffer for the clipped spans, reused across every piece of every
+	// cluster rather than allocated per piece. Union clones what it is given,
+	// so nothing outside this loop keeps a reference to it and truncating it
+	// for the next piece cannot reach an answer already computed.
+	var covered []timespan.Span
 	for _, c := range expanded {
 		// Expansion can reach into a span the screen was observed dark
 		// across, and so can a focus interval that ran on after the display
@@ -388,7 +421,7 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 		// below rather than emitted as a sitting nothing evidenced.
 		for _, piece := range pieces {
 			s := Session{Start: piece.Start, End: piece.End}
-			var covered []timespan.Span
+			covered = covered[:0]
 			for _, m := range c.members {
 				grown := timespan.Span{
 					Start: m.span.Start.Add(-p.LeadIn),

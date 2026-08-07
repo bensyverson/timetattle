@@ -437,22 +437,56 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 	}
 
 	roles := rolesOf(p)
+
+	// EVERY BUCKET IS SIZED BEFORE ANYTHING IS PUT IN IT. Growing a
+	// map-of-slices by append costs roughly five times the bytes it ends up
+	// holding, because each of a slice's regrowths allocates a new backing
+	// array and abandons the old one; over a corpus of a million events that
+	// was the largest allocating line in this function, and all of it garbage
+	// the collector then had to walk.
+	//
+	// This pass is a HINT and not a contract. If it ever counted differently
+	// from the pass below — a role table read twice, a condition that drifted
+	// apart — append still produces exactly the same buckets, just at the old
+	// cost. Nothing here can make the result wrong, which is why it is allowed
+	// to duplicate the two conditions rather than being fused into the loop it
+	// sizes.
+	perProject := make(map[string]int)
+	perClient := make(map[string]int)
+	for _, e := range events {
+		if role := roles[e.Source]; role == roleIgnored || role == rolePresence {
+			continue
+		}
+		if e.Identity.Project == "" {
+			continue
+		}
+		perProject[e.Identity.Project]++
+		if e.Identity.Client != "" {
+			perClient[e.Identity.Client]++
+		}
+	}
 	var (
-		byProject = map[string][]source.Event{}
+		byProject = make(map[string][]source.Event, len(perProject))
 		// The client level is grouped in its own map rather than sharing the
 		// one above. A client and a project may carry the SAME NAME — in the
 		// live registry one pair does — and one map keyed on the bare name
 		// would merge them into a bucket that is neither.
-		byClient      = map[string][]source.Event{}
+		byClient      = make(map[string][]source.Event, len(perClient))
 		clientOwns    = map[string]map[string]bool{}
 		bounds        []source.Event
 		unregistered  []source.Event
 		unlocatable   []source.Event
-		observedRaw   []span
+		observedRaw   = make([]span, 0, len(events))
 		unregResponse []span
 		unlocResponse []span
 		lit, dark     []span
 	)
+	for name, n := range perProject {
+		byProject[name] = make([]source.Event, 0, n)
+	}
+	for name, n := range perClient {
+		byClient[name] = make([]source.Event, 0, n)
+	}
 	for _, e := range events {
 		switch role := roles[e.Source]; {
 		case role == roleIgnored:

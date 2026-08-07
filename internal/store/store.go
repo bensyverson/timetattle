@@ -299,10 +299,27 @@ func (s *Store) events(ctx context.Context, from string, f Filter) ([]source.Eve
 		where = append(where, `source_id = ?`)
 		args = append(args, f.Source)
 	}
+	clause := ""
 	if len(where) > 0 {
-		query.WriteString(" WHERE " + strings.Join(where, " AND "))
+		clause = " WHERE " + strings.Join(where, " AND ")
+		query.WriteString(clause)
 	}
 	query.WriteString(` ORDER BY COALESCE(started_at, ended_at), id`)
+
+	// HOW MANY ROWS ARE COMING, asked before any are read, so the result slice
+	// is allocated once at its final size. A slice grown by append allocates
+	// about five times the bytes it ends up holding — every regrowth copies
+	// into a new array and abandons the one before it — and at a million
+	// events that was the largest single allocation in the whole program.
+	//
+	// This is a HINT and cannot make the result wrong. The store is opened
+	// read-only while a harvest may be writing to it, so the count and the
+	// read are two moments and may disagree; if more rows arrive between them,
+	// append grows the slice exactly as it did before, and if fewer do, the
+	// slice is merely longer than it needed to be. Nothing here is trusted as
+	// a length. It is also why the count's own error is not fatal below: a
+	// failed hint is a slower read, not a failed one.
+	out := make([]source.Event, 0, s.countEvents(ctx, from, clause, args))
 
 	rows, err := s.db.QueryContext(ctx, query.String(), args...)
 	if err != nil {
@@ -310,14 +327,27 @@ func (s *Store) events(ctx context.Context, from string, f Filter) ([]source.Eve
 	}
 	defer rows.Close()
 
-	var out []source.Event
+	// THE SCAN DESTINATIONS ARE DECLARED ONCE AND REUSED, not per row.
+	// rows.Scan takes their addresses, so anything declared inside the loop
+	// escapes and is heap-allocated on every iteration — ten objects a row,
+	// which over a store of a million events is ten million allocations that
+	// never appear in the result and are paid for entirely in collector time.
+	// Reuse is safe because every field of e is assigned from this row before
+	// e is appended: Source and Shape by Scan, and Unknown, Start, End,
+	// Identity, State, Locator and Cause below. Adding a field to source.Event
+	// and forgetting to assign it here would carry the previous row's value
+	// forward, which is the one hazard this shape introduces and the reason
+	// Identity is written as a whole struct literal rather than field by field.
+	// internal/store's TestReadingEventsAllocatesNoMorePerRowThanTheDriverItself
+	// pins the per-row cost against the driver's own, so the loop-local shape
+	// cannot come back unnoticed.
+	var (
+		e                                            source.Event
+		unknown, started, ended                      sql.NullString
+		app, document, state, locator, projectColumn sql.NullString
+		cause                                        sql.NullString
+	)
 	for rows.Next() {
-		var (
-			e                                            source.Event
-			unknown, started, ended                      sql.NullString
-			app, document, state, locator, projectColumn sql.NullString
-			cause                                        sql.NullString
-		)
 		if err := rows.Scan(&e.Source, &e.Shape, &unknown, &started, &ended,
 			&app, &document, &state, &locator, &projectColumn, &cause); err != nil {
 			return nil, fmt.Errorf("read an event from %s: %w", s.path, err)
@@ -340,6 +370,21 @@ func (s *Store) events(ctx context.Context, from string, f Filter) ([]source.Eve
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// countEvents is how many rows the read is about to return, for sizing the
+// slice that will hold them.
+//
+// It returns zero rather than an error on any failure, because it is a
+// capacity hint and nothing else: a caller that could not count is a caller
+// that grows its slice, which is what every caller did before this existed. An
+// error here must never be the reason a read that would have succeeded fails.
+func (s *Store) countEvents(ctx context.Context, from, clause string, args []any) int {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+from+clause, args...).Scan(&n); err != nil {
+		return 0
+	}
+	return n
 }
 
 // formatTime renders an instant for storage: UTC, fixed width, truncated to the
