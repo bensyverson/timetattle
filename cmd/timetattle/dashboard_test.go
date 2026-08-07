@@ -913,6 +913,69 @@ func TestDashboardExactFlagRestoresRawFiguresInComponentStats(t *testing.T) {
 	}
 }
 
+// TEMPORARY (job z47sR): -heatmap-style validates against the exact registry
+// heatmapStyleOf itself resolves against (dashboard_heatmap.go's
+// heatmapStyles), so an unrecognised value is refused at the flag rather
+// than silently drawing the default filled style. The refusal happens
+// before -store/-config are even resolved — the same fail-fast shape -days's
+// own validation already has — so this test passes neither and never
+// touches a real store or config.
+func TestDashboardHeatmapStyleFlagRejectsAnUnrecognisedValue(t *testing.T) {
+	var out bytes.Buffer
+	err := dashboardTo(&out, []string{"-heatmap-style", "bogus"})
+	if err == nil {
+		t.Fatalf("-heatmap-style bogus was accepted, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "heatmap-style") {
+		t.Errorf("the refusal %q does not name the flag", err.Error())
+	}
+}
+
+// THE FLAG-PLUMBING HALF for -heatmap-style (job z47sR):
+// dashboard_heatmap_test.go's own tests exercise every style's rendering
+// directly against dashboardData.HeatmapStyle, including in color; this is
+// the one test proving the CLI flag itself — dashboardCmd's RunE — actually
+// sets that field on a real run, the same seam -exact reaches Component
+// Stats through (see TestDashboardExactFlagRestoresRawFiguresInComponentStats
+// above).
+//
+// The signal has to be one colorNone can show: runDashboard captures into a
+// bytes.Buffer, which detectColorCapability's own TTY check (dashcolor.go)
+// always reads as colorNone, so a captured run can never contain
+// heatmapSquareGlyph regardless of style — dashboard_heatmap_test.go's own
+// TestHeatmapColorNoneAppliesSpacingButFallsBackToThePlainGlyphForGlyphStyles
+// is what proves that fallback is deliberate. Spacing, unlike the glyph,
+// applies under colorNone too, so -heatmap-style spaced widening the grid's
+// rows is the one difference this harness can actually observe.
+func TestDashboardHeatmapStyleFlagReachesTheActivityHeatmapSection(t *testing.T) {
+	// 15 days back, over a 30-day window: comfortably more than a clamp's
+	// single day, so the grid draws real rows rather than "no days in the
+	// period" — seedSingleEventStore's own single anchor is enough evidence
+	// for the clamp to widen to full weeks around it.
+	storePath := seedSingleEventStore(t, time.Now().Add(-15*24*time.Hour))
+
+	filled := runDashboard(t, "-store", storePath, "-config", noConfig(t), "-all", "-days", "30")
+	if strings.Contains(filled, "no days in the period") {
+		t.Fatalf("the fixture drew no heatmap grid at all, so this test would prove nothing:\n%s", filled)
+	}
+
+	spaced := runDashboard(t, "-store", storePath, "-config", noConfig(t), "-all", "-days", "30",
+		"-heatmap-style", heatmapStyleSpaced)
+
+	filledRows, spacedRows := gridLines(filled), gridLines(spaced)
+	if len(filledRows) != 7 || len(spacedRows) != 7 {
+		t.Fatalf("filled drew %d grid rows and spaced drew %d, want 7 each:\nfilled:\n%s\nspaced:\n%s",
+			len(filledRows), len(spacedRows), filled, spaced)
+	}
+	for i := range filledRows {
+		if len(spacedRows[i]) <= len(filledRows[i]) {
+			t.Errorf("-heatmap-style spaced row %d is %q (%d chars), no wider than the default's %q "+
+				"(%d chars); the flag never reached the render path", i, spacedRows[i], len(spacedRows[i]),
+				filledRows[i], len(filledRows[i]))
+		}
+	}
+}
+
 func init() {
 	// Guard against NO_COLOR or COLORTERM leaking in from whatever shell runs
 	// `go test`, which would make TestDashboardEmitsNoEscapeCodesWhenCaptured

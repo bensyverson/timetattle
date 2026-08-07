@@ -544,3 +544,330 @@ func TestHeatmapLegendNamesTheAnchorInForce(t *testing.T) {
 		t.Errorf("the legend never names the unobserved cell:\n%s", out)
 	}
 }
+
+// TEMPORARY CELL STYLES — job z47sR. Ben's screenshot feedback on the
+// filled, background-painted grid was that a 30-day window reads compact and
+// hard to tease apart. These tests exercise the four -heatmap-style variants
+// (filled, square, spaced, square-spaced) this task adds, and are deleted
+// along with the mechanism itself once Ben picks a winner and a follow-up
+// hardcodes it — see heatmapStyle's own doc comment in dashboard_heatmap.go.
+
+// heatmapStrip removes SGR escape sequences, the same way
+// TestHeatmapDrawsTheSameGridInTruecolorAnd256Color's own local strip does,
+// pulled out here so every style test below can reuse it.
+func heatmapStrip(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != 0x1b {
+			b.WriteByte(s[i])
+			continue
+		}
+		for i < len(s) && s[i] != 'm' {
+			i++
+		}
+	}
+	return b.String()
+}
+
+// syntheticHeatmapGrid builds weeks columns of seven OBSERVED days each, all
+// carrying hours — no calendar, no store, no collection log, just enough of
+// a heatmapGrid to exercise writeHeatmap's own layout (spacer columns, month
+// labels, glyph vs. fill). Every cell being observed is what makes the
+// character-exact assertions below exact: nothing in these grids is ever
+// blank because it fell outside the period.
+func syntheticHeatmapGrid(weeks int, hours time.Duration) heatmapGrid {
+	g := heatmapGrid{Rows: [7]time.Weekday{
+		time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday, time.Saturday, time.Sunday,
+	}}
+	for range weeks {
+		var col [7]heatmapCell
+		for i := range col {
+			col[i] = heatmapCell{State: heatmapObserved, Hours: hours}
+		}
+		g.Columns = append(g.Columns, col)
+	}
+	return g
+}
+
+// heatmapStyleOf resolves every name the flag accepts to the Pitch/Glyph
+// pair job z47sR's brief specifies, and anything else — including the empty
+// string a fixture that never sets HeatmapStyle carries — falls back to
+// filled, today's shipped behaviour.
+func TestHeatmapStyleOfResolvesEveryNamedStyle(t *testing.T) {
+	cases := []struct {
+		name  string
+		pitch int
+		glyph bool
+	}{
+		{heatmapStyleFilled, 1, false},
+		{heatmapStyleSquare, 1, true},
+		{heatmapStyleSpaced, 2, false},
+		{heatmapStyleSquareSpaced, 2, true},
+	}
+	for _, c := range cases {
+		if got := heatmapStyleOf(c.name); got.Pitch != c.pitch || got.Glyph != c.glyph {
+			t.Errorf("heatmapStyleOf(%q) = %+v, want Pitch %d Glyph %v", c.name, got, c.pitch, c.glyph)
+		}
+	}
+}
+
+func TestHeatmapStyleOfFallsBackToFilledForEmptyOrUnknownNames(t *testing.T) {
+	filled := heatmapStyles[heatmapStyleFilled]
+	for _, name := range []string{"", "bogus", "Filled", "SQUARE"} {
+		if got := heatmapStyleOf(name); got != filled {
+			t.Errorf("heatmapStyleOf(%q) = %+v, want the filled default %+v", name, got, filled)
+		}
+	}
+}
+
+// CRITERION gDM, the row-count half. All four styles still draw exactly
+// seven lines, one per weekday, in every color capability — this task's
+// brief is explicit that the styles are rendering-only and never change how
+// many lines the grid takes, only what a cell (and its neighbours) look
+// like.
+func TestHeatmapAllFourStylesRenderSevenRows(t *testing.T) {
+	f := newHeatmapFixture(t, 30)
+	f.worked(f.days()[10], 5*time.Hour, 6*time.Hour, "Alderwick", "Ledger")
+	f.compute(t)
+
+	for _, name := range []string{
+		heatmapStyleFilled, heatmapStyleSquare, heatmapStyleSpaced, heatmapStyleSquareSpaced,
+	} {
+		f.data.HeatmapStyle = name
+		for _, cc := range []colorCapability{colorNone, color256, colorTruecolor} {
+			out := f.render(t, cc, metricsScope{})
+			if lines := gridLines(out); len(lines) != 7 {
+				t.Errorf("style %q under %v drew %d grid lines, want 7:\n%s", name, cc, len(lines), out)
+			}
+		}
+	}
+}
+
+// The spaced styles insert exactly one blank column BETWEEN weeks, and none
+// after the last one — "a blank column between weeks", not a trailing
+// margin. Plain text makes the interior spacer exact: 2h against the
+// default 8h anchor is comfortably in the first plain bucket ('-'), so every
+// week draws the same non-blank character and only the spacer stays blank.
+func TestHeatmapSpacedStyleInsertsOneBlankColumnBetweenWeeksPlainText(t *testing.T) {
+	g := syntheticHeatmapGrid(3, 2*time.Hour)
+	var b strings.Builder
+	if err := writeHeatmap(&b, colorNone, g, defaultHeatmapAnchor, heatmapStyles[heatmapStyleSpaced]); err != nil {
+		t.Fatalf("writeHeatmap: %v", err)
+	}
+	for _, line := range gridLines(b.String()) {
+		rest := strings.TrimPrefix(line, heatmapIndent)[heatmapGutter:]
+		if rest != "- - -" {
+			t.Fatalf("spaced row is %q, want %q (three weeks, one interior spacer each, none trailing)",
+				rest, "- - -")
+		}
+	}
+}
+
+// The same layout, in color: a spacer column paints nothing (only the cells
+// themselves call PaintBG), and once the escapes are stripped every column —
+// cell or spacer — is a bare space, since the default (non-Glyph) fill IS a
+// painted space. writeHeatmapRows alone is exercised here, not the full
+// writeHeatmap: the legend (writeHeatmapLegend) unconditionally paints one
+// background swatch of its own for its "unobserved" key, which would throw
+// off a raw count of every "\x1b[48;2;" in the section's full output.
+func TestHeatmapSpacedStyleInsertsOneBlankColumnBetweenWeeksInColor(t *testing.T) {
+	g := syntheticHeatmapGrid(3, 2*time.Hour)
+	var b strings.Builder
+	writeHeatmapRows(&b, colorTruecolor, g, defaultHeatmapAnchor, heatmapStyles[heatmapStyleSpaced])
+	out := b.String()
+	if n := strings.Count(out, "\x1b[48;2;"); n != 21 {
+		t.Errorf("spaced truecolor output painted %d background cells, want 21 (3 weeks x 7 rows); the "+
+			"spacer columns must paint nothing", n)
+	}
+	stripped := heatmapStrip(out)
+	for _, line := range gridLines(stripped) {
+		rest := strings.TrimPrefix(line, heatmapIndent)[heatmapGutter:]
+		if rest != "     " {
+			t.Fatalf("stripped spaced row is %q (%d chars), want 5 blank characters (three painted cells "+
+				"plus two interior spacers)", rest, len(rest))
+		}
+	}
+}
+
+// The square styles draw a foreground glyph instead of a background fill —
+// the whole point of job z47sR's ask, breathing room around each cell rather
+// than a flush-painted rectangle. Grid rows only, for the same reason the
+// color test above isolates them: the legend paints one background swatch
+// of its own regardless of style.
+func TestHeatmapSquareStyleDrawsAForegroundGlyphInsteadOfABackgroundFill(t *testing.T) {
+	g := syntheticHeatmapGrid(1, 4*time.Hour)
+	var b strings.Builder
+	writeHeatmapRows(&b, colorTruecolor, g, defaultHeatmapAnchor, heatmapStyles[heatmapStyleSquare])
+	out := b.String()
+	if strings.Contains(out, "\x1b[48;2;") {
+		t.Errorf("square style painted a background fill; every observed day here must draw a foreground "+
+			"glyph only:\n%s", out)
+	}
+	if got := strings.Count(out, string(heatmapSquareGlyph)); got != 7 {
+		t.Errorf("square style drew the square glyph %d times, want 7 (one per weekday row)", got)
+	}
+	if strings.ContainsRune(out, 0xFE0F) {
+		t.Errorf("square style output carries a variation selector (U+FE0F), which risks forcing an " +
+			"emoji-presentation substitution for the glyph")
+	}
+}
+
+// CRITERION k4j, the square-style half. An idle day (observed, zero hours)
+// must stay visually distinct from BOTH an unobserved day (still the hatch,
+// unchanged by style) and a worked day, under a Glyph style. See
+// heatmapIdleGlyphInk's own doc comment in dashboard_heatmap.go for why a
+// fixed dim grey was chosen over drawing the ramp's own near-black ground
+// colour or drawing nothing at all.
+func TestHeatmapSquareStyleDistinguishesIdleFromUnobservedAndFromWorked(t *testing.T) {
+	idleCell := heatmapCell{State: heatmapObserved, Hours: 0}
+	unobservedCell := heatmapCell{State: heatmapUnobserved}
+	workedCell := heatmapCell{State: heatmapObserved, Hours: 4 * time.Hour}
+
+	style := heatmapStyles[heatmapStyleSquare]
+	idle := heatmapDayCell(colorTruecolor, idleCell, defaultHeatmapAnchor, style)
+	unobserved := heatmapDayCell(colorTruecolor, unobservedCell, defaultHeatmapAnchor, style)
+	worked := heatmapDayCell(colorTruecolor, workedCell, defaultHeatmapAnchor, style)
+
+	if idle == unobserved {
+		t.Fatalf("an idle day and an unobserved day drew identically under the square style: %q", idle)
+	}
+	if !strings.Contains(unobserved, string(heatmapHatch)) {
+		t.Errorf("the unobserved cell dropped its hatch glyph under the square style: %q", unobserved)
+	}
+	if strings.Contains(idle, string(heatmapHatch)) {
+		t.Errorf("the idle cell drew the unobserved hatch glyph: %q", idle)
+	}
+	if !strings.Contains(idle, string(heatmapSquareGlyph)) {
+		t.Errorf("the idle cell drew no square glyph at all under a Glyph style: %q", idle)
+	}
+	if idle == worked {
+		t.Errorf("an idle day and a 4h worked day painted identically under the square style: %q", idle)
+	}
+}
+
+// heatmapIdleGlyphInk itself must actually be a different colour from both
+// the ramp's own ground (or a dark terminal theme would make an idle square
+// invisible) and the unobserved ink (or idle and unobserved would read as
+// the same finding at a glance even with the hatch shape as a second cue).
+func TestHeatmapIdleGlyphInkIsDistinctFromUnobservedInkAndFromTheRampGround(t *testing.T) {
+	if heatmapIdleGlyphInk == heatmapUnobservedInk {
+		t.Errorf("the idle glyph ink matches the unobserved ink %v", heatmapUnobservedInk)
+	}
+	if heatmapIdleGlyphInk == heatmapGround {
+		t.Errorf("the idle glyph ink matches the ramp's own ground %v; on a dark terminal theme an idle "+
+			"square would be invisible", heatmapGround)
+	}
+}
+
+// Month labels track the style's own pitch: a spaced grid's weeks are twice
+// as wide on screen, so the label naming week index 6 must land at printed
+// column 12 (6 * Pitch 2), not printed column 6, or the label would drift
+// out from under the week it names. Week index 6 — not 2 — is deliberate:
+// writeHeatmapMonths refuses to place a label within 4 printed columns of
+// the previous one (a 3-character label over a 1-column week needs the
+// room), and at Pitch 1 two months only 2 weeks apart do not have it — this
+// asserts the PITCH SCALING, not that rule, so the fixture gives both
+// styles enough room to place the label at all.
+func TestHeatmapMonthLabelsTrackTheStylesColumnPitch(t *testing.T) {
+	const septemberWeek = 6
+	var g heatmapGrid
+	for i := range septemberWeek + 1 {
+		var col [7]heatmapCell
+		m := time.August
+		if i == septemberWeek {
+			m = time.September
+		}
+		col[0].Day = sessions.Day{Year: 2026, Month: m, Date: 1}
+		g.Columns = append(g.Columns, col)
+	}
+	prefix := heatmapIndent + strings.Repeat(" ", heatmapGutter)
+	for _, style := range []heatmapStyle{heatmapStyles[heatmapStyleFilled], heatmapStyles[heatmapStyleSpaced]} {
+		var b strings.Builder
+		writeHeatmapMonths(&b, g, style)
+		body := strings.TrimSuffix(strings.TrimPrefix(b.String(), prefix), "\n")
+		want := septemberWeek * style.Pitch
+		if got := strings.Index(body, "Sep"); got != want {
+			t.Errorf("Pitch %d: Sep landed at column %d, want %d (week index %d * pitch)",
+				style.Pitch, got, want, septemberWeek)
+		}
+	}
+}
+
+// The legend's ramp swatches double in count under a spaced style, so the
+// legend's own width tracks the grid's doubled pitch rather than looking
+// squeezed beside a grid that just got twice as wide.
+func TestHeatmapLegendSwatchCountDoublesUnderSpacedStyles(t *testing.T) {
+	countSwatches := func(style heatmapStyle) int {
+		var b strings.Builder
+		writeHeatmapLegend(&b, colorTruecolor, defaultHeatmapAnchor, style)
+		return strings.Count(b.String(), string(heatmapFull))
+	}
+	filled := countSwatches(heatmapStyles[heatmapStyleFilled])
+	spaced := countSwatches(heatmapStyles[heatmapStyleSpaced])
+	if filled == 0 {
+		t.Fatalf("the filled legend drew no ramp swatches at all")
+	}
+	if spaced != filled*2 {
+		t.Errorf("spaced legend drew %d swatches against filled's %d, want exactly double (Pitch 2)",
+			spaced, filled)
+	}
+}
+
+// colorNone: spacing still applies (a reader piping the plain output should
+// still see the spaced layout), but a Glyph style has nothing of its own to
+// draw in plain text and falls back to exactly the same single character per
+// cell filled already draws — DETERMINISTIC, per this task's brief, rather
+// than an arbitrary third glyph nobody asked for.
+func TestHeatmapColorNoneAppliesSpacingButFallsBackToThePlainGlyphForGlyphStyles(t *testing.T) {
+	g := syntheticHeatmapGrid(2, 2*time.Hour)
+	var filled, square strings.Builder
+	writeHeatmapRows(&filled, colorNone, g, defaultHeatmapAnchor, heatmapStyles[heatmapStyleFilled])
+	writeHeatmapRows(&square, colorNone, g, defaultHeatmapAnchor, heatmapStyles[heatmapStyleSquare])
+	if filled.String() != square.String() {
+		t.Errorf("colorNone drew differently under filled and square (both Pitch 1); a Glyph style has "+
+			"nothing to fall back FROM in plain text:\nfilled: %q\nsquare: %q", filled.String(), square.String())
+	}
+
+	var spaced strings.Builder
+	writeHeatmapRows(&spaced, colorNone, g, defaultHeatmapAnchor, heatmapStyles[heatmapStyleSpaced])
+	if spaced.String() == filled.String() {
+		t.Errorf("colorNone drew identically under filled and spaced; spacing must still apply without color")
+	}
+}
+
+// THE FULL SEAM. dashboardData.HeatmapStyle — the field dashboard.go's own
+// -heatmap-style flag sets, exactly the way -exact sets data.Exact — must
+// actually be read by renderActivityHeatmap. Every day in this fixture is
+// marked collected, so the GRID carries no unobserved (hatch) cells at all
+// and "no background fill in the grid" is unambiguous evidence of the
+// square style rather than an accident of which days happened to be
+// unobserved. Only the grid lines are checked — gridLines(out), not out
+// itself — because the legend paints one background swatch of its own for
+// its "unobserved" key regardless of style, which this task's brief leaves
+// unchanged.
+func TestHeatmapRenderActivityHeatmapHonorsDataHeatmapStyle(t *testing.T) {
+	f := newHeatmapFixture(t, 7)
+	for _, d := range f.days() {
+		f.collected(d)
+	}
+	f.worked(f.days()[3], 5*time.Hour, 6*time.Hour, "Alderwick", "Ledger")
+	f.compute(t)
+
+	f.data.HeatmapStyle = heatmapStyleSquareSpaced
+	out := f.render(t, colorTruecolor, metricsScope{})
+	grid := strings.Join(gridLines(out), "\n")
+	if strings.Contains(grid, "\x1b[48;2;") {
+		t.Errorf("data.HeatmapStyle=%q still painted a background fill in the grid:\n%s",
+			heatmapStyleSquareSpaced, out)
+	}
+	if !strings.Contains(grid, string(heatmapSquareGlyph)) {
+		t.Errorf("data.HeatmapStyle=%q drew no square glyph in the grid:\n%s", heatmapStyleSquareSpaced, out)
+	}
+
+	f.data.HeatmapStyle = ""
+	bare := f.render(t, colorTruecolor, metricsScope{})
+	if !strings.Contains(strings.Join(gridLines(bare), "\n"), "\x1b[48;2;") {
+		t.Errorf("an unset data.HeatmapStyle drew no background fill in the grid at all; the default must "+
+			"stay filled:\n%s", bare)
+	}
+}
