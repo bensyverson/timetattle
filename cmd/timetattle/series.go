@@ -450,18 +450,21 @@ func reportSeries(out io.Writer, r metrics.Report, cal sessions.Calendar, unit s
 			"boundary is creating or destroying time\n")
 	}
 
-	fmt.Fprint(out, "\n")
-	wrap(out, "  ", fmt.Sprintf("A sitting that crosses a period boundary is SPLIT at it and counted "+
-		"once on each side, so these rows sum to the ungrouped total exactly rather than exceeding "+
-		"it. PRESENCE is the column that sums; ABSOLUTE still overlaps BETWEEN PROJECTS, so a "+
-		"period two projects worked in at once shows more absolute than presence, and %s of the "+
-		"rows above do.", plural(overCounted(rows, scope), "period")), cols)
+	// PRESENCE is the column that sums; ABSOLUTE overlaps between projects, so a
+	// period two projects worked in at once shows more absolute than presence.
+	// That is not an error, and the count is what says how much of the table it
+	// affects — see docs/content/docs/metrics.md for why the two differ.
+	fmt.Fprintf(out, "%s show more absolute than presence, which is concurrent work\n",
+		plural(overCounted(rows, scope), "period"))
 
+	// plural() appends its s to the noun it is given, so it must be handed the
+	// noun alone. This was handing it unit.noun()+" is", which rendered two
+	// partial weeks as "2 week iss": the count was right and the sentence
+	// carrying it was not one. The assertion above matches on "partly covered"
+	// and never looked as far as the words before it.
 	if partial > 0 {
-		fmt.Fprint(out, "\n")
-		wrap(out, "  ", fmt.Sprintf("%s only partly covered by the span asked for, and %s totals are "+
-			"not comparable with a whole one's. The column says how many of the period's days are "+
-			"here.", plural(partial, unit.noun()+" is"), map[bool]string{true: "their", false: "its"}[partial > 1]), cols)
+		fmt.Fprintf(out, "%s only partly covered by the span asked for; the days column says "+
+			"how much of each is here\n", plural(partial, unit.noun()))
 	}
 	reportCollection(out, unit, rows, log, unrecorded, cols)
 }
@@ -499,11 +502,7 @@ func reportCollection(out io.Writer, unit seriesUnit, rows []seriesRow, log coll
 	fmt.Fprint(out, "\n")
 	wrap(out, "  ", fmt.Sprintf("COLLECTION IS UNRECORDED FOR %s. Neither a capture nor a harvest "+
 		"left a row inside them, %s, so a 0.0h there cannot be told apart from a period in which "+
-		"nothing was collected. capture_run arrived with migration 0007 and records nothing before "+
-		"it; the harvest that failed silently for 44 hours in July 2026 predates it and is invisible "+
-		"here. Where a row does exist, the column says only that collection was RUNNING at the time, "+
-		"not that this period's evidence is complete: a later harvest ingests evidence produced "+
-		"days earlier.", plural(unrecorded, "of these "+unit.noun()), begins), cols)
+		"nothing was collected.", plural(unrecorded, "of these "+unit.noun()), begins), cols)
 }
 
 // csvSeries writes the series as one row per period per grouping.

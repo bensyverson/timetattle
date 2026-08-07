@@ -1431,53 +1431,9 @@ func reviewShare(part, whole time.Duration) float64 {
 // reviewUsage is this command's Long help. It is a constant rather than a
 // literal inside reviewCmd only because seventeen flag declarations would
 // otherwise sit a page and a half below the command they belong to.
-const reviewUsage = `Puts a whole working day on one screen and asks whether it is right.
-
-Nothing downstream is believable until the clustering parameters are fitted, and
-this is where the ground truth to fit them against comes from. 75.7% of the
-engaged time in the live store is margin that unfitted parameters invented.
-
-THE FAST PATH IS ONE KEYSTROKE. Press Enter and the day is confirmed. Detail
-costs something only on the days that are actually wrong: press n and the day is
-walked block by block, and each block can be trimmed, extended, deleted or
-reattributed without leaving the keyboard.
-
-CONFIRMING A DAY IS A COMPLETE ACCOUNTING OF IT, not a shrug. Every block is
-recorded as work AND every gap between them as not work, so the day says
-something about all twenty-four hours. That second half is what a gap threshold
-can be fitted against; without it every parameter that lengthens a sitting would
-fit at least as well as every parameter that shortens one.
-
-FOUR STATES, AND THEY ARE FOUR ON PURPOSE. A day can be reviewed and agreed
-with, reviewed and corrected, reviewed and NOT REMEMBERED, or never opened at
-all. Pressing u records the third; pressing s records nothing whatever and
-leaves the fourth. "I never looked" and "I looked and cannot remember" are
-different facts, and this tool has collapsed that distinction three times.
-
-A CONFIRMATION OF THE MODEL'S ANSWER CANNOT FIT THE MODEL. Over the fourteen
-presence-covered reviewed days the fit residual at the shipped 15m/5m/5m is
-exactly 0.000h and "timetattle fit" prints CIRCULAR, because a reviewer
-confirming blocks he was SHOWN produces a strict subset of the derivation. So
--blind draws the OBSERVATIONS and no part of the model — no block, no sitting,
-no margin, no parameter — and asks when work started and stopped, one silence at
-a time. Aim it at pre-July days, where the parameters actually decide something.
-
-THREE HORIZONS BOUND WHAT MAY BE ASSERTED, not one: the moment of review, the
-last time the clustering ran, and the earliest source anything has been asked
-of. The day view draws the stretch past the earliest of them as ? rather than ·
-and says which one is binding. "Nothing has looked here yet" and "every source
-reported quiet" are different facts, and confusing them cost 1.4379h of false
-not-engaged on 2026-08-01.
-
-CORRECTIONS ARE AN OVERLAY. Nothing here touches an event and nothing here
-touches derived_session, which "timetattle sessionize" rebuilds wholesale on
-every run. The difference between the machine's answer and yours is the model
-error, and that difference is the point.
-
-Non-interactive, for a caller that is not sitting at a terminal:
-
-  timetattle review -list                      what is left to review, and in
-                                               which of the four states
-  timetattle review -date 2026-07-28 -print    draw one day and stop
-  timetattle review -date 2026-07-28 -confirm  record it as right, no prompting
-  timetattle review -date 2026-07-28 -unremembered`
+const reviewUsage = `Puts a whole working day on one screen and asks whether it is right, recording
+the answer as an append-only overlay that touches no event and no session row.
+Enter confirms the day whole, n walks it block by block, u records that it was
+looked at and not remembered, and s records nothing at all; -blind reviews from
+the OBSERVATIONS with no block, sitting or parameter on the screen, which is the
+only kind of label that can fit the parameters it was not shown.`

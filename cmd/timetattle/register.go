@@ -16,41 +16,10 @@ func registerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "register",
 		Short: "Bless a directory with a client and project",
-		Long: `Writes a marker naming a client and project into a directory, so evidence
-found under it can be attributed without asking again. Run it once per
-directory a project's work lives in — a repository root, a shared asset
-folder, a scratch render directory outside any repository — using the same
-client and project each time to bless more than one; a project is not
-limited to one directory.
-
-Identity lives in the directory itself, as a small JSON file named
-.timetattle-project.json, rather than in a table kept elsewhere: moving or
-cloning the directory carries the identity with it. Contract terms such as a
-rate or a budget are never written here, so they can never be committed by
-accident; they belong in global config.
-
-Registering the same directory again with the same client and project is a
-no-op. Registering it again with a different client or project is refused
-unless -force is given.
-
-ONE PROJECT NAME BELONGS TO ONE CLIENT. Registering a project name another
-directory already holds for a DIFFERENT client is refused, and the refusal
-names the directory and the client holding it. Two clients each with a project
-called "website" would otherwise merge into one row in every report that groups
-by project. Several directories sharing one client AND project is the case this
-protects rather than blocks, and stays a plain success.
-
-Renaming a client means re-registering each of its directories with -force, and
-the refusal lists the ones still to do. While that is half done the directories
-disagree, on purpose; each event keeps the client its own directory names, so
-reports stay correct throughout rather than breaking in the middle.
-
-The directory is also recorded in a small index at -index, separate from the
-marker itself, so 'timetattle harvest' can find every registered directory
-without searching the whole disk for markers. If that index cannot be
-written, the marker is still written and this command still succeeds; only
-automatic discovery by harvest is affected, and re-running register later
-retries the index too.`,
+		Long: `Writes a .timetattle-project.json marker naming a client and project into a
+directory, so evidence found under it can be attributed without asking again.
+A project may span any number of directories; one project name belongs to one
+client, and reassigning either needs -force.`,
 	}
 	fs := cmd.Flags()
 	client := fs.String("client", "", "who the work in this directory is for")

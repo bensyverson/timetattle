@@ -37,65 +37,12 @@ func sessionizeCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sessionize",
 		Short: "Group events into sittings and store them",
-		Long: `Groups the events already in the store into sittings, and replaces
-derived_session with the result.
-
-Nothing is captured and no source is read. The derivation is a pure function of
-the events and the parameters, so it is rebuilt wholesale on every run: every
-row of derived_session is deleted and rewritten inside one transaction, and the
-event and harvest_run tables are not written to at all.
-
-THE GAP THRESHOLD IS NOT A SETTLED VALUE. Total engaged time ranged from 530.4h
-at two minutes to 1199.9h at two hours over the corpus the spike measured — a
-2.3x spread — and nothing has yet fitted it against ground truth. The shipped
-default of 15m is a placeholder in the middle of that range and should be read
-as one. Use -sweep to see the spread on your own data before quoting a figure
-from it.
-
-Sittings are global rather than per-project. Engaged time is per-project and
-may overlap, because concurrent work on two projects is billable to both;
-presence is wall clock and is never double-counted. These spans are the second
-kind, and per-project engaged time is an intersection against them.
-
-Presence bounds sittings and never creates them. A span the backlight was
-observed dark across splits a sitting and is subtracted from it; a span it was
-observed lit across merges nothing; and a span it said NOTHING about does
-neither, because an absence of evidence is not evidence of absence and reading
-one as the other has deleted real work in this project three times.
-
--by-day and -by-week group the sittings into WORKING DAYS, which begin at 05:00
-local rather than at midnight so that an evening running to 01:37 is still that
-evening's work. A sitting that really does cross the boundary is split at it,
-so no day is ever credited with more wall clock than elapsed inside it, and the
-report reconciles the per-day figures against the ungrouped total on every run.
-Days are 23 or 25 hours long across a daylight-saving transition and the report
-says which; the zone comes from the zoneinfo database and never from a fixed
-offset.
-
-A day inside the observed span with no sittings on it reads "observed, no
-work". A day nothing was recorded on does not appear at all, because a zero
-there would be a claim nobody measured.
-
-sessions.exclude names files that are machine activity rather than work, and it
-is applied where the events are READ. Nothing is deleted from the store, the
-rule reaches every observation already in it, and removing a pattern and
-re-running puts the time back. SQLite -wal and -shm sidecars are excluded with
-no configuration at all, because they cannot be anybody's work product; every
-other pattern is yours to declare, and the list ships empty. What was dropped is
-counted and itemised on every run.
-
-Parameters come from ~/.timetattle/config.json, and any flag below overrides
-the file for that one run without changing it. Every session row stores the
-parameters it was derived under AND the corpus it was drawn from — the exclude
-patterns that were applied and the -from/-to window that was read — so a stale
-table is visible rather than silently mixed in with a fresh question. Editing
-sessions.exclude and not re-running this command is therefore something a
-reader can now see rather than something it has to be told.
-
--dry-run computes everything, writes nothing, and compares what it would have
-written against what is already stored: whether the table is this same answer,
-whether it is stale, and — separately from both — whether nothing has ever been
-derived into this store at all.`,
+		Long: `Groups the events already in the store into sittings and rebuilds
+derived_session wholesale, inside one transaction; no source is read and no
+event is written. THE GAP THRESHOLD IS NOT A SETTLED VALUE — total engaged time
+ranged 2.3x across the plausible range and the shipped 15m default is a
+placeholder, so run -sweep before quoting a figure. Parameters come from
+~/.timetattle/config.json and any flag below overrides it for one run.`,
 	}
 	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to read and write (default: ~/.timetattle/timetattle.db)")
@@ -520,10 +467,11 @@ func reportByPeriod(out io.Writer, cal sessions.Calendar, res sessions.Result, o
 		fmt.Fprintf(out, "%d %ss are only partly covered by the corpus; their totals are not "+
 			"comparable with a whole one\n", partial, unit)
 	}
+	// A split sitting's margin is reported unapportioned, because a sitting
+	// records how much of it was inferred and not where in it that fell.
 	if split := countSplit(rows); split > 0 {
-		fmt.Fprintf(out, "%s crossed a boundary and were split across two %ss. "+
-			"Their margin is reported unapportioned, because a sitting records how much of it was "+
-			"inferred and not where that fell\n", plural(split, "sitting"), unit)
+		fmt.Fprintf(out, "%s crossed a boundary and were split across two %ss; their margin is "+
+			"unapportioned\n", plural(split, "sitting"), unit)
 	}
 }
 

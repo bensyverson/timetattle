@@ -32,15 +32,9 @@ func versionCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the commit this binary was built from",
-		Long: `Prints the version this binary was built from: the module pseudo-version, the
-git commit it was built at, and whether the working tree had uncommitted
-changes at build time. Takes no arguments.
-
-The commit comes from the VCS stamp the Go toolchain embeds automatically, not
-from anything this command computes, so it is only as trustworthy as the build
-that produced the binary. A binary built with -buildvcs=false, or built
-outside a git checkout entirely, reports the commit as unknown rather than
-guessing.`,
+		Long: `Prints the module pseudo-version, the commit this binary was built at, and
+whether the working tree was dirty at build time. The commit is the Go
+toolchain's VCS stamp, so a -buildvcs=false build reports it as unknown.`,
 		RunE: func(*cobra.Command, []string) error { return versionRun(stdout) },
 	}
 }

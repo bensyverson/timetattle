@@ -31,7 +31,6 @@ sidecars, 1034 by "*.bz2", 100 by "*.gz", 17 by "*.log", 518 by
 
 PRESENCE 1069.0h across 1370 sittings, median 22m16s, p95 2h58m14s
   293.8h observed, 775.2h (72.5%) inferred by the clustering
-  wall clock at the machine, counted once however many projects shared it
 
 sitting lengths
   under 5m       160 sittings       3.0h
@@ -128,6 +127,12 @@ describes.
 A filter matching nothing says so, rather than printing a table of zeroes: "this
 client was engaged for no time", "this client has no evidence in this span" and
 "there is no such client" are three different answers.
+
+Under `-project`, the `ENGAGED, per client` row above the table is still that
+client's **whole** roll-up across every project of theirs in the span, not the
+share belonging to the project below it. It is printed so the project can be
+seen against the client it belongs to, and the two figures differ whenever the
+client has more than one project. The report says so on the run.
 
 ### Where the client comes from
 
@@ -318,9 +323,7 @@ times.
 ```console
 UNATTRIBUTED PRESENCE 73.9h (6.2% of presence)
         6.0h  a path resolving to no registered project, across 1743 observations.
-              Some of those directories can be registered and some no longer exist;
-              telling them apart needs the registry and the filesystem, which this
-              command reads neither of. `timetattle orient` separates them.
+              `timetattle orient` says which of them can be registered.
        65.7h  a source carrying no path at all, across 45104 observations.
               knowledgeC and Biome; registering can never reach these.
         2.2h  silence the gap threshold bridged. Nothing was recorded here, which is

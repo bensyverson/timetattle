@@ -19,19 +19,17 @@ $ timetattle orient
 /Users/ben/.timetattle/timetattle.db
 919811 observations from 2013-09-19 to 2026-08-01; 38 registered directories
 last harvest 2026-08-01 11:35, 11m42s ago — whether that is a problem is
-`timetattle status`'s question, and this command does not answer it
+`timetattle status`'s question
 
 NEXT  timetattle consolidate -former /Users/ben/git/claude/shared \
             -path <the directory that work lives in now>
       325 observations, <0.1% of the store, name paths that are gone from disk,
-      117 of them under the one above. No marker can be written into a directory
-      that does not exist, so registering cannot reach these; declaring the
-      rename can. Where the work moved TO is not something this command can
-      know, and if nothing owns it any more there is nothing to declare.
+      117 of them under the one above. Registering cannot reach these; declaring
+      the rename can, and where the work moved to is not something this command
+      can know.
 
-UNATTRIBUTED, CARRYING A PATH: 1743 observations, 0.2% of the store. Five
-different things have to happen to these, and each count below is what ONE
-action against it is worth:
+UNATTRIBUTED, CARRYING A PATH: 1743 observations, 0.2% of the store. What each
+class needs:
          0  inside a registered directory already   timetattle harvest
        325  the path is gone from disk              timetattle consolidate
             /Users/ben/git/claude/shared (117)
@@ -44,21 +42,38 @@ action against it is worth:
             /Users/ben/Documents/Mattebox/Artwork/Pro Feature Highlights/3D (1)
             and 1 more
       1311  above a directory already registered    nothing
-            a marker there would own every unregistered directory beneath it,
-            and a wrong attribution is worse than none
         38  inside a shared application cache       nothing
-            register refuses it, because the cache holds every client's work;
-            the manifest's document-name join is what attributes these
 
-45104 observations carry NO PATH AT ALL. knowledgeC and Biome observe the
-machine rather than a file, so no registration can ever reach them, however many
-directories are blessed. They are counted here and nowhere above.
+45104 observations carry NO PATH AT ALL — knowledgeC and Biome, which no
+registration can reach. Counted here and nowhere above.
 
 EVERY FIGURE ABOVE IS A COUNT OF OBSERVATIONS AND NOT TIME. Sources emit rows at
-wildly different rates — an hour of Claude transcript outweighs a week of git
-commits — so a big count is not a lot of work. None of these went through the
-clustering and none is an estimate of hours; `timetattle metrics` is.
+wildly different rates, so a big count is not a lot of work; `timetattle metrics`
+is what estimates hours.
 ```
+
+Each count is what **one** action against that class is worth. Ranking the three
+actionable classes against each other by observation count is the only
+comparison the command can make honestly without going through the clustering:
+they are counts of the same thing, measured the same way. A count is a poor proxy
+for hours — an hour of Claude transcript outweighs a week of `gitlog` commits —
+which is why the caveat is printed rather than implied.
+
+The two classes whose action column reads `nothing` are the ones a reader is
+most likely to reach for `register` over, so the reason each is unreachable is
+worth stating here:
+
+- **Above a directory already registered.** A marker there would own every
+  unregistered directory beneath it as well, and a wrong attribution is worse
+  than none.
+- **Inside a shared application cache.** `register` refuses it, because the cache
+  holds every client's work at once — see
+  [What is refused](registry.md#what-is-refused). What attributes this evidence
+  instead is the manifest's document-name join.
+
+A `COULD NOT BE CLASSIFIED` row appears only when something was read that fits
+none of the five, and it carries the reason. Nothing was learned about those
+observations, which is not the same as their having no remedy.
 
 ## Three commands, three questions
 

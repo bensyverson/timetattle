@@ -107,23 +107,10 @@ func orientCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "orient",
 		Short: "Say what the state is and what to do next",
-		Long: `Says what the state is and what to do about it. Takes no arguments: it is meant
-to be the first thing run in a session, by someone or something with no memory
-of the last one.
-
-It reports every observation carrying a path that no project owns, grouped by
-WHAT WOULD CLEAR IT rather than by size, and names the single remedy that would
-clear the most. A directory is only ever recommended if ` + "`timetattle register`" + `
-would actually accept it, and a subdirectory is never recommended separately
-from the directory whose marker would already cover it.
-
-EVERY FIGURE IT PRINTS IS A COUNT OF OBSERVATIONS AND NONE OF THEM IS TIME.
-Sources emit rows at wildly different rates, so a large count is not a large
-number of hours. Run "timetattle metrics" for time, and "timetattle status" for
-whether collection itself is still working; this command answers neither and
-points at both.
-
-Nothing is written and the store is opened read-only.`,
+		Long: `Groups every observation no project owns by WHAT WOULD CLEAR IT, names the
+single remedy worth the most, and writes nothing. EVERY FIGURE IS A COUNT OF
+OBSERVATIONS AND NONE OF THEM IS TIME: run "timetattle metrics" for hours and
+"timetattle status" for whether collection still works.`,
 	}
 	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
@@ -498,7 +485,7 @@ func orientReport(out io.Writer, c orientCensus, now time.Time, cols int) {
 		// piece; splitting that across two lines leaves neither half runnable,
 		// and TestOrientDoesNotRestateStatusOrMetrics asserts on it.
 		wrap(out, "", fmt.Sprintf("last harvest %s, %v ago — whether that is a problem is "+
-			"`timetattle status`'s question, and this command does not answer it",
+			"`timetattle status`'s question",
 			c.LastHarvest.Local().Format("2006-01-02 15:04"), round(now.Sub(c.LastHarvest))), cols)
 	}
 
@@ -507,17 +494,15 @@ func orientReport(out io.Writer, c orientCensus, now time.Time, cols int) {
 
 	if c.NoPath > 0 {
 		fmt.Fprint(out, "\n")
-		wrap(out, "", fmt.Sprintf("%s carry NO PATH AT ALL. knowledgeC and Biome "+
-			"observe the machine rather than a file, so no registration can ever reach them, "+
-			"however many directories are blessed. They are counted here and nowhere above.",
+		wrap(out, "", fmt.Sprintf("%s carry NO PATH AT ALL — knowledgeC and Biome, which no "+
+			"registration can reach. Counted here and nowhere above.",
 			plural(c.NoPath, "observation")), cols)
 	}
 
 	fmt.Fprint(out, "\n")
 	wrap(out, "", "EVERY FIGURE ABOVE IS A COUNT OF OBSERVATIONS AND NOT TIME. Sources emit rows "+
-		"at wildly different rates — an hour of Claude transcript outweighs a week of git "+
-		"commits — so a big count is not a lot of work. None of these went through the "+
-		"clustering and none is an estimate of hours; `timetattle metrics` is.", cols)
+		"at wildly different rates, so a big count is not a lot of work; `timetattle metrics` "+
+		"is what estimates hours.", cols)
 }
 
 // orientNext names the single remedy that would clear the most, or says there
@@ -548,27 +533,24 @@ func orientNext(out io.Writer, c orientCensus, cols int) {
 	case orientPending:
 		fmt.Fprint(out, "\nNEXT  timetattle harvest\n")
 		wrap(out, "      ", worth+" already sit inside a registered directory and "+
-			"attribute the moment the resolution pass runs. It runs ONLY as a phase of "+
-			"harvest, so nothing else clears them, and until it does every per-project "+
-			"figure metrics prints is understated.", cols)
+			"attribute the moment the resolution pass runs, which happens only as a phase "+
+			"of harvest.", cols)
 	case orientStranded:
 		top := c.StrandedRoots[0]
 		fmt.Fprintf(out, "\nNEXT  timetattle consolidate -former %s \\\n"+
 			"            -path <the directory that work lives in now>\n", top.Dir)
 		wrap(out, "      ", fmt.Sprintf("%s name paths that are gone from disk, %d of "+
-			"them under the one above. No marker can be written into a directory that does "+
-			"not exist, so registering cannot reach these; declaring the rename can. Where "+
-			"the work moved TO is not something this command can know, and if nothing owns "+
-			"it any more there is nothing to declare.", worth, top.Observations), cols)
+			"them under the one above. Registering cannot reach these; declaring the rename "+
+			"can, and where the work moved to is not something this command can know.",
+			worth, top.Observations), cols)
 	case orientRegisterable:
 		top := c.RegisterableRoots[0]
 		fmt.Fprintf(out, "\nNEXT  timetattle register -dir %s \\\n"+
 			"            -client <client> -project <project>\n", top.Dir)
 		wrap(out, "      ", fmt.Sprintf("%s sit in directories that exist, are "+
 			"unregistered, and that register would accept; %d of them under the one above. "+
-			"Whether a directory is a PROJECT is a judgement this command cannot make — a "+
-			"scratch directory is as registerable as a repository — so the count is what "+
-			"says whether it earns a marker.", worth, top.Observations), cols)
+			"Whether a directory is a PROJECT is a judgement this command cannot make, so "+
+			"the count is what says whether it earns a marker.", worth, top.Observations), cols)
 	}
 }
 
@@ -608,9 +590,10 @@ func orientBreakdown(out io.Writer, c orientCensus, cols int) {
 		return
 	}
 	fmt.Fprint(out, "\n")
-	wrap(out, "", fmt.Sprintf("UNATTRIBUTED, CARRYING A PATH: %s, %s. Five different "+
-		"things have to happen to these, and each count below is what ONE action against "+
-		"it is worth:",
+	// Every count below is what ONE action against that class is worth, which is
+	// the only comparison this command can make honestly: they are counts of the
+	// same thing, measured the same way, and none of them is time.
+	wrap(out, "", fmt.Sprintf("UNATTRIBUTED, CARRYING A PATH: %s, %s. What each class needs:",
 		plural(c.WithPath, "observation"), orientShare(c.WithPath, c.Observations)), cols)
 
 	fmt.Fprintf(out, "  %8d  inside a registered directory already   timetattle harvest\n", c.Pending)
@@ -621,16 +604,17 @@ func orientBreakdown(out io.Writer, c orientCensus, cols int) {
 	fmt.Fprintf(out, "  %8d  a directory register would accept       timetattle register\n", c.Registerable)
 	orientRoots(out, c.RegisterableRoots)
 
-	fmt.Fprintf(out, "  %8d  above a directory already registered    nothing\n"+
-		"            a marker there would own every unregistered directory beneath it,\n"+
-		"            and a wrong attribution is worse than none\n", c.Container)
-	fmt.Fprintf(out, "  %8d  inside a shared application cache       nothing\n"+
-		"            register refuses it, because the cache holds every client's work;\n"+
-		"            the manifest's document-name join is what attributes these\n", c.Cache)
+	// Both of these classes print "nothing" in the action column, and a reader
+	// who is not told why would reach for register. A marker above a registered
+	// directory would own every unregistered directory beneath it; register
+	// refuses a shared cache because it holds every client's work, and the
+	// manifest's document-name join is what attributes those. See
+	// docs/content/docs/orient.md.
+	fmt.Fprintf(out, "  %8d  above a directory already registered    nothing\n", c.Container)
+	fmt.Fprintf(out, "  %8d  inside a shared application cache       nothing\n", c.Cache)
 	if c.Unknown > 0 {
-		fmt.Fprintf(out, "  %8d  COULD NOT BE CLASSIFIED\n"+
-			"            nothing was learned about these, which is not the same as their\n"+
-			"            having no remedy: %v\n", c.Unknown, c.UnknownWhy)
+		// Not the same as having no remedy: nothing was learned about these.
+		fmt.Fprintf(out, "  %8d  COULD NOT BE CLASSIFIED                 %v\n", c.Unknown, c.UnknownWhy)
 	}
 }
 

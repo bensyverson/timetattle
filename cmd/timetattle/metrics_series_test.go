@@ -358,6 +358,20 @@ func TestAPartlyCoveredPeriodSaysThatItIsOne(t *testing.T) {
 	}
 }
 
+// REGRESSION. The partial-period line pluralised the noun by handing plural()
+// the string "working day is", so plural() appended its s to "is" and two
+// partial periods read "2 working day iss". The count is right and the sentence
+// carrying it is not a sentence, which is the kind of defect that survives
+// because no assertion ever looked past the two words it matched on.
+func TestAPartlyCoveredPeriodPluralisesTheNounAndNotTheVerb(t *testing.T) {
+	for _, unit := range []string{"day", "week", "month"} {
+		out := runSeries(t, seedThreeWorkingDays(t), "-by", unit)
+		if strings.Contains(out, " iss") {
+			t.Errorf("-by %s pluralises the verb rather than the noun:\n%s", unit, out)
+		}
+	}
+}
+
 // A WORKING DAY IS A LOCAL CONCEPT AND ITS ENDPOINTS MUST READ AS ONE. The
 // period label is the local date, so a start rendered in UTC beside it invites
 // a consumer to read "2026-07-20" and "2026-07-20T10:00:00Z" as disagreeing

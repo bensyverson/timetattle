@@ -123,12 +123,18 @@ WHAT THE REVIEWER WAS SHOWN
 population                 assertions    days     engaged   not-engaged   of the labelled time  fitted
 confirming a derivation           438      14    142.147h      193.853h                 100.0%  yes
 blind                               0       0      0.000h        0.000h                   0.0%  none recorded
-no label in this fit was produced blind. Every assertion below is a reviewer
-agreeing or disagreeing with blocks the model drew for him […]
+no label in this fit was produced blind, so this search cannot separate the model
+from the reviewer's agreement with it. More days of the same kind will not change
+that; run `timetattle review -blind` to produce labels that can.
 ```
 
 The empty row is the point. "Nothing was recorded blind" is an observation, and a
 table listing only what it found could not express it.
+
+What that line is saying is that every assertion in the fit is a reviewer
+agreeing or disagreeing with blocks the model itself drew for him. His engaged
+set is therefore close to a restatement of the derivation, which is why the
+remedy is a different *kind* of label rather than more of the same one.
 
 `-shown` fits one population alone: `derivation` (spelt `confirming`) or
 `observations` (spelt `blind`). **A population nobody recorded is refused rather
@@ -199,7 +205,9 @@ That last figure is the one to read first. If the objective separates the
 candidates by 1.4h against a null of 244h, the parameters explain 0.6% of the
 available error, and a small residual is a statement about how much the labels
 and the derivation already agree rather than about how good the parameters are.
-The command says so in as many words whenever that share falls below 5%.
+Whenever that share falls below 5% the command prints the two figures under a
+`READ THIS BEFORE QUOTING THE RESIDUAL` heading and says that an interval from
+the search is worth reporting and a point estimate from it is not.
 
 The residual itself is always two-directional and never collapsed:
 

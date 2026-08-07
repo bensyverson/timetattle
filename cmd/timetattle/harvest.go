@@ -24,75 +24,11 @@ func harvestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "harvest",
 		Short: "Preserve perishable evidence, and ingest it",
-		Long: `Preserves the two macOS stores that delete themselves, then ingests what they
-hold into the event store.
-
-knowledgeC prunes itself — /display/isBacklit holds roughly 28 days — so
-presence data not captured is lost permanently. Snapshots keep every stream
-except /app/webUsage, and drop the metadata table entirely: it holds browsing
-URLs, Siri interactions and contact identifiers that time tracking does not
-need.
-
-Biome's ScreenTime.AppUsage stream is now the source of application
-attribution: knowledgeC's /app/usage stalled for a full day on 2026-07-28
-before resuming on its own, so it is a cross-check rather than dependable.
-Its 512 KB segments are captured whole and gzipped, one file per distinct
-set of contents, so a run copies only what has actually changed. Only the
-streams Timetattle uses are read; the rest of ~/Library/Biome is not touched.
-
-Motion's Autosave Vault is preserved next: its pruning trigger is
-unconfirmed, so a composition's autosaves can disappear before the next
-harvest for reasons nothing here understands. Files are captured whole and
-gzipped, content-addressed the same way Biome segments are, so re-running the
-harvest does not recopy anything unchanged. A vault that does not exist is
-what "Motion is not installed" looks like, and is not an error.
-
-Filesystem modification times are captured last, and differently: a file
-records only its LAST modification, so a count of files touched on a given
-day shrinks as later work revisits them, invisibly and without a window edge
-the way knowledgeC and Biome have one. What is preserved here is not the
-files themselves but a count-with-observation-time snapshot for every
-directory named by -filedays-roots (or configured in
-~/.timetattle/filedays-roots.txt): each snapshot records what a scan found at
-the moment it ran, so a stale count and a fresh one can always be told apart
-later. No roots configured means nothing is scanned, the same tolerance an
-uninstalled application gets.
-
-Every capture above is attempted whatever the ones before it did. An
-unreadable knowledgeC loses the knowledgeC snapshot and nothing else: the
-Biome capture, the vault copy, the filedays scan and the whole ingestion
-phase still run. The command exits non-zero and the error names every source
-that failed, not only the first. Run "timetattle status" afterwards to see
-what is missing and since when.
-
-Ingestion reads every source in full, records one harvest run per source, and
-relies on the store deduplicating by content. A source that cannot be read
-loses only its own events, and the run says which one and why. A knowledgeC
-stream whose capture failed still gets a run of its own, marked failed with
-the reason and having read nothing — an earlier snapshot is never substituted,
-because re-ingesting one would add no rows while reporting success. The filedays
-snapshot is not ingested as events today — it is raw preservation, read only
-by this command's own output. The Motion vault capture above is a copy for
-disaster recovery only; the events attributed to Motion and Blender documents
-come from reading the manifests directly (internal/manifest, layered from
-internal/manifest/builtin and ~/.timetattle/manifests) through
-internal/timestamped, independent of whether a vault snapshot was ever taken.
-
-Every directory named in -index (see "timetattle register") is also read
-directly as part of ingestion, not just preserved: internal/fsobserve walks
-every registered directory for birth and modification times, and
-internal/gitlog reads commit and reflog history from every registered
-directory that is itself a git repository. Both are durable sources — unlike
-the four macOS streams above, nothing prunes a filesystem's own timestamps or
-a repository's own history — so there is no capture phase for either, only
-ingestion.
-
-Ingestion is followed by an attribution pass against the project registry
-(see "timetattle register"): every event carrying a locator is re-resolved
-against whatever is registered, not just newly ingested ones, so registering
-a directory retroactively attributes events collected before it existed.
-
-Both macOS stores and the Motion vault require Full Disk Access.`,
+		Long: `Preserves the evidence that deletes itself — knowledgeC, Biome's
+ScreenTime.AppUsage segments, Motion's Autosave Vault, a filedays scan — then
+ingests every source into the event store and re-attributes it against the
+registry. Each capture is attempted whatever the ones before it did and the
+error names every source that failed; the macOS stores need Full Disk Access.`,
 	}
 	fs := cmd.Flags()
 	// Not named "source": that identifier is the package these sources come

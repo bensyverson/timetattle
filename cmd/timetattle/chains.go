@@ -25,30 +25,8 @@ func chainsCmd() *cobra.Command {
 		Use:   "chains",
 		Short: "Reconstruct save-as chains from filenames",
 		Long: `Reconstructs save-as chains from filesystem observations, and replaces the
-derived chain tables with the result.
-
-Blender and Motion are used by branching rather than editing: a file is
-created, worked on, and saved under a new name beside the old one. Every
-.blend in the reference project has a birthtime equal to its mtime to the
-second, so no single file carries a span at all, and the iteration history
-lives across sibling filenames instead. Clustering those names recovers it —
-lightbar, lightbar-top, lightbar-top-filmic at +14m and +3m is genuine
-editing rhythm, at a granularity no other source reaches.
-
-This is inference, not a source. It reads observations back out of the store,
-never writes events, and never runs during harvest. The derived tables are
-wiped and rebuilt in a single transaction, together with the parameters that
-produced them, so a stale recompute is auditable rather than silently mixed
-with a fresh one. Re-run it whenever a harvest has added observations.
-
-Names are never split apart. dark-crystal is one document, not a "dark"
-family, and the only thing compared is how far two whole names already agree
-— see -min-prefix for the one case where that is not enough on its own.
-
--roots walks the given directories directly rather than reading the store. It
-is for looking at a project the store has not ingested yet, it never writes
-the derived tables, and what it reports is what the model makes of the disk
-right now rather than of recorded evidence.`,
+derived chain tables with the result. Inference rather than a source: it reads
+the store, writes no events, and can be re-run after any harvest.`,
 	}
 	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to read and derive into (default: ~/.timetattle/timetattle.db)")
@@ -136,9 +114,8 @@ right now rather than of recorded evidence.`,
 			// silence here would read as "no chains", which is a conclusion nobody
 			// is entitled to draw from an unharvested store.
 			fmt.Fprintf(os.Stderr,
-				"timetattle chains: %s holds no %s observations. "+
-					"Nothing was measured — this is not a finding that no chains exist. "+
-					"Register a directory with 'timetattle register' and run 'timetattle harvest', "+
+				"timetattle chains: %s holds no %s observations. Nothing was measured — "+
+					"this is not a finding that no chains exist. Run 'timetattle harvest', "+
 					"or pass -roots to look at the disk directly.\n", path, opts.Source)
 		}
 

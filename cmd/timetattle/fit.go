@@ -45,52 +45,11 @@ func fitCmd(stdout io.Writer) *cobra.Command {
 		Use:   "fit",
 		Short: "Search the clustering parameters against the corrections",
 		Long: `Searches the gap, lead-in and tail-out against the corrections already in the
-store, and writes nothing at all.
-
-WHAT THIS COMMAND IS FOR IS REFUSING TO OVERSTATE ITS ANSWER. Three things make
-a naive search of these parameters return a confident number that means nothing,
-and each is reported rather than smoothed over.
-
-THE GAP IS INERT at or below lead-in plus tail-out, because each observation is
-expanded by the margins before the gap is consulted. Every gap in that band
-derives byte-identical sittings, so those points are not candidates and the
-report says how many were set aside. -include-inert evaluates them anyway and
-checks the rule against your corpus instead of trusting it.
-
-THE OBJECTIVE IS FLAT over wide bands even above that floor, because it only
-moves when a threshold crosses a silence that actually occurred. Where the best
-score is attained by more than one point the report says so and gives the whole
-plateau; it never picks one.
-
-THE LABELS MAY AGREE WITH THE DERIVATION THEY CAME FROM. A reviewer confirming
-blocks he was shown produces labels that are close to a restatement of the
-model, and a fit against them returns the parameters that were on the screen
-with an excellent residual. Name those parameters with -reference — by default
-the configured ones — and the report says outright when they win.
-
-A BLIND LABEL AND A CONFIRMING ONE ARE NOT WORTH THE SAME, so this does not
-average them. Every run prints the census of both populations, present or
-absent, and a pooled run prints where each population would have sent the fit on
-its own. -shown fits one alone. Two populations that label the SAME time are
-refused rather than pooled: each tiles the day by itself, so pooling counts that
-day twice in the denominator and the result is not a residual over a partition.
-
-Every residual is printed beside what a model claiming everything and a model
-claiming nothing would score, and beside how far the objective moved across the
-whole search. A small residual against labels the objective barely discriminates
-between is not evidence of a good fit and the report says which it has.
-
-Days are reported separately by EVIDENCE REGIME. Every interval-shaped source in
-this store begins in July 2026; before that a sitting's whole extent is
-manufactured by the margins, so a day of point observations cannot discriminate
-between parameter values however many labels it carries. Pooling the two hides
-that, so this does not pool them.
-
-THIS IS SLOW AND IT IS MEANT TO BE. The default grid is 288 parameter sets, each
-of which re-derives every sitting on the labelled days from scratch, and on a
-corpus of a million observations that is tens of minutes. Narrow it with -gaps,
--lead-ins and -tail-outs while you are exploring; run the whole thing when you
-mean to publish a figure.`,
+store, and writes nothing at all. The report refuses to overstate its answer:
+it names inert gaps, flat axes, plateaux, a circular fit against labels the
+model produced, and each population and evidence regime on its own. THIS IS
+SLOW BY DESIGN — the default grid is 288 parameter sets, tens of minutes on a
+large corpus; narrow it with -gaps, -lead-ins and -tail-outs while exploring.`,
 	}
 	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
@@ -543,9 +502,8 @@ func fitReportPopulations(out io.Writer, ground fitGround, width int) {
 
 	fitted := ground.Fitted()
 	if len(fitted) == 1 && ground.Only != nil {
-		wrap(out, "", fmt.Sprintf("This run fitted the %s labels ALONE. Every figure below is about "+
-			"that population and about no other, which is what -shown is for.",
-			fit.Describe(*ground.Only)), width)
+		wrap(out, "", fmt.Sprintf("This run fitted the %s labels ALONE; every figure below is about "+
+			"that population and no other.", fit.Describe(*ground.Only)), width)
 		return
 	}
 
@@ -560,20 +518,15 @@ func fitReportPopulations(out io.Writer, ground fitGround, width int) {
 		}
 	}
 	if blind == 0 {
-		wrap(out, "", "no label in this fit was produced blind. Every assertion below is a reviewer "+
-			"agreeing or disagreeing with blocks the model drew for him, so his engaged set is close "+
-			"to a restatement of the derivation and this search cannot separate the model from his "+
-			"agreement with it. That is a fact about the ground truth and no amount of further days "+
-			"of the same kind changes it; run `timetattle review -blind` to produce labels that can.",
-			width)
+		wrap(out, "", "no label in this fit was produced blind, so this search cannot separate the "+
+			"model from the reviewer's agreement with it. More days of the same kind will not "+
+			"change that; run `timetattle review -blind` to produce labels that can.", width)
 		return
 	}
 	if present > 1 {
-		wrap(out, "", "TWO POPULATIONS ARE POOLED BELOW and they are not worth the same. A blind "+
-			"label is a statement about the world; a confirming label is an endorsement of the "+
-			"parameters that drew it. The shares above are the weights the pooled residual gives "+
-			"them, and the section headed EACH POPULATION ON ITS OWN says where each would have "+
-			"sent the fit by itself.", width)
+		wrap(out, "", "TWO POPULATIONS ARE POOLED BELOW and they are not worth the same. The shares "+
+			"above are the weights the pooled residual gives them; EACH POPULATION ON ITS OWN says "+
+			"where each would have sent the fit by itself.", width)
 	}
 }
 
@@ -661,10 +614,7 @@ func fitReportGround(out io.Writer, ground fitGround, coverage map[string]float6
 	if n := counts["point-only"]; n > 0 {
 		fmt.Fprintf(out, "point-only days: %d of %d\n", n, len(ground.Days))
 		wrap(out, "", "On a point-only day no observation with a duration covers the work asserted, "+
-			"so the whole derived extent is manufactured by lead-in, tail-out and the gap. That is the "+
-			"regime the parameters matter most in and the one the ground truth covers least, and a "+
-			"pooled figure over both regimes is dominated by days that cannot discriminate at all.",
-			width)
+			"so the whole derived extent is manufactured by the margins.", width)
 	}
 }
 
@@ -812,10 +762,8 @@ func fitReportScale(out io.Writer, res fit.Result, width int) {
 		res.Span().Hours(), 100*res.Discrimination())
 	if res.Discrimination() < 0.05 {
 		wrap(out, "", fmt.Sprintf("READ THIS BEFORE QUOTING THE RESIDUAL. The objective separates the "+
-			"candidates by %.3fh, which is %.1f%% of the error a model with no skill at all would make. "+
-			"A small residual here is a statement about how much the labels and the derivation already "+
-			"agree, and not about how good the parameters are. An interval from this search is worth "+
-			"reporting; a point estimate from it is not.",
+			"candidates by %.3fh, %.1f%% of the error a model with no skill would make: an interval "+
+			"from this search is worth reporting, a point estimate is not.",
 			res.Span().Hours(), 100*res.Discrimination()), width)
 	}
 }
@@ -824,10 +772,9 @@ func fitReportBreakdown(out io.Writer, res fit.Result, regimeDays map[string]int
 	if len(res.ByRegime) > 0 {
 		fmt.Fprintf(out, "\nAT %v\n", res.Best[0])
 		if !res.UniqueMinimum() {
-			wrap(out, "", fmt.Sprintf("which is the FIRST of %d tied points, chosen by grid order and "+
-				"nothing else. Where the tie is between points that derived identical sittings this is "+
-				"immaterial; where it is not, the two tables below are one member of a plateau rather "+
-				"than the answer.", len(res.Best)), width)
+			wrap(out, "", fmt.Sprintf("which is the FIRST of %d tied points, chosen by grid order "+
+				"and nothing else: the tables below are one member of a plateau, not the answer.",
+				len(res.Best)), width)
 		}
 		if len(res.ByShown) > 1 {
 			fmt.Fprintf(out, "\nby what the reviewer was shown\n")
@@ -841,10 +788,9 @@ func fitReportBreakdown(out io.Writer, res fit.Result, regimeDays map[string]int
 		fitResidualTable(out, res.ByRegime, "regime", width)
 		for _, regime := range slices.Sorted(maps.Keys(res.ByRegime)) {
 			if n := regimeDays[regime]; n < 3 {
-				wrap(out, "", fmt.Sprintf("The %s regime is represented by %s. That is too few to fit "+
-					"anything from: the interval above rests on the other regime, and any figure quoted "+
-					"for this one is a statement about %s and not about the parameters.",
-					regime, plural(n, "day"), plural(n, "day")), width)
+				wrap(out, "", fmt.Sprintf("The %s regime is represented by %s, too few to fit "+
+					"anything from: the interval above rests on the other regime.",
+					regime, plural(n, "day")), width)
 			}
 		}
 	}

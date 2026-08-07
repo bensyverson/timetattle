@@ -37,25 +37,8 @@ func consolidateCmd() *cobra.Command {
 		Short: "Declare a directory renamed or moved away as part of a registered one",
 		Long: `Declares that a directory which was renamed or moved away used to be part of
 -path, so evidence recorded under the old name attributes to -path's project
-instead of being stranded.
-
-Evidence is recorded under the path it was OBSERVED at, permanently. Renaming a
-directory therefore strands everything recorded under the old name: no marker
-can be written into a directory that is gone, and registering the new location
-does not help, because the stored paths still name the old one.
-
--former matches by prefix, so declaring a repository root also recovers
-everything that was underneath it. It is written into -path's own marker, as
-part of that directory's identity, so it travels with the directory the same
-way its client and project do.
-
-This declares a rename; it never guesses one. -path must already be registered,
-and -former must be a path that no longer exists and that no other project has
-claimed. Evidence whose owner nobody recognises stays unattributed, which is the
-honest answer, rather than being given an owner by a command that made it easy.
-
-Run 'timetattle harvest' afterwards to re-attribute; project is a recomputable
-cache, so nothing needs re-collecting.`,
+instead of being stranded. -former matches by prefix and must name a path that
+no longer exists; run 'timetattle harvest' afterwards to re-attribute.`,
 	}
 	fs := cmd.Flags()
 	path := fs.String("path", "", "the registered directory the work lives in now")

@@ -28,9 +28,15 @@ import (
 
 // excludeFlagUsage is the one description of the flag, so sessionize and
 // metrics cannot document it two different ways.
-const excludeFlagUsage = "comma-separated paths that are machine activity rather than work; " +
-	"a glob matches a file's base name (*.log.bz2), a pattern with a slash is an absolute " +
-	"path prefix (/Users/you/project/reports/)"
+//
+// It is the longest usage string in the CLI and stays that way deliberately.
+// The two spellings mean different things — a glob is matched against a base
+// name, a pattern containing a slash against the whole path as a prefix — and a
+// reader who is not told which is which cannot write a correct value at all. A
+// one-line-per-flag rule that shortened this would send them to the docs to
+// type an argument, which costs more than the line it saves.
+const excludeFlagUsage = "comma-separated machine activity to drop; a glob matches a base name " +
+	"(*.log.bz2), a pattern with a slash is an absolute path prefix (/Users/you/reports/)"
 
 // sessionExcludesFrom is the configured exclusion, with a flag overriding the
 // file for one run without changing it.

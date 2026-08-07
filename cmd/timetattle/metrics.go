@@ -37,111 +37,11 @@ func metricsCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "metrics",
 		Short: "Report engaged time per project, and presence",
-		Long: `Reports the two metrics a working day is judged by, from the events already in
-the store. Nothing is captured, nothing is derived into a table, and the store
-is opened read-only.
-
-ENGAGED time is per-project and MAY OVERLAP, because concurrent work on two
-projects is billable to both. It is the billing figure. PRESENCE is wall clock,
-is never double-counted, and is the denominator for capacity: a half-time
-retainer measured against anything else reads as satisfied at a fraction of
-real attention.
-
-Both normalisations are reported side by side. Under ABSOLUTE a minute two
-projects shared counts in full for each, so the column sums to more than the
-clock. Under ALLOCATION it is split between them, and the shares sum to exactly
-the presence they came out of.
-
-Work is reported at TWO LEVELS, client and project, because they are not the
-same question and neither is redundant. A CLIENT'S HOURS ARE THE UNION OF ITS
-PROJECTS' AND NEVER THEIR SUM: two of a client's projects worked in the same
-minute bill that minute to each of them, and to the client once. Allocation
-divides by client at the client level and by project at the project level, so a
-client who keeps more repositories does not thereby consume more of the day.
-
--client and -project narrow WHICH ROWS ARE PRINTED and change no figure in them.
-The whole report is computed either way, so PRESENCE stays the whole span's wall
-clock and a share stays a share of a real day. Recomputing over one client's
-evidence alone would shrink the denominator and drive every share toward 100%,
-which would answer the opposite of the question a single-client report is asked.
-
-A BARE DATE ON -to MEANS THE END OF THAT DAY. -to takes an instant and the span
-is inclusive at both ends, so "-to 2026-08-03" used to mean midnight that
-morning and silently dropped the whole of the day it named. An explicit time is
-still that time: "-to 2026-08-03T09:00:00" is nine in the morning.
-
-EVERY ENGAGED FIGURE IS MOSTLY INFERRED. A sitting is a cluster of observations
-with a lead-in before it, a tail-out after it, and every silence shorter than
-the gap threshold bridged; on the live corpus 77.2% of engaged time is that
-margin rather than anything anybody observed. The observed and inferred halves
-are printed separately for that reason, and a total quoted without them is not
-a measurement.
-
-Work attributed to a project but to NO CLIENT is reported as its own figure and
-is folded into none of the three below. Those directories ARE registered; it is
-the client that is unrecorded, which calls for a different action. Three things
-produce it: nothing has ever asserted a client for that project, an assertion
-exists but takes effect later than the work, or two directories claim the
-project for different clients — the last is listed under CONTESTED PROJECTS.
-
-A CLIENT ASSOCIATION IS A FACT ABOUT A MOMENT IN TIME. It lives in an
-append-only log rather than on the event, so a project reassigned in June
-reports the old client for May's work and the new one for July's. What that log
-does NOT rewind is which directories were registered: event.project is a cache
-the attribution pass overwrites on every harvest, with no history, so a
-directory blessed today attributes its old evidence as though it always had
-been. The unattributed figures below are therefore always AS OF NOW, whatever
-the client mapping says about the past.
-
-Unattributed presence is reported as three separate figures, because they mean
-three different things. Evidence carrying a path that resolved to no registered
-project MAY be recoverable: some of those directories can be registered, some
-no longer exist and need "timetattle consolidate", and some are not project
-directories at all — "timetattle orient" is what tells them apart, because this
-command reads neither the registry nor the filesystem. Evidence carrying no path
-at all (knowledgeC and Biome) can never be attributed this way however many
-directories are blessed. And clock that no observation is near enough to
-account for was bridged by the gap threshold, where nothing was recorded at all.
-
--by CUTS THE SPAN INTO A SERIES and prints it beneath the report, one row per
-working day, week, month, or the whole span as one period. It is a RE-SLICE and
-never a recomputation: the rows are cut out of the same partition every figure
-above them is summed from, so they sum to the ungrouped total EXACTLY and the
-report prints the difference on every run. Computing each day from its own
-events instead would give a number that cannot be added up at all — a day
-clustered alone gets its own lead-in and tail-out at every boundary, and a
-silence bridged across midnight becomes two sittings. A sitting that really does
-cross a boundary is SPLIT at it and counted once on each side.
-
-Periods run from the working-day boundary, 05:00 local rather than midnight, so
-an evening running to 01:37 is still that evening's work. Days are 23 or 25
-hours long across a daylight-saving transition and the report says which.
-
-EVERY PERIOD IN THE SPAN IS PRINTED, including the ones nothing fell in, and
-each says what the store recorded about whether collection was RUNNING at the
-time. A 0.0h period whose collection is "unrecorded" cannot be told apart from a
-period in which nothing was gathered: capture outcomes have only been recorded
-since migration 0007, and the harvest that failed silently for 44 hours in July
-2026 predates it entirely.
-
--csv writes the series for another program instead of writing a report, one row
-per period per grouping, in exact decimal seconds rather than the 0.1h the table
-prints. Presence, the three unattributed reasons and clientless time each get
-their own level, because none of them is a project; a cell that does not apply
-at a level is EMPTY rather than zero, since an allocation of none and a question
-that does not arise are different facts.
-
-sessions.exclude names files that are machine activity rather than work, and it
-is applied where the events are READ, so it reaches everything already in the
-store and deletes nothing. SQLite -wal and -shm sidecars go with no
-configuration at all; the configured list ships empty. What was dropped is
-counted and itemised above the figures it changed.
-
-Parameters come from ~/.timetattle/config.json, and any flag below overrides
-the file for that one run without changing it. THE GAP THRESHOLD IS NOT A
-SETTLED VALUE: total engaged time ranged 2.3x across the plausible range and
-nothing has yet fitted it against ground truth. Use "timetattle sessionize
--sweep" to see the spread on your own data before quoting a figure.`,
+		Long: `Reports engaged time per client and per project, and presence overall, from
+the events already in the store, which is opened read-only. ENGAGED time
+overlaps between projects and is the billing figure; PRESENCE is wall clock,
+never double-counted, and is the capacity denominator. Parameters come from
+~/.timetattle/config.json and any flag below overrides it for one run.`,
 	}
 	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
@@ -427,7 +327,6 @@ func reportMetrics(out io.Writer, path string, r metrics.Report, cols int,
 		round(r.Sittings.Median), round(r.Sittings.P95))
 	fmt.Fprintf(out, "  %s observed, %s (%.1f%%) inferred by the clustering\n",
 		metricsHours(r.Presence.Observed), metricsHours(r.Presence.Margin()), 100*r.Presence.MarginShare())
-	fmt.Fprint(out, "  wall clock at the machine, counted once however many projects shared it\n")
 
 	metricsBuckets(out, r.Sittings)
 	if !metricsScopeMatched(out, r, cols, scope) {
@@ -504,10 +403,9 @@ func metricsScopeMatched(out io.Writer, r metrics.Report, cols int, scope metric
 		}
 	}
 	fmt.Fprint(out, "\n")
-	wrap(out, "", fmt.Sprintf("nothing in this span was attributed to %s. That is not the same as "+
-		"nothing having happened, and it is not the same as a figure of zero: no evidence here "+
-		"carries that name at all. `timetattle register -h` says how a directory is blessed, and "+
-		"the unfiltered report lists every name that does appear.", scope.describe()), cols)
+	wrap(out, "", fmt.Sprintf("nothing in this span was attributed to %s, which is not a figure of "+
+		"zero: no evidence here carries that name at all. The unfiltered report lists every name "+
+		"that does appear.", scope.describe()), cols)
 	return false
 }
 
@@ -552,11 +450,6 @@ func metricsClients(out io.Writer, r metrics.Report, cols int, scope metricsScop
 		floor:   10,
 		cols:    cols,
 	})
-	fmt.Fprint(out, "\n")
-	wrap(out, "  ", "A client's absolute hours are the UNION of its projects' spans and are never "+
-		"their sum: two of a client's projects worked in the same minute bill that minute to each "+
-		"of them and to the client ONCE. The projects column counts how many were rolled up, and "+
-		"the rows below are those projects.", cols)
 	// A -project filter leaves this row showing the client's WHOLE roll-up
 	// while the table beneath it shows one project, and the two figures then
 	// differ for a reason a reader has to be told rather than work out. Saying
@@ -564,25 +457,20 @@ func metricsClients(out io.Writer, r metrics.Report, cols int, scope metricsScop
 	// filtered project's client-level total.
 	if scope.Project != "" {
 		fmt.Fprint(out, "\n")
-		wrap(out, "  ", fmt.Sprintf("The client row above is that client's WHOLE roll-up, across "+
-			"every project of theirs in this span, not the share belonging to %q. It is printed so "+
-			"the project below can be seen against the client it belongs to; the two figures differ "+
-			"whenever the client has more than one project.", scope.Project), cols)
+		wrap(out, "  ", fmt.Sprintf("the client row is that client's WHOLE roll-up, not the share "+
+			"belonging to %q", scope.Project), cols)
 	}
 
 	// THE FOURTH FIGURE, kept apart from the three unattributed reasons below
 	// on purpose. Presence a PROJECT owns and no CLIENT does is not
 	// unattributed presence: the directory IS registered and it is the client
-	// that is unrecorded, which calls for a different action entirely.
+	// that is unrecorded, which calls for a different action entirely — so the
+	// figure is stated on its own rather than folded into either neighbour.
 	if r.Clientless > 0 {
 		fmt.Fprint(out, "\n")
 		wrap(out, "  ", fmt.Sprintf("%s is attributed to a project but to NO CLIENT, and is "+
-			"counted in no row above. That is not unattributed presence — those directories are "+
-			"registered — and it is not a client with zero hours. Three different things produce "+
-			"it: nothing has ever asserted a client for that project, or an assertion exists but "+
-			"takes effect later than the work, or two directories claim the project for different "+
-			"clients. `timetattle register` records the first two; the third is listed above if "+
-			"it occurred.", metricsHours(r.Clientless)), cols)
+			"counted in no row above. `timetattle register` is what records a client.",
+			metricsHours(r.Clientless)), cols)
 	}
 }
 
@@ -602,10 +490,8 @@ func metricsCollisions(out io.Writer, cols int, cs []clientmap.Collision) {
 	}
 	fmt.Fprint(out, "\nCONTESTED PROJECTS\n")
 	for _, c := range cs {
-		wrap(out, "  ", fmt.Sprintf("%s is claimed by %s. Its hours are credited to no client "+
-			"at all rather than to whichever registration happened to be written last. The "+
-			"directories claiming it are: %s. Re-register one of them, or give it a project "+
-			"name of its own.",
+		wrap(out, "  ", fmt.Sprintf("%s is claimed by %s, so its hours are credited to no client "+
+			"at all. Claimed by: %s. Re-register one of them, or give it a project name of its own.",
 			c.Project, strings.Join(c.Clients, " and "), strings.Join(c.Sources, ", ")), cols)
 	}
 }
@@ -620,7 +506,7 @@ func metricsProjects(out io.Writer, r metrics.Report, cols int, scope metricsSco
 	}
 	if len(shown) == 0 {
 		fmt.Fprint(out, "\nENGAGED: no project could be attributed any of this span. That is a fact "+
-			"about the registry, not about the work — see the unattributed breakdown below\n")
+			"about the registry, not about the work — see UNATTRIBUTED PRESENCE below\n")
 		return
 	}
 
@@ -671,21 +557,15 @@ func metricsProjects(out io.Writer, r metrics.Report, cols int, scope metricsSco
 
 	fmt.Fprint(out, "\n")
 	if scope.filtering() {
-		wrap(out, "  ", fmt.Sprintf("FILTERED to %s. Every figure above is exactly what it is in "+
-			"the unfiltered report — the filter selects rows and recomputes nothing — so PRESENCE "+
-			"above is still the whole span's wall clock and the share column is still a share of "+
-			"it. That is deliberate: recomputing over one client's evidence alone would shrink the "+
-			"denominator and drive every share toward 100%%. The \"shown\" row totals only the "+
-			"rows printed.", scope.describe()), cols)
+		// The label on the totals row changes to "shown" under a filter, and a
+		// reader who has not noticed would read a partial total as the whole.
+		wrap(out, "  ", fmt.Sprintf("FILTERED to %s: rows are selected and nothing is recomputed, "+
+			"so the \"shown\" row totals only the rows printed.", scope.describe()), cols)
 		fmt.Fprint(out, "\n")
 	}
-	wrap(out, "  ", "ABSOLUTE bills a shared minute in full to every project active in it, "+
-		"so the column sums to more than the clock on any day two projects ran at once. "+
-		"ALLOCATED splits it between them, and sums to exactly the attributed presence.", cols)
 	if absolute > r.Presence.Total {
-		wrap(out, "  ", fmt.Sprintf("Here absolute is %s against %s of presence — %.2fx — which "+
-			"is concurrent work billing to both clients and is correct for an invoice and wrong "+
-			"for capacity.", metricsHours(absolute), metricsHours(r.Presence.Total),
+		wrap(out, "  ", fmt.Sprintf("absolute %s against %s of presence, %.2fx: concurrent work, "+
+			"billed to each project", metricsHours(absolute), metricsHours(r.Presence.Total),
 			absolute.Seconds()/r.Presence.Total.Seconds()), cols)
 	}
 
@@ -695,16 +575,11 @@ func metricsProjects(out io.Writer, r metrics.Report, cols int, scope metricsSco
 	// otherwise be told from one with a transcript underneath it, and the pair
 	// printed identically until task KrfMh. The third figure is the one this
 	// project keeps losing: clock nothing accounts for is not weak evidence,
-	// it is no evidence, and folding it into either neighbour is the bug.
-	fmt.Fprint(out, "\n")
-	wrap(out, "  ", fmt.Sprintf("Of the %s absolute: %s is accounted for by an observation "+
-		"RECORDING AN ACT — a message, a commit, a claim held; %s by nothing but a file's "+
-		"modification time, which a cron writes as readily as a person does; and %s by nothing "+
-		"at all, being silence the gap threshold bridged inside a project's own cluster. Weak "+
-		"time is not a deduction from the total and it is not the opposite of corroborated: a "+
-		"focus interval says somebody was at the machine and says nothing about which client, "+
-		"so a minute can be both.", metricsHours(absolute), metricsHours(attested),
-		metricsHours(weak), metricsHours(unaccounted)), cols)
+	// it is no evidence, and folding it into either neighbour is the bug. So all
+	// three are printed, and the sentence they are printed in is one line.
+	wrap(out, "  ", fmt.Sprintf("of %s absolute: %s attested, %s weak (a file's modification "+
+		"time only), %s unaccounted (bridged silence)", metricsHours(absolute),
+		metricsHours(attested), metricsHours(weak), metricsHours(unaccounted)), cols)
 
 	// The warning the brief for this command exists for. An engaged total that
 	// is mostly margin is an inference wearing the clothes of a measurement,
@@ -712,12 +587,7 @@ func metricsProjects(out io.Writer, r metrics.Report, cols int, scope metricsSco
 	if observed == 0 {
 		fmt.Fprint(out, "\n")
 		wrap(out, "  ", "WARNING: NONE of the engaged time above was observed as a duration. "+
-			"Every source that can be attributed to a project — Claude transcripts, git, file "+
-			"saves — records INSTANTS, and an instant observes no duration at all. Every hour "+
-			"in the absolute column was inferred by the clustering from the gap, lead-in and "+
-			"tail-out above. The corroborated column is the nearest thing to evidence there is: "+
-			"clock some source observed the machine in use across, without saying whose work it "+
-			"was.", cols)
+			"Every hour in the absolute column was inferred by the clustering.", cols)
 	}
 }
 
@@ -766,10 +636,8 @@ func metricsUnattributed(out io.Writer, r metrics.Report, cols int) {
 	// every time it is followed is the actionable-versus-unregisterable collapse
 	// one level up from the one the three figures below already avoid.
 	metricsWhy(out, cols, metricsHours(u.Unregistered), fmt.Sprintf(
-		"a path resolving to no registered project, across %s. Some of those directories can "+
-			"be registered and some no longer exist; telling them apart needs the registry and "+
-			"the filesystem, which this command reads neither of. `timetattle orient` separates "+
-			"them.", plural(u.UnregisteredEvents, "observation")))
+		"a path resolving to no registered project, across %s. `timetattle orient` says which "+
+			"of them can be registered.", plural(u.UnregisteredEvents, "observation")))
 	metricsWhy(out, cols, metricsHours(u.Unlocatable), fmt.Sprintf(
 		"a source carrying no path at all, across %s. knowledgeC and Biome; registering can "+
 			"never reach these.", plural(u.UnlocatableEvents, "observation")))

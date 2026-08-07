@@ -322,22 +322,15 @@ func TestTheWeakColumnStandsBesideEveryProjectsAbsoluteTotal(t *testing.T) {
 func TestMetricsNamesAllThreeThingsEngagedTimeCanRestOn(t *testing.T) {
 	got := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
 	flat := strings.Join(strings.Fields(got), " ")
-	for _, phrase := range []string{
-		"RECORDING AN ACT", "by nothing but a file's modification time",
-		"by nothing at all, being silence the gap threshold bridged",
-	} {
+	// The three are named as three labelled figures rather than in a paragraph.
+	// What this test guards is that none of them is folded into a neighbour —
+	// unaccounted clock is not weak evidence, it is no evidence — and that
+	// survives the wording, so it is the labels that are asserted on. Why the
+	// three are different questions is docs/content/docs/metrics.md.
+	for _, phrase := range []string{"attested", "weak (a file's modification time only)",
+		"unaccounted (bridged silence)"} {
 		if !strings.Contains(flat, phrase) {
 			t.Errorf("the report never says %q:\n%s", phrase, got)
 		}
-	}
-}
-
-// Weak time and corroborated time are different axes, and the report has to say
-// so where somebody reading the two columns side by side will see it.
-func TestMetricsSaysWeakAndCorroboratedAreNotOppositeEndsOfOneScale(t *testing.T) {
-	got := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
-	flat := strings.Join(strings.Fields(got), " ")
-	if !strings.Contains(flat, "so a minute can be both") {
-		t.Errorf("the report leaves weak and corroborated looking like one scale:\n%s", got)
 	}
 }

@@ -33,55 +33,12 @@ func adjustCmd(stdout io.Writer) *cobra.Command {
 		Use:   "adjust",
 		Short: "Correct a span by hand, or say you reviewed it",
 		Long: `Records a human correction over a span of wall clock, or reports the
-corrections already recorded.
-
-CORRECTIONS ARE AN OVERLAY, NOT AN EDIT. Nothing here touches the events, and
-nothing here touches derived_session. ` + "`timetattle sessionize`" + ` deletes and
-rebuilds every session row on every run, and a correction recorded through this
-command survives all of it, because it is keyed to wall clock and to nothing
-else. The machine's answer stays beside yours, and the difference between the
-two is what the clustering parameters get fitted against.
-
-THE LOG IS APPEND-ONLY. There is no edit and no delete, by construction: the
-database refuses both. Changed your mind? Record the new judgment over the same
-span. The later one wins for the instants it covers, the earlier one stays
-visible, and the fact that you changed your mind is itself worth knowing.
-
-Six corrections, five assertions:
-
-  -assert engaged        this span WAS work — extend a sitting, or confirm one
-  -assert not-engaged    this span was NOT work — trim, delete, or split at a
-                         real gap
-  -assert boundary       one sitting ended and another began at -from, with no
-                         gap; splits without changing any total
-  -assert attributed     this span belongs to -project
-  -assert unattributed   this span belongs to NO project, which is a thing you
-                         are saying rather than a thing nobody has said
-
--review records that you LOOKED at the span, which is not the same as what you
-found. A day you reviewed and could not remember and a day you have never
-opened are different facts, and only -review unremembered can say the first
-one. It removes nothing: the machine's answer stands, marked unconfirmed.
-
-  -review recalled       you looked, and you remember the span
-  -review unremembered   you looked, and you could not remember it
-
--review may be combined with -assert, and the correction is then recorded as
-having come out of that review — unless the verdict is unremembered, which
-would be a review saying the span cannot be recalled and a correction saying
-exactly what happened in it.
-
-Examples:
-
-  timetattle adjust -from "2026-07-28 12:00" -to "2026-07-28 13:00" \
-      -assert not-engaged -note "lunch"
-
-  timetattle adjust -from 2026-07-28T09:00:00 -to 2026-07-28T11:00:00 \
-      -assert attributed -project some-project
-
-  timetattle adjust -from 2026-07-28 -to 2026-07-29 -review unremembered
-
-  timetattle adjust -from 2026-07-28 -to 2026-07-29 -list`,
+corrections already recorded. Corrections are an append-only OVERLAY keyed to
+wall clock: nothing here touches an event or derived_session, there is no edit
+and no delete, and recording a new judgment over the same span supersedes the
+earlier one without hiding it. -assert says what a span was and -review says
+only that you looked at it; the two may be combined unless the verdict is
+unremembered.`,
 	}
 	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to record into (default: ~/.timetattle/timetattle.db)")

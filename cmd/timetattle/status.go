@@ -117,48 +117,11 @@ func statusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Report whether the harvest is still working",
-		Long: `Reports whether the harvest is still running and what each source last did.
-
-One line per source, from harvest_run: when it last ran, whether it succeeded,
-how many inputs it read, how much it saw and how much was new, and when it last
-succeeded. A source that has never run at all says so in those words, because
-"this source has never run" and "this source ran and found nothing" are
-different facts and the second is a normal, healthy answer.
-
-A source that reads once per repository writes one row per repository, and its
-line is the total across all of them. Such a source is "partial" when it read
-some and lost others: ok means every input was read, and the inputs column
-shows how many were, out of how many were tried. -inputs lists them one by one,
-which is where "which repository broke" is answered.
-
-Below that, the capture phase: the knowledgeC snapshots, Biome segments, Motion
-vault files and filedays scans. Each line says what is on disk AND what the last
-capture recorded doing, because those are two different claims and only the
-second can tell a directory that is up to date from one that stopped being
-written to. A capture that ran and found nothing new, a capture that looked and
-found nothing to preserve, and a capture nothing ever recorded are three
-different facts and print as three different sentences.
-
-Nothing is written, and the store is not created if it is missing.
-
-A harvest running right now and a harvest that died partway leave the identical
-row — a start with no finish — so the two are separated by how long it has been
-there. A run is "running" until it has outlasted ten times the slowest completed
-run its source has ever recorded, or five minutes, whichever is longer, and
-"stranded" after that. A source with no completed run to be judged against is
-never called stranded; -stale is what catches it if it never finishes.
-
-Exits non-zero when a source's most recent run failed, when a source was only
-partly read, when a run is stranded (a harvest that died partway), when the most
-recent capture of anything failed or was only partly preserved, or when the
-newest run — or the newest capture of any one kind — is older than -stale. A
-harvest in progress, never having run, and never having had a capture recorded
-are reported but do not fail: sources and captures appear and disappear with
-what is installed and registered, and a check that cries wolf is a check nobody
-reads.
-
-The default -stale of 24h is twice the 12h interval scripts/install-agent.sh
-schedules, so one missed run is tolerated and two are not.`,
+		Long: `Reports what each source and each capture last did, one line apiece, and
+writes nothing. Exits non-zero on a failed or partial run, a stranded run, a
+failed or partial capture, or a newest run or capture older than -stale; a
+harvest in progress, a source that has never run, and a capture nothing ever
+recorded are reported without failing.`,
 	}
 	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")

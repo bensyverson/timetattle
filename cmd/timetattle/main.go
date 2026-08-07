@@ -233,23 +233,10 @@ Usage:
   timetattle adjust [flags]      Correct a span by hand, or say you reviewed it
   timetattle version             Print the commit this binary was built from
 
-Run orient first. It takes no arguments, says what the state is and names the
-single action worth taking, and is the one command that assumes no memory of a
-previous session. Three commands answer three different questions and none of
-them answers another's: orient says what to DO, status says whether collection
-is still WORKING, metrics says what the NUMBERS are.
-
-Observations are harvested and never edited; sessionize and chains derive from
-them and can be re-run at any time without touching what was observed. orient,
-status and metrics read and write nothing, and status is the one to run when a
-day looks empty.
-
-review and adjust are the two commands a person writes through, and review is
-the one to reach for. It puts a whole working day on one screen and confirms it
-in a single keystroke; adjust is the same corrections one span at a time, for a
-correction you already know you want. Both write an overlay keyed to wall clock,
-never an edit: sessionize can rebuild every session row underneath them and they
-still mean the same thing.
+Run orient first: it takes no arguments and names the single action worth
+taking. Three commands answer three different questions — orient says what to
+DO, status says whether collection is still WORKING, metrics says what the
+NUMBERS are.
 
 Run "timetattle <command> -h" for a command's flags.
 `)
