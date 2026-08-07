@@ -506,7 +506,7 @@ under another, and `timetattle sessionize -dry-run` says which:
 ```
 dry run: the stored sessions were left alone, and they are STALE. They hold
 1370 sittings derived at 2026-08-01T21:07:01.902907Z; this run would write 2102.
-  excluded: stored *.bz2, *.gz, *.log, /Users/ben/git/Easley/reports/; now (none)
+  excluded: stored *.bz2, *.gz, *.log, /Users/you/git/Easley/reports/; now (none)
   window:   stored the beginning..now; now the beginning..now
   re-run without -dry-run to make the stored derivation this one.
 ```

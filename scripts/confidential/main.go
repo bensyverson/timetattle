@@ -129,6 +129,14 @@ var (
 	// so the label alone has to be the trigger.
 	certRe = regexp.MustCompile(`Developer ID (?:Application|Installer):\s*(.+)`)
 
+	// A home-directory path names an actual account, independent of any client
+	// or contract figure -- this is the "developer identifier" AGENTS.md's
+	// confidentiality rule already names alongside those. /Users/<segment> and
+	// /home/<segment> are the two shapes this project's own docs, code and
+	// fixtures use; the segment is captured so it can be checked against
+	// homePlaceholders below.
+	homePathRe = regexp.MustCompile(`/(?:Users|home)/([A-Za-z][A-Za-z0-9_.-]*)`)
+
 	// Forms that documentation and scripts legitimately use as placeholders.
 	placeholderRe = regexp.MustCompile(`(?i)\b(someone|teamid|team_id|your[_ ]?(?:name|team)|example|xxxx+)\b`)
 
@@ -140,6 +148,16 @@ var (
 	// below is two or more characters after the sign.
 	bareDigitDollarRe = regexp.MustCompile(`^\$[0-9]$`)
 )
+
+// homePlaceholders are the home-path segments this project treats as already
+// neutral, not a real account. "you" is the one docs/content/docs has settled
+// on for every console sample (see the task that added this check); "shared"
+// is a real macOS system directory (/Users/Shared), not a per-user home, and
+// would otherwise be a permanent false positive. Matching is case-insensitive.
+var homePlaceholders = map[string]bool{
+	"you":    true,
+	"shared": true,
+}
 
 // selfFixturePath and fixtureMarker exist so the gate can pass on its own
 // repository. This tool's own test fixtures are deliberately rate-, secret-
@@ -238,6 +256,11 @@ func scanText(path, content string, sc Scanner) []Finding {
 		}
 		if m := certRe.FindStringSubmatch(line); m != nil && !placeholderRe.MatchString(m[1]) {
 			out = append(out, Finding{path, lineNo, KindIdentity, "Developer ID common name", "<redacted>"})
+		}
+		for _, m := range homePathRe.FindAllStringSubmatch(line, -1) {
+			if !homePlaceholders[strings.ToLower(m[1])] {
+				out = append(out, Finding{path, lineNo, KindIdentity, "home-directory path", "<redacted>"})
+			}
 		}
 		for _, re := range rateRes {
 			for _, m := range re.FindAllString(line, -1) {

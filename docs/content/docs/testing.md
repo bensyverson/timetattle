@@ -174,8 +174,8 @@ A wrong one sends the next reader after a bug that is not there.
 
 | | |
 | --- | --- |
-| ✅ | `/Users/ben/.timetattle/config.json maps "acorn" to /Users/ben/git/<real>, which is not present on this machine: stat …: no such file or directory` |
-| ✅ | `/Users/ben/.timetattle/timetattle.db is at migration 10 and this binary carries 0011_review_shown.sql` |
+| ✅ | `/Users/you/.timetattle/config.json maps "acorn" to /Users/you/git/<real>, which is not present on this machine: stat …: no such file or directory` |
+| ✅ | `/Users/you/.timetattle/timetattle.db is at migration 10 and this binary carries 0011_review_shown.sql` |
 | ✅ | `the 2026-07-28 report names 4 projects, none of them "birch"` |
 | ❌ | `birch is not attributable on 2026-07-28; the registry has not resolved it` |
 | ❌ | `the autosave vault is empty; Motion prunes it` |
@@ -199,7 +199,7 @@ it no longer reads the way it used to.** Before that task, `realProject(t)` in
 resolved the pseudonym literally: `filepath.Join(home, "git", "acorn")`. The
 pseudonym scrub renamed the fixtures but nobody's disk changed name to match,
 so that path never existed and six published-figure tests in `internal/chains`
-plus one in `internal/fsobserve` skipped with "`/Users/ben/git/acorn` is not
+plus one in `internal/fsobserve` skipped with "`/Users/you/git/acorn` is not
 present on this machine" — which reads exactly like the second (good) row
 above, a directory genuinely absent. It was not. The directory was there,
 under its real name; what was missing was a NAME MAPPING, and that is a third

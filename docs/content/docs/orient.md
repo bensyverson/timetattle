@@ -16,12 +16,12 @@ reader is usually an agent. It writes nothing and opens the store read-only.
 
 ```console
 $ timetattle orient
-/Users/ben/.timetattle/timetattle.db
+/Users/you/.timetattle/timetattle.db
 919811 observations from 2013-09-19 to 2026-08-01; 38 registered directories
 last harvest 2026-08-01 11:35, 11m42s ago — whether that is a problem is
 `timetattle status`'s question
 
-NEXT  timetattle consolidate -former /Users/ben/git/claude/shared \
+NEXT  timetattle consolidate -former /Users/you/git/claude/shared \
             -path <the directory that work lives in now>
       325 observations, <0.1% of the store, name paths that are gone from disk,
       117 of them under the one above. Registering cannot reach these; declaring
@@ -32,14 +32,14 @@ UNATTRIBUTED, CARRYING A PATH: 1743 observations, 0.2% of the store. What each
 class needs:
          0  inside a registered directory already   timetattle harvest
        325  the path is gone from disk              timetattle consolidate
-            /Users/ben/git/claude/shared (117)
+            /Users/you/git/claude/shared (117)
             /private/tmp/Demo_inspect (113)
             /private/tmp/OperativeKit/Examples/OK (61)
             and 2 more
         69  a directory register would accept       timetattle register
             /private/tmp (66)
-            /Users/ben/Documents/Lens Experiments (1)
-            /Users/ben/Documents/Mattebox/Artwork/Pro Feature Highlights/3D (1)
+            /Users/you/Documents/Lens Experiments (1)
+            /Users/you/Documents/Mattebox/Artwork/Pro Feature Highlights/3D (1)
             and 1 more
       1311  above a directory already registered    nothing
         38  inside a shared application cache       nothing
@@ -154,7 +154,7 @@ unattributed and costs a second registration.
 
 A declared former path matches by *prefix*, so one `consolidate -former` on the
 vanished root recovers everything recorded beneath it. Measured on the live
-store: `/Users/ben/git/theaitrellis` carried 9,924 observations and
+store: `/Users/you/git/theaitrellis` carried 9,924 observations and
 `theaitrellis/stacktrace` another 4,294. Naming them separately would be two
 declarations for one rename, and the second would be refused, because the first
 already claims the prefix.

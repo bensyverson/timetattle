@@ -24,10 +24,10 @@ $ timetattle metrics
 gap 15m0s, lead-in 5m0s, tail-out 5m0s
 presence: knowledgec-backlit
 ignored:  knowledgec-islocked, knowledgec-mediausage
-excluded: *.bz2, *.gz, *.log, /Users/ben/git/Easley/reports/
+excluded: *.bz2, *.gz, *.log, /Users/you/git/Easley/reports/
 1755 observations excluded before clustering and not counted below: 86 SQLite
 sidecars, 1034 by "*.bz2", 100 by "*.gz", 17 by "*.log", 518 by
-"/Users/ben/git/Easley/reports/"
+"/Users/you/git/Easley/reports/"
 
 PRESENCE 1069.0h across 1370 sittings, median 22m16s, p95 2h58m14s
   293.8h observed, 775.2h (72.5%) inferred by the clustering

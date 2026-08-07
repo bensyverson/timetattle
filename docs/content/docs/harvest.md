@@ -580,7 +580,7 @@ The July 2026 outage is the worked example. Three identical failures in
 `~/.timetattle/harvest.err`:
 
 ```
-timetattle harvest: cannot read /Users/ben/Library/Application Support/Knowledge/knowledgeC.db: operation not permitted
+timetattle harvest: cannot read /Users/you/Library/Application Support/Knowledge/knowledgeC.db: operation not permitted
 ```
 
 and four things that together identify the cause:
@@ -883,7 +883,7 @@ never overwritten:
   "excludes": [".git", "worktrees", "node_modules", ".venv", ".Trash", "Autosave Vault"],
   "roots": [
     {
-      "root": "/Users/ben/git/acorn",
+      "root": "/Users/you/git/acorn",
       "raw": { "2026-07-11": 513, "2026-07-28": 1204 },
       "filtered": { "2026-07-11": 421, "2026-07-28": 980 }
     }

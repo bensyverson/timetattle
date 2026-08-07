@@ -78,9 +78,9 @@ refusal names the directory and the client holding it:
 ```console
 $ timetattle register -client GLOBEX -project website -path ~/git/globex-site
 register: project "website" is already held for a different client by
-/Users/ben/git/acme-site (ACME), and every directory naming one project has to
+/Users/you/git/acme-site (ACME), and every directory naming one project has to
 agree on its client — otherwise a report grouped by project silently merges two
-clients' hours. Register /Users/ben/git/globex-site under a project name of its
+clients' hours. Register /Users/you/git/globex-site under a project name of its
 own, or pass Force to move this directory to GLOBEX and re-register the
 directory listed above
 ```
@@ -229,7 +229,7 @@ as part of that directory's identity, alongside the client and project:
   "marker_version": 1,
   "client": "personal",
   "project": "nobedan",
-  "former_paths": ["/Users/ben/git/theaitrellis"],
+  "former_paths": ["/Users/you/git/theaitrellis"],
   "registered": "2026-08-01T10:41:55.201947Z"
 }
 ```
@@ -351,8 +351,8 @@ from the marker itself:
 {
   "index_version": 1,
   "directories": [
-    "/Users/ben/Movies/ACORN/holiday-render",
-    "/Users/ben/git/acorn-site"
+    "/Users/you/Movies/ACORN/holiday-render",
+    "/Users/you/git/acorn-site"
   ]
 }
 ```

@@ -177,6 +177,54 @@ func TestPlaceholderDeveloperIDIsNotFlagged(t *testing.T) {
 	}
 }
 
+// --- A real home-directory path names a real person ---------------------------
+//
+// docs/content/docs carried literal /Users/<real-name> paths in console
+// samples -- a developer identifier, exactly the class AGENTS.md's
+// confidentiality rule already names alongside client names and contract
+// figures. Nothing in the scanner looked for this shape at all: -names only
+// ever hunts client symbols. This project has since settled on /Users/you as
+// the one neutral home every doc sample uses, so that is the only segment the
+// pattern must stay quiet about; anything else at that position is a real
+// account name and must be reported.
+
+func TestRealHomePathIsFlaggedAsIdentity(t *testing.T) {
+	src := "store: /Users/wombat/.timetattle/timetattle.db" // gate:fixture
+	if n := kindHits(scanText("orient.md", src, Scanner{}), KindIdentity); n != 1 {
+		t.Errorf("scanText found %d identity findings for a real home path, want 1", n)
+	}
+}
+
+// The established neutral replacement must never trip the same check, or the
+// gate could never pass against the docs that were just scrubbed to use it.
+func TestNeutralHomePlaceholderIsNotFlagged(t *testing.T) {
+	src := "store: /Users/you/.timetattle/timetattle.db"
+	if n := kindHits(scanText("orient.md", src, Scanner{}), KindIdentity); n != 0 {
+		t.Errorf("scanText found %d identity findings for the neutral /Users/you placeholder, want 0", n)
+	}
+}
+
+// A real home path must be caught wherever it sits in a line, not just as the
+// whole match -- the same compound shape the client-name checks already cover.
+func TestRealHomePathInsideALongerPathIsFlagged(t *testing.T) {
+	src := `NEXT  timetattle consolidate -former /Users/wombat/git/claude/shared \` // gate:fixture
+	if n := kindHits(scanText("orient.md", src, Scanner{}), KindIdentity); n != 1 {
+		t.Errorf("scanText found %d identity findings, want 1: /Users/wombat/git/claude/shared names a real account", n)
+	}
+}
+
+// The finding must never echo the account name or the surrounding path, or
+// the report becomes the leak -- mirrors the deny-literal and cert-name
+// findings' redaction.
+func TestHomePathFindingDoesNotEchoTheAccountName(t *testing.T) {
+	fs := scanText("orient.md", "root: /Users/wombat/git/acorn", Scanner{}) // gate:fixture
+	for _, f := range fs {
+		if f.Kind == KindIdentity && (strings.Contains(f.Match, "wombat") || strings.Contains(f.Text, "wombat")) { // gate:fixture
+			t.Errorf("finding %+v echoes the real account name", f)
+		}
+	}
+}
+
 // --- Defect 1: a name inside a regex escape -----------------------------------
 //
 // The confidentiality pass (task 5nCl4) quotes the audit probe itself as

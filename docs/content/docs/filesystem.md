@@ -99,7 +99,7 @@ This package does not decide that. `Walker` takes its roots as an explicit
 parameter:
 
 ```go
-events, err := fsobserve.New("/Users/ben/git/acorn").Collect(ctx, since)
+events, err := fsobserve.New("/Users/you/git/acorn").Collect(ctx, since)
 ```
 
 `timetattle harvest` builds that roots list from
