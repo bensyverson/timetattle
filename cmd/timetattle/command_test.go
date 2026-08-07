@@ -222,7 +222,7 @@ func TestEveryCommandTheUsageNamesIsRegistered(t *testing.T) {
 	root := rootCommand()
 	for _, name := range []string{
 		"orient", "harvest", "status", "register", "consolidate",
-		"sessionize", "chains", "metrics", "review", "fit", "adjust", "version",
+		"sessionize", "chains", "metrics", "dashboard", "review", "fit", "adjust", "version",
 	} {
 		if _, ok := subcommandNamed(root, name); !ok {
 			t.Errorf("usageTo names %q but the root command has no such child", name)

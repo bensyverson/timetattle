@@ -19,11 +19,15 @@
 // # How this package is laid out, and how helpers are named
 //
 // One file per subcommand — harvest.go, register.go, status.go,
-// sessionize.go, chains.go, metrics.go, fit.go, adjust.go — each holding that subcommand's entry
-// point, its flags and its own helpers. main.go holds dispatch and usage and nothing
-// else. ingest.go is the exception that proves the shape: it holds the
-// ingestion plan and runner, which harvest drives but does not own, and which
-// have their own tests.
+// sessionize.go, chains.go, metrics.go, fit.go, adjust.go, dashboard.go —
+// each holding that subcommand's entry point, its flags and its own helpers.
+// main.go holds dispatch and usage and nothing else. ingest.go is the
+// exception that proves the shape: it holds the ingestion plan and runner,
+// which harvest drives but does not own, and which have their own tests.
+// dashboard.go is a second exception of the same kind: its own render
+// functions live one per file (dashboard_heatmap.go and six siblings) rather
+// than in dashboard.go itself, for reasons dashboard.go's own package doc
+// explains.
 //
 // Each of those files exposes a constructor named for its subcommand —
 // orientCmd, harvestCmd, metricsCmd — returning a *cobra.Command with its own
@@ -163,6 +167,7 @@ func rootCommand() *cobra.Command {
 		sessionizeCmd(os.Stdout),
 		chainsCmd(),
 		metricsCmd(os.Stdout),
+		dashboardCmd(os.Stdout),
 		reviewCmd(os.Stdout, os.Stdin),
 		fitCmd(os.Stdout),
 		adjustCmd(os.Stdout),
@@ -228,6 +233,7 @@ Usage:
   timetattle sessionize [flags]  Group events into sittings and store them
   timetattle chains [flags]      Reconstruct save-as chains from filenames
   timetattle metrics [flags]     Report engaged time per project, and presence
+  timetattle dashboard [flags]   Render a human dashboard of engaged time and presence
   timetattle review [flags]      Confirm a whole day at a time, and correct it
   timetattle fit [flags]         Search the clustering parameters against the corrections
   timetattle adjust [flags]      Correct a span by hand, or say you reviewed it

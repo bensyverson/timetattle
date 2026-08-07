@@ -211,6 +211,10 @@ until enough days have been through it.
   command, the two normalisations, why every engaged hour in this tool is
   inferred rather than observed, and the three separate reasons a stretch of
   presence belongs to no project.
+- [The dashboard](docs/content/docs/dashboard.md) — the `dashboard` command,
+  `metrics`' human-facing sibling: the same scoping and data, a trailing
+  `-days` window instead of an open span, and color detected once and shared
+  by every section.
 - [Adjustments](docs/content/docs/adjustments.md) — the `adjust` command, why
   human corrections are an overlay keyed to wall clock rather than an input to
   the clustering, and how "I reviewed this day and cannot remember it" is
