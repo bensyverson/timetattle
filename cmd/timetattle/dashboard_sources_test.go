@@ -3,17 +3,22 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/bensyverson/timetattle/internal/biome"
+	"github.com/bensyverson/timetattle/internal/fsobserve"
+	"github.com/bensyverson/timetattle/internal/gitlog"
+	"github.com/bensyverson/timetattle/internal/jobs"
+	"github.com/bensyverson/timetattle/internal/knowledgec"
 	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/sessions"
 	"github.com/bensyverson/timetattle/internal/store"
 	"github.com/bensyverson/timetattle/internal/storefixture"
+	"github.com/bensyverson/timetattle/internal/transcripts"
 )
 
 // See dashboard_heatmap_test.go's doc comment: this is the same one-line
@@ -80,10 +85,148 @@ func mkSitting(start time.Time, dur, margin time.Duration, sources ...string) se
 	}
 }
 
-// CRITERION pl8: a single-source sitting and a multi-source (corroborated)
-// sitting must be distinct, first-class, labeled segments — never collapsed
-// into an undifferentiated "multiple" bucket.
-func TestSourceAttributionDistinguishesSingleFromMultiSource(t *testing.T) {
+// motionAutosaveID and blenderBackupsID (manifest_ingest_test.go, this same
+// package) are the two built-in manifest source ids
+// (internal/manifest/builtin/motion.json and blender.json's own "id" fields)
+// that have no Go constant anywhere in the repo's non-test code to reference
+// instead.
+//
+// The obvious alternative — calling manifest.Builtin() here and reading its
+// []Source.ID back — was tried and reverted: internal/corpusgate's
+// TestNoUntaggedTestReachesForTheMachine statically forbids any untagged test
+// file from calling Builtin() unqualified, because (per its own Reaches
+// table) it "resolves the shipped manifests, whose roots are real vaults on
+// this machine and whose Spotlight discovery queries this machine's index."
+// Fixing that would mean adding this file to corpusgate's exempt map in
+// internal/corpusgate/suite_test.go, which job 57dP7 does not own (Files:
+// cmd/timetattle/dashboard_sources.go and its test only) — so these two ids
+// are literals (borrowed from the sibling test file that already declared
+// them, rather than a second, possibly-diverging pair declared here) and
+// this is the one part TestSourceFamilyMapsEveryKnownSourceID cannot
+// re-derive from source: if either JSON file's "id" field is ever renamed,
+// this list — not the completeness test — is what goes stale. Flagged for
+// the integrator as a possible follow-up (a corpusgate exemption, reasoned
+// the way internal/manifest/builtin_test.go's own entry already is).
+
+// knownSourceIDs returns every source id this build's Go collectors can
+// actually emit, plus the two built-in manifest ids above — read from the
+// packages that define them (exported ID constants and methods) rather than
+// duplicated here as a literal list, so this file's completeness test fails
+// the moment a new collector ships without a family, instead of silently
+// drifting the way scripts/confidential's name list did (AGENTS.md's "a tool
+// that takes what to look for as an argument is only as good as the
+// argument" rule).
+func knownSourceIDs() []string {
+	return []string{
+		gitlog.CommitsID,
+		gitlog.ReflogID,
+		jobs.EventsID,
+		jobs.ClaimsID,
+		transcripts.ID,
+		biome.NewDefaultAppUsage().ID(),
+		knowledgec.NewBacklight("").ID(),
+		knowledgec.NewLocked("").ID(),
+		knowledgec.NewAppUsage("").ID(),
+		knowledgec.NewMediaUsage("").ID(),
+		fsobserve.ID,
+		motionAutosaveID,
+		blenderBackupsID,
+	}
+}
+
+// CRITERION Zst, the completeness half: every source id the running binary's
+// own collectors and built-in manifests can attach to an event must map to a
+// family. An id reaching sourceFamily unmapped is exactly the "a new source
+// silently falls out of the chart" failure AGENTS.md names as this project's
+// own recurring sin — this test is what would have caught it before a real
+// dashboard run did.
+func TestSourceFamilyMapsEveryKnownSourceID(t *testing.T) {
+	for _, id := range knownSourceIDs() {
+		fam, ok := sourceFamily(id)
+		if !ok {
+			t.Errorf("source id %q has no family mapping", id)
+			continue
+		}
+		if fam == "" {
+			t.Errorf("source id %q mapped to an empty family", id)
+		}
+	}
+}
+
+// CRITERION Zst, the correctness half: completeness alone would pass a
+// mapping that sent every id to the same family. Each known id must land in
+// the SPECIFIC family job 57dP7's own description names for it.
+func TestSourceFamilyMapsToTheStatedFamily(t *testing.T) {
+	cases := map[string]family{
+		gitlog.CommitsID:                  familyGit,
+		gitlog.ReflogID:                   familyGit,
+		jobs.EventsID:                     familyJobs,
+		jobs.ClaimsID:                     familyJobs,
+		transcripts.ID:                    familyClaude,
+		biome.NewDefaultAppUsage().ID():   familyApps,
+		knowledgec.NewBacklight("").ID():  familyApps,
+		knowledgec.NewLocked("").ID():     familyApps,
+		knowledgec.NewAppUsage("").ID():   familyApps,
+		knowledgec.NewMediaUsage("").ID(): familyApps,
+		fsobserve.ID:                      familyFiles,
+		motionAutosaveID:                  familyMotion,
+		blenderBackupsID:                  familyBlender,
+	}
+	for id, want := range cases {
+		got, ok := sourceFamily(id)
+		if !ok {
+			t.Errorf("source id %q: expected family %s, got unmapped", id, want)
+			continue
+		}
+		if got != want {
+			t.Errorf("source id %q: family = %s, want %s", id, got, want)
+		}
+	}
+}
+
+// A source id no known collector or built-in manifest emits must not be
+// silently absorbed into some default family — sourceFamily's ok return is
+// what partitionSittingsByFamilies relies on to fail the render instead.
+func TestSourceFamilyRejectsUnknownSourceID(t *testing.T) {
+	if _, ok := sourceFamily("some-future-collector-nobody-mapped-yet"); ok {
+		t.Errorf("an unrecognised source id was silently mapped to a family")
+	}
+}
+
+// THE UNMAPPED-SOURCE DECISION, locked as a regression test. sourceFamily's
+// own doc comment argues for failing the whole render over inventing an
+// "Unmapped: <id>" catch-all family, on the strength of dashboard.go's own
+// renderDashboard precedent ("a section's error is fatal to the whole run
+// rather than skipped over"). This is what proves that decision actually
+// holds: renderSourceAttribution must return a non-nil error, naming the
+// offending id, rather than drawing a chart with a silently-invented
+// category in it.
+func TestSourceAttributionFailsRenderOnAnUnmappedSource(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	report := metrics.Report{Sessions: []sessions.Session{
+		mkSitting(t0, time.Hour, 0, "some-future-collector-nobody-mapped-yet"),
+	}}
+	report.Presence.Total = time.Hour
+
+	var out bytes.Buffer
+	data := &dashboardData{Report: report}
+	err := renderSourceAttribution(context.Background(), &out, metricsScope{}, dashboardPeriod{}, colorNone, data)
+	if err == nil {
+		t.Fatalf("expected an error for an unmapped source id, got nil (wrote: %q)", out.String())
+	}
+	if !strings.Contains(err.Error(), "some-future-collector-nobody-mapped-yet") {
+		t.Errorf("error does not name the unmapped source id: %v", err)
+	}
+}
+
+// CRITERION Zst: combinations are FAMILY-level, and a single-family sitting
+// and a multi-family (corroborated across families) sitting must be
+// distinct, first-class, labeled segments — never collapsed into an
+// undifferentiated "multiple" bucket. biome-appusage and fs-observations map
+// to different families (Apps and Files), so this also exercises the rollup
+// itself: two sources that used to print their own literal ids now print
+// two family names.
+func TestSourceAttributionDistinguishesSingleFromMultiFamily(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
 	report := metrics.Report{Sessions: []sessions.Session{
 		mkSitting(t0, 2*time.Hour, 0, "biome-appusage"),
@@ -98,19 +241,27 @@ func TestSourceAttributionDistinguishesSingleFromMultiSource(t *testing.T) {
 	}
 	text := out.String()
 
-	if !strings.Contains(text, "biome-appusage only") {
-		t.Errorf("single-source segment is not labeled %q:\n%s", "biome-appusage only", text)
+	// Anchored on "): " and a line end so the single-family "Apps" check
+	// cannot accidentally match as a substring of the "Apps, Files" combo
+	// line below it.
+	if !strings.Contains(text, "): Apps\n") {
+		t.Errorf("single-family segment is not labeled %q:\n%s", "Apps", text)
 	}
-	if !strings.Contains(text, "biome-appusage+fs-observations") {
-		t.Errorf("multi-source segment is not labeled as the combination:\n%s", text)
+	if !strings.Contains(text, "): Apps, Files\n") {
+		t.Errorf("multi-family segment is not labeled as the alphabetical combination %q:\n%s", "Apps, Files", text)
 	}
 	if strings.Contains(text, "multiple") {
-		t.Errorf("a source combination was collapsed into a generic \"multiple\" label:\n%s", text)
+		t.Errorf("a family combination was collapsed into a generic \"multiple\" label:\n%s", text)
+	}
+	// The granular source ids themselves must no longer appear anywhere in
+	// the legend — this section now speaks families, not source ids.
+	if strings.Contains(text, "biome-appusage") || strings.Contains(text, "fs-observations") {
+		t.Errorf("a granular source id leaked into the family-rolled-up legend:\n%s", text)
 	}
 }
 
 // Segments order by hours descending, so the reader sees what dominates
-// first.
+// first — unchanged by the rollup to families.
 func TestSourceAttributionOrdersSegmentsByHoursDescending(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
 	report := metrics.Report{Sessions: []sessions.Session{
@@ -127,23 +278,25 @@ func TestSourceAttributionOrdersSegmentsByHoursDescending(t *testing.T) {
 	}
 	text := out.String()
 
-	iBiome := strings.Index(text, "biome-appusage only")
-	iGit := strings.Index(text, "gitlog-commits only")
-	iFS := strings.Index(text, "fs-observations only")
-	if iBiome < 0 || iGit < 0 || iFS < 0 {
-		t.Fatalf("expected all three segment labels in the output:\n%s", text)
+	iApps := strings.Index(text, "): Apps\n")
+	iGit := strings.Index(text, "): Git\n")
+	iFiles := strings.Index(text, "): Files\n")
+	if iApps < 0 || iGit < 0 || iFiles < 0 {
+		t.Fatalf("expected all three family segment labels in the output:\n%s", text)
 	}
-	if !(iBiome < iGit && iGit < iFS) {
-		t.Errorf("segments are not ordered 5h, 2h, 1h descending:\n%s", text)
+	if !(iApps < iGit && iGit < iFiles) {
+		t.Errorf("segments are not ordered 5h Apps, 2h Git, 1h Files descending:\n%s", text)
 	}
 }
 
-// CRITERION i0A, THE LOAD-BEARING RECONCILIATION CHECK. The hour figures
+// CRITERION 0xP, THE LOAD-BEARING RECONCILIATION CHECK. The hour figures
 // printed in the legend must sum EXACTLY to the total the metrics report
 // states for this period (Report.Presence.Total) — never a second,
 // unreconciled figure. Durations are chosen as exact tenths of an hour so
 // %.1f formatting introduces no rounding residue and the check can be exact
-// rather than fuzzy.
+// rather than fuzzy. Unchanged by the rollup: this test's assertions are
+// identical to the pre-family version, because the reconciliation guarantee
+// does not depend on what a segment is keyed by.
 func TestSourceAttributionReconcilesExactlyWithReportPresenceTotal(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
 	sessionsIn := []sessions.Session{
@@ -175,12 +328,12 @@ func TestSourceAttributionReconcilesExactlyWithReportPresenceTotal(t *testing.T)
 
 // The margin decision, locked as a regression test: a sitting's Margin
 // (lead-in, tail-out, bridged silence — time inside the sitting no
-// observation covered) is attributed to the sitting's OWN source
+// observation covered) is attributed to the sitting's OWN family
 // combination, in full, exactly as metrics.Report.Presence.Total and
 // Project.Engaged.Total already fold margin into their totals without
 // stripping it into a separate bucket. A segment's printed hours must
 // therefore equal the sitting's full Start..End duration, not just its
-// observed portion.
+// observed portion. Unchanged by the rollup.
 func TestSourceAttributionAttributesMarginToItsOwnSittingsSegment(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
 	// A 2h sitting that is 1h45m margin and only 15m actually observed.
@@ -199,21 +352,42 @@ func TestSourceAttributionAttributesMarginToItsOwnSittingsSegment(t *testing.T) 
 	}
 }
 
-// No silent cap: with more distinct source combinations than the section
+// No silent cap: with more distinct FAMILY combinations than the section
 // displays individually, the excess folds into one explicit remainder
 // segment that says how many combinations it aggregates, and the total
 // still reconciles exactly including that remainder.
+//
+// The 12 distinct combinations here are built from REAL, family-mapped
+// source ids rather than the pre-rollup version's synthetic "source-NN"
+// literals: those would now be unmapped ids and renderSourceAttribution
+// would (correctly, per TestSourceAttributionFailsRenderOnAnUnmappedSource)
+// fail the render instead of reaching the cap at all. The 7 families give 7
+// singleton combinations plus 5 two-family combinations chosen to all be
+// distinct sets, for 12 total — comfortably over maxSourceSegments.
 func TestSourceAttributionCapsWithAnExplicitRemainderSegment(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	combos := [][]string{
+		{"gitlog-commits"},                       // Git
+		{"job-events"},                           // Jobs
+		{"claude-transcripts"},                   // Claude
+		{"biome-appusage"},                       // Apps
+		{"fs-observations"},                      // Files
+		{"motion-autosave"},                      // Motion
+		{"blender-backups"},                      // Blender
+		{"gitlog-commits", "job-events"},         // Git+Jobs
+		{"gitlog-commits", "claude-transcripts"}, // Git+Claude
+		{"job-events", "claude-transcripts"},     // Jobs+Claude
+		{"biome-appusage", "fs-observations"},    // Apps+Files
+		{"biome-appusage", "motion-autosave"},    // Apps+Motion
+	}
 	var sessionsIn []sessions.Session
 	var want time.Duration
-	// 12 distinct single-source combinations, each a different exact tenth
-	// of an hour so the legend's printed figures sum without rounding
-	// residue, and each longer than the last so descending order also
-	// determines which ones get folded (the shortest ones do).
-	for i := range 12 {
+	// Each a different exact tenth of an hour, ascending, so the legend's
+	// printed figures sum without rounding residue and descending render
+	// order also determines which ones get folded (the shortest ones do).
+	for i, sources := range combos {
 		dur := time.Duration(i+1) * 6 * time.Minute // 0.1h, 0.2h, ... 1.2h
-		s := mkSitting(t0.Add(time.Duration(i)*3*time.Hour), dur, 0, fmt.Sprintf("source-%02d", i))
+		s := mkSitting(t0.Add(time.Duration(i)*3*time.Hour), dur, 0, sources...)
 		sessionsIn = append(sessionsIn, s)
 		want += dur
 	}
@@ -228,12 +402,13 @@ func TestSourceAttributionCapsWithAnExplicitRemainderSegment(t *testing.T) {
 	text := out.String()
 
 	if !strings.Contains(text, "more combination") {
-		t.Errorf("12 distinct combinations did not produce an explicit remainder segment naming what it aggregates:\n%s", text)
+		t.Errorf("12 distinct family combinations did not produce an explicit remainder segment naming what it aggregates:\n%s", text)
 	}
-	// No source name was silently dropped: at least some individual segments
-	// survive the cap and are named.
-	if strings.Count(text, "source-") == 0 {
-		t.Errorf("no individual source segments survived the cap at all:\n%s", text)
+	// No family combination was silently dropped: the largest combination
+	// (Apps+Motion, the last and longest in the list) survives the cap and
+	// is named individually.
+	if !strings.Contains(text, "): Apps, Motion\n") {
+		t.Errorf("the largest family combination did not survive the cap:\n%s", text)
 	}
 
 	got := parsedLegendHours(t, text)
@@ -246,7 +421,8 @@ func TestSourceAttributionCapsWithAnExplicitRemainderSegment(t *testing.T) {
 // tell segments apart — the brief's own requirement ("segment colors via cc
 // with a colorNone fallback of per-segment glyphs"). Two segments rendered
 // under colorNone must not use the same fill character, or a reader with no
-// color capability cannot tell the bar's segments apart at all.
+// color capability cannot tell the bar's segments apart at all. Unchanged by
+// the rollup.
 func TestSourceAttributionColorNoneUsesDistinctGlyphsPerSegment(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
 	report := metrics.Report{Sessions: []sessions.Session{
@@ -291,6 +467,7 @@ func TestSourceAttributionColorNoneUsesDistinctGlyphsPerSegment(t *testing.T) {
 // Color capability paints each segment a distinct fixed-order color when the
 // terminal can take it, so the same segment always gets the same slot's
 // color across renders — never repainted by rank order changes elsewhere.
+// Unchanged by the rollup.
 func TestSourceAttributionPaintsDistinctColorsUnderTruecolor(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
 	report := metrics.Report{Sessions: []sessions.Session{
@@ -324,7 +501,7 @@ func TestSourceAttributionPaintsDistinctColorsUnderTruecolor(t *testing.T) {
 // No sittings at all in the period is a "no data" state, not "zero work" —
 // design principle 3. The section must say so rather than drawing an empty
 // bar with no explanation, and never print figures that would read as a
-// measured zero.
+// measured zero. Unchanged by the rollup.
 func TestSourceAttributionWithNoSittingsSaysSoRatherThanDrawingNothing(t *testing.T) {
 	var out bytes.Buffer
 	data := &dashboardData{Report: metrics.Report{}}
@@ -336,6 +513,30 @@ func TestSourceAttributionWithNoSittingsSaysSoRatherThanDrawingNothing(t *testin
 	}
 	if strings.Contains(out.String(), "0.0h") || strings.Contains(out.String(), "100.0%") {
 		t.Errorf("a no-data period was rendered as if it were a measured zero:\n%s", out.String())
+	}
+}
+
+// CRITERION jLu: the legend line format is hours, percent in parens, colon,
+// alphabetical family names — "116.1h (25.3%): Apps, Claude, Git, Jobs", per
+// Ben's own example in job 57dP7's description.
+func TestSourceAttributionLegendLineFormatIsHoursPercentColonFamilies(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	report := metrics.Report{Sessions: []sessions.Session{
+		mkSitting(t0, time.Duration(116.1*float64(time.Hour)), 0,
+			"job-events", "gitlog-commits", "claude-transcripts", "biome-appusage"),
+	}}
+	report.Presence.Total = report.Sessions[0].Duration()
+
+	var out bytes.Buffer
+	data := &dashboardData{Report: report}
+	if err := renderSourceAttribution(context.Background(), &out, metricsScope{}, dashboardPeriod{}, colorNone, data); err != nil {
+		t.Fatalf("renderSourceAttribution: %v", err)
+	}
+	text := out.String()
+
+	lineRE := regexp.MustCompile(`116\.1h \(\d+\.\d%\): Apps, Claude, Git, Jobs`)
+	if !lineRE.MatchString(text) {
+		t.Errorf("legend line does not match the required \"<hours>h (<percent>%%): <families>\" format:\n%s", text)
 	}
 }
 
@@ -361,15 +562,45 @@ func TestSourceAttributionReconcilesOverTheStorefixtureCorpus(t *testing.T) {
 		t.Fatalf("test setup bug: the fixture corpus produced no presence at all")
 	}
 
-	// THE EXACT HALF: partitionSittingsBySources' own total, computed in
+	// THE EXACT HALF: partitionSittingsByFamilies' own total, computed in
 	// full time.Duration precision with no display rounding anywhere, must
 	// equal Report.Presence.Total to the nanosecond. This is what
 	// renderSourceAttribution itself relies on and is the real reconciliation
 	// guarantee; the parsed-text check below is a second, looser proof that
 	// nothing was lost turning that exact figure into %.1fh legend rows.
-	_, exactTotal := partitionSittingsBySources(report.Sessions)
+	segs, exactTotal, err := partitionSittingsByFamilies(report.Sessions)
+	if err != nil {
+		t.Fatalf("partitionSittingsByFamilies over the fixture corpus: %v", err)
+	}
+
+	// The collapse job 57dP7 asks to be measured: how many distinct
+	// combinations exist at the granular source level over this fixture,
+	// versus at the family level. Reproduce with:
+	//   go test ./cmd/timetattle/... -run TestSourceAttributionReconcilesOverTheStorefixtureCorpus -v
+	// storefixture's own package doc says its corpus is "small and
+	// deliberate" (internal/storefixture/storefixture.go), not a replica of
+	// any real store's source diversity, so this number is NOT the 76 job
+	// 57dP7's description cites from the live store — that figure can only
+	// be checked against the real store, by whoever integrates this section
+	// (the task's own "note the live count is for the integrator"). What
+	// this DOES demonstrate, on data nobody hand-tuned for the assertion, is
+	// that the rollup can only ever shrink the combination count, never grow
+	// it: every family combination here is the image of at least one source
+	// combination under sourceFamily.
+	sourceCombos := map[string]bool{}
+	for _, s := range report.Sessions {
+		key := strings.Join(s.Sources, "\x00")
+		sourceCombos[key] = true
+	}
+	t.Logf("fixture corpus: %d distinct source-level combinations, %d distinct family-level combinations",
+		len(sourceCombos), len(segs))
+	if len(segs) > len(sourceCombos) {
+		t.Errorf("family rollup produced MORE distinct combinations (%d) than the source-level partition (%d) — "+
+			"the rollup must never increase the combination count", len(segs), len(sourceCombos))
+	}
+
 	if exactTotal != report.Presence.Total {
-		t.Fatalf("partitionSittingsBySources total %v != report.Presence.Total %v over the fixture corpus",
+		t.Fatalf("partitionSittingsByFamilies total %v != report.Presence.Total %v over the fixture corpus",
 			exactTotal, report.Presence.Total)
 	}
 
