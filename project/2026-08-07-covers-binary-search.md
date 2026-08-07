@@ -253,7 +253,18 @@ together account for 57.76% of flat time, and all four are garbage-collector
 machinery (`madvise` in particular is the kernel call the GC makes to return
 freed pages, and its presence at this size says the program is allocating and
 discarding enough that the collector's own bookkeeping is now a bigger cost
-than any one function this repository owns). The largest *application* symbol
+than any one function this repository owns).
+
+> **Correction (2026-08-07, later the same day, from
+> `project/2026-08-07-alloc-churn.md`):** the claim above that all four
+> symbols are garbage-collector machinery is wrong. `syscall.rawsyscalln` is
+> the SQL driver reading the database file — `go tool pprof -peek
+> 'syscall.syscall6$'` attributes 84% of it to `unix.pread` and 16% to
+> `unix.pwrite`, and `modernc.org/sqlite` is pure-Go SQLite, so its page I/O
+> appears as ordinary syscalls rather than under a cgo frame. The genuinely
+> GC-attributable share of that profile was 26.25% of flat time, not 57.76%.
+> The successor document carries the full attribution and what followed from
+> it. The largest *application* symbol
 by flat time is `internal/sessions.Retain` at 6.68% — inside
 `internal/sessions`, which this task was explicitly scoped not to touch. By
 cumulative time the largest application symbol is `internal/metrics.Compute`
