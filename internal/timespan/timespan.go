@@ -144,13 +144,27 @@ func Intersect(a, b []Span) []Span {
 
 // Covers reports whether at falls inside one of the spans, half-open, so a
 // zero-length span contains nothing — not even its own instant.
+//
+// spans MUST be sorted ascending by Start and pairwise non-overlapping — the
+// shape Union and Subtract hand back, and the shape every call site in this
+// repository passes: internal/sessions.Cluster queries Subtract's output
+// directly, and the two other call sites each pass a single-element slice,
+// which is sorted and non-overlapping with nothing to compare it against.
+// This is a binary search, not a scan, and it trusts that ordering to decide
+// which half of spans to discard — an unsorted or overlapping slice makes it
+// return a wrong answer silently rather than a slow one. If a future caller
+// cannot supply spans in this shape, sort and Union them first rather than
+// weakening the precondition here.
 func Covers(spans []Span, at time.Time) bool {
-	for _, s := range spans {
-		if !at.Before(s.Start) && at.Before(s.End) {
-			return true
-		}
+	// i is the index of the first span that starts after at, so the only
+	// candidate that could cover at is the one just before it.
+	i := sort.Search(len(spans), func(i int) bool {
+		return spans[i].Start.After(at)
+	})
+	if i == 0 {
+		return false
 	}
-	return false
+	return spans[i-1].End.After(at)
 }
 
 // Overlaps reports whether two spans share any instant, counting a zero-length

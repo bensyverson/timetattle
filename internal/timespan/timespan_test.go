@@ -1,6 +1,7 @@
 package timespan_test
 
 import (
+	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
@@ -163,6 +164,41 @@ func TestSubtractKeepsAPointOutsideTheCutAndDropsOneInsideIt(t *testing.T) {
 	}
 }
 
+// TestSubtractOfUnionedSpansStaysSortedAndDisjoint is what makes Covers'
+// binary search legal at its one hot call site: internal/sessions.Cluster
+// calls Covers against timespan.Subtract(darkU, litU), where both arguments
+// are Union's output. Subtract does not sort or merge its `from` argument —
+// it only ever removes or splits each of its elements in place — so this
+// property depends on darkU already being sorted and disjoint before Subtract
+// sees it, which is exactly what Union guarantees and what Cluster passes.
+// This test pins that chain with randomised input rather than one hand-picked
+// case, because a search that trusts an unsorted or overlapping slice returns
+// a wrong answer silently, and a single example cannot rule that out.
+func TestSubtractOfUnionedSpansStaysSortedAndDisjoint(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	randomSpans := func(n int) []timespan.Span {
+		out := make([]timespan.Span, n)
+		for i := range out {
+			start := rng.Intn(200)
+			out[i] = span(start, start+rng.Intn(20))
+		}
+		return out
+	}
+	for trial := range 200 {
+		from := timespan.Union(randomSpans(1 + rng.Intn(15)))
+		cut := timespan.Union(randomSpans(1 + rng.Intn(15)))
+		got := timespan.Subtract(from, cut)
+		for i := 1; i < len(got); i++ {
+			if got[i-1].Start.After(got[i].Start) {
+				t.Fatalf("trial %d: Subtract's output is not sorted by Start: %s", trial, render(got))
+			}
+			if got[i-1].End.After(got[i].Start) {
+				t.Fatalf("trial %d: Subtract's output overlaps: %s", trial, render(got))
+			}
+		}
+	}
+}
+
 func TestIntersectIsTheTimeBothRunsClaim(t *testing.T) {
 	got := timespan.Intersect(
 		[]timespan.Span{span(0, 30), span(40, 60)},
@@ -195,6 +231,38 @@ func TestCoversIsHalfOpen(t *testing.T) {
 func TestAZeroLengthSpanCoversNothingAtAll(t *testing.T) {
 	if timespan.Covers([]timespan.Span{span(10, 10)}, at(10)) {
 		t.Error("a zero-length span was read as covering its own instant; it covers no time")
+	}
+}
+
+// TestCoversFindsEachSpanInASortedDisjointRun exercises a run of more than one
+// span, which the single-span cases above cannot: a search that only ever
+// looks at spans[0] would still pass TestCoversIsHalfOpen. Every gap, every
+// span, and the far side of the last span are queried so a search that stops
+// at the wrong half of the slice has somewhere to be caught.
+func TestCoversFindsEachSpanInASortedDisjointRun(t *testing.T) {
+	run := []timespan.Span{span(0, 10), span(20, 30), span(40, 50)}
+	for _, tc := range []struct {
+		minute int
+		want   bool
+	}{
+		{-1, false},  // before every span
+		{0, true},    // start of the first span
+		{5, true},    // inside the first span
+		{9, true},    // last covered instant of the first span
+		{10, false},  // end of the first span, half-open
+		{15, false},  // the gap between the first and second spans
+		{20, true},   // start of the second span
+		{29, true},   // last covered instant of the second span
+		{30, false},  // end of the second span
+		{35, false},  // the gap between the second and third spans
+		{40, true},   // start of the last span
+		{49, true},   // last covered instant of the last span
+		{50, false},  // end of the last span
+		{100, false}, // well past every span
+	} {
+		if got := timespan.Covers(run, at(tc.minute)); got != tc.want {
+			t.Errorf("Covers(%s, +%dm) = %v, want %v", render(run), tc.minute, got, tc.want)
+		}
 	}
 }
 
