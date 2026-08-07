@@ -34,7 +34,7 @@ class needs:
        325  the path is gone from disk              timetattle consolidate
             /Users/you/git/claude/shared (117)
             /private/tmp/Demo_inspect (113)
-            /private/tmp/OperativeKit/Examples/OK (61)
+            /private/tmp/GadgetKit/Examples/GK (61)
             and 2 more
         69  a directory register would accept       timetattle register
             /private/tmp (66)

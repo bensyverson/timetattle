@@ -218,7 +218,7 @@ not help, because the stored paths still name the old one.
 `timetattle consolidate` declares the connection:
 
 ```
-timetattle consolidate -path ~/git/nobedan -former ~/git/theaitrellis
+timetattle consolidate -path ~/git/lantern -former ~/git/the-lantern-app
 ```
 
 `-path` must already be registered. `-former` is written into *its* marker,
@@ -228,8 +228,8 @@ as part of that directory's identity, alongside the client and project:
 {
   "marker_version": 1,
   "client": "personal",
-  "project": "nobedan",
-  "former_paths": ["/Users/you/git/theaitrellis"],
+  "project": "lantern",
+  "former_paths": ["/Users/you/git/the-lantern-app"],
   "registered": "2026-08-01T10:41:55.201947Z"
 }
 ```
@@ -252,7 +252,7 @@ the next `timetattle harvest` re-attributes what the declaration now covers.
 To see what a declaration would be worth before making it:
 
 ```
-go run ./scripts/consolidatecheck -path ~/git/nobedan -former ~/git/theaitrellis
+go run ./scripts/consolidatecheck -path ~/git/lantern -former ~/git/the-lantern-app
 ```
 
 It reads the store read-only, writes nothing, and reports observation counts

@@ -245,8 +245,8 @@ category as `.DS_Store`.
 **The volume is the wrong measure.** Only 86 of the 130,361 filesystem
 observations in the live store on 2026-08-01 were sidecars, 0.1%. But one
 observation is enough to put a project row on a day's review screen, and on
-2026-08-01 seven unrelated repositories — `cypress`, `dogwood`, `Hayes`,
-`Jobs`, `Throughline`, `kura`, `acorn` — each showed a whole working day built out
+2026-08-01 seven unrelated repositories — `alder`, `bramble`, `corwin`,
+`davenport`, `eastlake`, `fenwick`, `gable` — each showed a whole working day built out
 of nothing but a WAL checkpoint, every stamp inside the same second. Real work
 does not touch seven repositories in one second.
 
