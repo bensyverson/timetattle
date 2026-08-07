@@ -129,9 +129,11 @@ func TestReadingEventsAllocatesNoMorePerRowThanTheDriverItself(t *testing.T) {
 	}
 	defer raw.Close()
 
-	const columns = `SELECT source_id, shape, unknown, started_at, ended_at,
-		app, document, state, locator, project, cause FROM canonical_event
-		ORDER BY COALESCE(started_at, ended_at), id`
+	// The SAME query the store issues, taken from the store rather than copied,
+	// so that the floor and the thing measured against it cannot come to be two
+	// different reads. A copy that drifted would go on producing a number, and
+	// the number would silently stop being a floor.
+	columns := store.EventsQuery("canonical_event", "")
 
 	var (
 		floorRows int

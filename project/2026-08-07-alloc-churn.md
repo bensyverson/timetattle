@@ -390,12 +390,43 @@ the other half of the read's cost. Both are schema work and belong in a
 migration, which is a different discipline from this task and was deliberately
 not attempted here.
 
+> **Correction, 2026-08-07, from `project/2026-08-07-read-index.md`.** The
+> paragraph above is right about the sort and wrong about the subquery. The
+> supersession check is **not** run once per row, and it is not "the other half
+> of the read's cost" — it is 2% of it.
+>
+> `CORRELATED SCALAR SUBQUERY` in a query plan is a NODE, not an execution
+> count. The view's predicate reads
+> `NOT (shape = 'unbounded' AND COALESCE(unknown, '') = 'horizon' AND EXISTS (…))`,
+> and SQLite short-circuits the `AND`, so the `EXISTS` is reached only by rows
+> that are already unbounded horizons. There are **16** of those in 1,021,665:
+>
+> ```
+> sqlite3 "file:$HOME/.timetattle/timetattle.db?mode=ro" \
+>   "SELECT shape, COALESCE(unknown,'-'), COUNT(*) FROM event GROUP BY 1,2;"
+> ```
+>
+> Measured rather than argued, over a copy of the live store, selecting the same
+> eleven columns with `.output /dev/null` (second of two runs, user time): the
+> table without the `ORDER BY` costs 0.87s and the view without it 0.89s, so the
+> whole supersession predicate is **0.02s**. Adding the `ORDER BY` to the view
+> takes it to 1.55s. The sort was the entire difference, and the index alone
+> removes it: `pwrite` falls from 0.55s to **zero** in a matched profile pair.
+>
+> The failure mode is worth naming, because a plan node that names a subquery
+> looks like a cost and reads like one. Neither predecessor measured it, and it
+> was carried forward into the successor task's brief as fact.
+
 ### The next reductions, in the order the profile ranks them
 
 1. **The `ORDER BY` temp B-tree, and the per-row correlated subquery in
    `canonical_event`.** 2.18s of a 5.66s run is in the read layer's syscalls.
    This is the largest remaining item by a wide margin and it is a schema
    question, not a Go one.
+   > **Corrected, 2026-08-07:** the subquery is not per-row and is not part of
+   > this item; see the correction block above. The temp B-tree alone accounts
+   > for it, and migration 0013 removes it —
+   > `project/2026-08-07-read-index.md`.
 2. **`sessions.Retain`, 0.43s flat.** It allocates and fills a second copy of
    the whole corpus, 203 MB, because its documented contract is purity: "the
    caller's slice is neither reordered nor written to". The only ways to remove

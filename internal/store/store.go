@@ -277,10 +277,6 @@ func (s *Store) EventsIncludingSuperseded(ctx context.Context, f Filter) ([]sour
 // events reads from either the table or the view. The relation is a constant at
 // every call site and never comes from a caller.
 func (s *Store) events(ctx context.Context, from string, f Filter) ([]source.Event, error) {
-	query := strings.Builder{}
-	query.WriteString(`SELECT source_id, shape, unknown, started_at, ended_at,
-		app, document, state, locator, project, cause FROM ` + from)
-
 	var (
 		where []string
 		args  []any
@@ -302,9 +298,8 @@ func (s *Store) events(ctx context.Context, from string, f Filter) ([]source.Eve
 	clause := ""
 	if len(where) > 0 {
 		clause = " WHERE " + strings.Join(where, " AND ")
-		query.WriteString(clause)
 	}
-	query.WriteString(` ORDER BY COALESCE(started_at, ended_at), id`)
+	query := eventsQuery(from, clause)
 
 	// HOW MANY ROWS ARE COMING, asked before any are read, so the result slice
 	// is allocated once at its final size. A slice grown by append allocates
@@ -321,7 +316,7 @@ func (s *Store) events(ctx context.Context, from string, f Filter) ([]source.Eve
 	// failed hint is a slower read, not a failed one.
 	out := make([]source.Event, 0, s.countEvents(ctx, from, clause, args))
 
-	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read events from %s: %w", s.path, err)
 	}
@@ -370,6 +365,27 @@ func (s *Store) events(ctx context.Context, from string, f Filter) ([]source.Eve
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// eventsQuery is the SQL of an event read: the columns, the relation, whatever
+// WHERE the filter produced, and the anchor order every read comes back in.
+//
+// It is one function rather than a string assembled at the call site because
+// THE ORDER BY IS MATCHED BY AN INDEX, and the match is textual. Migration 0013
+// creates event_anchor on the expression COALESCE(started_at, ended_at), id;
+// SQLite will use an expression index to satisfy an ORDER BY only when the
+// ORDER BY spells the expression the same way the index does. Reordering the
+// COALESCE arguments here, or dropping the trailing id, or writing
+// ifnull() instead, all still return the right rows — and all silently put a
+// temporary B-tree back in front of a million of them, spilled to disk, on a
+// connection opened read-only. Nothing about that is visible in a result, which
+// is why internal/store's plan test asserts against this function rather than
+// against a copy of the query, and why the ORDER BY has exactly one spelling in
+// this package.
+func eventsQuery(from, clause string) string {
+	return `SELECT source_id, shape, unknown, started_at, ended_at,
+		app, document, state, locator, project, cause FROM ` + from + clause +
+		` ORDER BY COALESCE(started_at, ended_at), id`
 }
 
 // countEvents is how many rows the read is about to return, for sizing the

@@ -1,0 +1,84 @@
+-- 0013: an index for the order every read of this store already comes back in.
+--
+-- Since 0001 every event read has ended `ORDER BY COALESCE(started_at,
+-- ended_at), id`. The COALESCE is not a nicety: an event observed only as it
+-- stopped has no start, and sorting it by started_at would file it at the zero
+-- time, decades before the work it records. That expression is the ANCHOR, and
+-- until this migration nothing in the schema could produce it in order.
+--
+-- So SQLite sorted. Every read of the store built a temporary B-tree over the
+-- whole result, and on a real corpus — 1,021,650 canonical events — that B-tree
+-- outgrew the page cache and spilled to a temp file.
+--
+--   EXPLAIN QUERY PLAN on the read, before:
+--     |--SCAN e
+--     |--CORRELATED SCALAR SUBQUERY 3
+--     |  `--SEARCH complete USING INDEX event_source (source_id=? AND started_at=?)
+--     `--USE TEMP B-TREE FOR ORDER BY
+--
+-- The tell was in the syscall profile of `timetattle metrics`, which opens the
+-- store READ-ONLY and was nevertheless spending 0.46s of a 5.7s run inside
+-- pwrite. Nothing in a read-only command should be writing at all; the spill
+-- was the only thing that could be. After this migration the same plan reads
+-- `SCAN e USING INDEX event_anchor` with no sort step, and the system time of
+-- the equivalent query drops from ~0.45s to ~0.06s.
+--
+-- # Why the index is on an expression, and why the text of it matters
+--
+-- SQLite will use an index to satisfy an ORDER BY only when the ORDER BY spells
+-- the indexed expression the SAME WAY the index does. `COALESCE(ended_at,
+-- started_at)`, `ifnull(started_at, ended_at)` and `COALESCE(started_at,
+-- ended_at)` are three ways of writing very nearly the same thing and only the
+-- third one is matched here. That is a real hazard, because a mismatch is
+-- SILENT: the query returns exactly the right rows, in exactly the right order,
+-- having sorted a million of them to get there. internal/store keeps the ORDER
+-- BY in one function, eventsQuery, and tests the plan against that function
+-- rather than against a copy of the query, so the two cannot drift apart
+-- without a test saying so.
+--
+-- # Why `id` is named even though SQLite would append it anyway
+--
+-- event.id is INTEGER PRIMARY KEY, so it IS the rowid, and SQLite appends the
+-- rowid to every non-unique index key — which means an index on the anchor
+-- alone already orders ties by id and already satisfies this ORDER BY. Measured
+-- on a copy of a real store, that smaller index is 37.0 MB against 41.0 MB, and
+-- the two produce the same plan and the same time.
+--
+-- The four megabytes buy an index whose columns are the ORDER BY, written out.
+-- The implicit form works by a chain of three facts — id is the rowid, the
+-- rowid is the trailing key, ties therefore come back in id order — and if any
+-- of them stopped holding, the sort would come back with no error and no failing
+-- correctness test. Naming the column costs 10% of a 41 MB index and removes the
+-- chain.
+--
+-- # Why this index is not UNIQUE
+--
+-- Two observations may legitimately share an anchor: a knowledgeC point and a
+-- Biome interval that begin at the same microsecond are two facts about that
+-- instant, not one fact recorded twice. Deduplication is event_identity's job,
+-- by content, and it is unique for that reason. A unique index here would refuse
+-- the second observation at insert time, and would be discovered as a failing
+-- harvest — the most expensive way this schema can be wrong.
+--
+-- Note that the NULL trap event_identity's COALESCEs exist for does not apply
+-- here even though this index also wraps nullable columns. There, COALESCE
+-- defeats SQLite's rule that NULLs are DISTINCT in a UNIQUE index, which would
+-- otherwise let identical bare stops insert for ever. Here the COALESCE is the
+-- sort key itself and the index is not unique, so the rule has nothing to act
+-- on. Two spellings, two different reasons; neither is decoration.
+--
+-- # What it costs
+--
+-- 41.0 MB on a 651 MB store (dbstat over a copy of a real one), and one more
+-- index to maintain on insert. Harvest writes are a few thousand rows against
+-- reads of a million, and every command that reads the store pays the sort, so
+-- the trade is not close.
+--
+-- Building it over an existing store is a one-time cost inside this migration.
+-- It is worth knowing WHEN a real store will pay it: `metrics`, `orient`,
+-- `status`, `fit`, `headline` and `review` all open read-only and therefore do
+-- not migrate at all. The index arrives on the next `harvest`, `sessionize`,
+-- `chains`, `adjust` or `register` — the first command that opens the store for
+-- writing — and until then the reading commands go on sorting exactly as they
+-- did.
+CREATE INDEX event_anchor ON event (COALESCE(started_at, ended_at), id);
