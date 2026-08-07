@@ -69,6 +69,8 @@ both commands share.`,
 	all := fs.Bool("all", false, "report every client and project, ignoring the working directory's scope")
 	indexPath := fs.String("index", "",
 		"registry index to resolve the working directory's scope against (default: ~/.timetattle/registered-directories.json)")
+	detailed := fs.Bool("detailed", false,
+		"include sections too dense for every run, such as SOURCE FRESHNESS (omitted by default)")
 	cmd.RunE = func(*cobra.Command, []string) error {
 		set := flagsSet(fs)
 		if *days < 1 {
@@ -190,8 +192,12 @@ both commands share.`,
 			ClientMap: cm,
 			Log:       log,
 		}
+		// CLAMPING HAPPENS ONCE, HERE, BEFORE ANY SECTION RENDERS — see
+		// clampPeriodToFirstObservation's own doc comment and dashboardPeriod's
+		// for why this needs no query beyond the one already run above.
+		period = clampPeriodToFirstObservation(period, scope, data)
 		cc := detectColorCapability(stdout, os.LookupEnv)
-		return renderDashboard(ctx, stdout, scope, period, cc, data)
+		return renderDashboard(ctx, stdout, scope, period, cc, data, *detailed)
 	}
 	return cmd
 }
@@ -259,36 +265,51 @@ type dashboardData struct {
 // series.go), so a day boundary here and a day boundary in `metrics -by day`
 // never disagree about where one day ends and the next begins.
 //
-// # No separate "observation floor" field — deliberately
+// # From narrows to the scope's first observation — never earlier than -days
 //
-// The brief for this task asked this type to carry the earliest instant data
-// exists, if that is cheap. It IS cheap globally: store.LocatorCounts
-// computes MIN(occurred_at) across the whole store in one aggregate query,
-// already used by `timetattle orient`. But a global floor is the wrong
-// answer for a SCOPED report — the store's very first observation almost
-// certainly belongs to a different project than the one a given dashboard
-// run is scoped to, and stamping every scope with the same store-wide floor
-// would assert something only ever measured about one project of many.
-// Computing the correctly SCOPED floor cheaply would need a new
-// project-filtered MIN(occurred_at) query with no equivalent anywhere in
-// metrics.go — precisely the "bolted-on store query" the brief said to avoid
-// rather than add. So this type does not carry one.
+// -days alone describes a REQUEST (trailing N days ending today) and knows
+// nothing about when the scope itself began. Run in a young project, the
+// dashboard's year-long default drew months of unobserved cells before the
+// project existed at all — Ben's dashboard feedback, 2026-08-07, item 2.
+// dashboardCmd's RunE calls clampPeriodToFirstObservation, below, once,
+// before any section renders, and every section (and the header) sees only
+// the result — see that function's own doc comment for exactly what "first
+// observation" means and for the -all case.
 //
-// What the pipeline already has, unbounded and correctly scoped for the
-// actual question, is dashboardData.Log: collection is a property of the
-// STORE and not of any one project (a capture or harvest run does not name a
-// project), so collectionLog needs no per-project version at all.
+// An earlier draft of this file argued against carrying ANY observation
+// floor, on the grounds that a correctly SCOPED one (as opposed to the whole
+// store's earliest, which belongs to whichever project happened to start
+// collecting first — store.LocatorCounts, already used by `timetattle
+// orient`) would need a new project-filtered MIN(occurred_at) query with no
+// equivalent in metrics.go: precisely the "bolted-on store query" the
+// original brief said to avoid. That objection dissolves once the floor is
+// bounded to the window -days already asked for, rather than the whole
+// store's history: the events dashboardCmd already fetched for [From, To)
+// are exactly the evidence needed to find the earliest IN-SCOPE anchor
+// inside that window, with no query beyond the one already run. What
+// remains true, and is still why there is no field here naming an UNBOUNDED
+// earliest observation, is dashboardData.Log: collection is a property of
+// the STORE and not of any one project (a capture or harvest run does not
+// name a project), so collectionLog needs no per-project version at all.
 // Log.during(start, end) tells UNRECORDED (nothing was being collected) from
 // OK (collection ran, found nothing) for any period a section asks about,
-// which is exactly design principle 3's question, and can express a source
-// going stale MID-period in a way one scalar floor never could. Sections
-// needing the per-day answer — the heatmap most of all — call
-// data.Log.during(dayStart, dayEnd) directly.
+// which is design principle 3's own question and is a different one from
+// "when did this scope's own data begin" — the question From's narrowing
+// answers. Sections needing the per-day answer — the heatmap most of all —
+// call data.Log.during(dayStart, dayEnd) directly, unaffected by clamping.
 type dashboardPeriod struct {
-	// Days is what -days asked for.
+	// Days is what -days asked for. Clamping never changes it — a reader
+	// comparing what was asked against what was used needs both, and the
+	// header prints both for exactly that reason.
 	Days int
 	// From and To are the resolved, half-open instant window: [From, To).
+	// From may be later than -days alone would have computed; see Clamped.
 	From, To time.Time
+	// Clamped is true when From was narrowed below the raw -days window
+	// because the scope's first in-scope observation fell later than that
+	// window's own start. false means From is exactly what -days computed,
+	// unchanged.
+	Clamped bool
 }
 
 // dashboardPeriodOf resolves days trailing working days ending on the day now
@@ -301,6 +322,60 @@ func dashboardPeriodOf(days int, cal sessions.Calendar, now time.Time) dashboard
 	_, to := cal.Bounds(today)
 	from, _ := cal.Bounds(today.AddDays(-(days - 1)))
 	return dashboardPeriod{Days: days, From: from, To: to}
+}
+
+// clampPeriodToFirstObservation narrows period.From to the earliest in-scope
+// event's Anchor, when that instant falls later than period.From already
+// is — dashboardPeriod's own doc comment names why this field exists at
+// all; this is what computes it.
+//
+// # Derived from data already assembled, never a new store query
+//
+// data.Events is exactly what dashboardCmd already queried for
+// [period.From, period.To) — see dashboardData's own doc comment on
+// reaching for what the pipeline already computed rather than adding a
+// query of its own. Because every event here already falls inside the
+// window, the earliest in-scope anchor found can only ever be AT OR AFTER
+// period.From, so assigning it straight to the returned period's From can
+// only narrow the window, never widen it past what -days asked for — no
+// separate floor-clamp is needed on top of this.
+//
+// # Scope selects "in scope" exactly the way every section already does
+//
+// scope.showsProject(e.Identity.Project, data.Report.Clients) is the same
+// predicate dashboard_stats.go's tallyStats uses to decide which events
+// count for a scoped run. Under -all, scope is the zero value and
+// showsProject admits every event unconditionally, so the earliest anchor
+// found is the earliest of every event dashboardCmd already fetched: the
+// store-wide earliest WITHIN the window already asked for. That is the
+// brief's "-all uses the store-wide earliest," reached with no special case
+// of its own — showsProject already degrades to "everything" when scope is
+// empty.
+//
+// No in-scope event at all — an empty store, or (defensively; the real
+// query already bounds Events to the window) a scope whose data all falls
+// outside it — leaves period untouched: there is no observation to clamp
+// to, and the honest answer is the window as requested, not a guess.
+func clampPeriodToFirstObservation(period dashboardPeriod, scope metricsScope, data *dashboardData) dashboardPeriod {
+	var earliest time.Time
+	for _, e := range data.Events {
+		if !scope.showsProject(e.Identity.Project, data.Report.Clients) {
+			continue
+		}
+		a := e.Anchor()
+		if a.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || a.Before(earliest) {
+			earliest = a
+		}
+	}
+	if earliest.IsZero() || !earliest.After(period.From) {
+		return period
+	}
+	period.From = earliest
+	period.Clamped = true
+	return period
 }
 
 // dashboardRenderFunc is the one signature every section's render function
@@ -330,41 +405,80 @@ type dashboardRenderFunc func(ctx context.Context, out io.Writer, scope metricsS
 type dashboardSection struct {
 	Title  string
 	Render dashboardRenderFunc
+	// Detailed marks a section that only renders under -detailed. Today,
+	// just SOURCE FRESHNESS (Ben's dashboard feedback, 2026-08-07, item 3):
+	// default output omits it entirely rather than printing it on every run.
+	Detailed bool
 }
 
 // dashboardSections is the fixed, ordered list this command renders — see
 // this file's own package doc above for why it is the one list a sibling
 // task filling a section in never has to touch, let alone reorder.
+//
+// Titles are Title Case, not ALL CAPS — Ben's dashboard feedback, 2026-08-07,
+// item 4 — and renderDashboard below is what bolds them under color; a
+// section's own file never decides how its title is painted, only what it
+// is.
 var dashboardSections = []dashboardSection{
-	{"ACTIVITY HEATMAP", renderActivityHeatmap},
-	{"SOURCE FRESHNESS", renderSourceFreshness},
-	{"COMPONENT STATS", renderComponentStats},
-	{"ALLOCATION & EFFECTIVE RATE", renderAllocationRate},
-	{"TIME OF DAY", renderTimeOfDay},
-	{"SOURCE ATTRIBUTION", renderSourceAttribution},
-	{"FILETYPE BREAKDOWN", renderFiletypeBreakdown},
+	{Title: "Activity Heatmap", Render: renderActivityHeatmap},
+	{Title: "Source Freshness", Render: renderSourceFreshness, Detailed: true},
+	{Title: "Component Stats", Render: renderComponentStats},
+	{Title: "Allocation & Effective Rate", Render: renderAllocationRate},
+	{Title: "Time of Day", Render: renderTimeOfDay},
+	{Title: "Source Attribution", Render: renderSourceAttribution},
+	{Title: "Filetype Breakdown", Render: renderFiletypeBreakdown},
 }
 
 // renderDashboard prints the header every section shares and then each
-// section in dashboardSections' own order.
+// section in dashboardSections' own order, skipping any marked Detailed
+// unless detailed is true.
 //
 // A section's error is fatal to the whole run rather than skipped over: a
 // section that failed partway through is not a section a reader can trust
 // the rest of, and "the sixth panel silently vanished" is exactly the kind
 // of absence this project's own rules warn against reading as a zero.
 func renderDashboard(ctx context.Context, out io.Writer, scope metricsScope, period dashboardPeriod,
-	cc colorCapability, data *dashboardData) error {
+	cc colorCapability, data *dashboardData, detailed bool) error {
 	fmt.Fprintf(out, "%s\n", data.Store.Path())
-	fmt.Fprintf(out, "%s, %s to %s (%d days)\n", dashboardScopeLabel(scope),
-		period.From.Local().Format("2006-01-02"), period.To.Local().Format("2006-01-02"), period.Days)
+	fmt.Fprintf(out, "%s\n", dashboardHeaderLine(scope, period))
 
 	for _, s := range dashboardSections {
-		fmt.Fprintf(out, "\n%s\n", s.Title)
+		if s.Detailed && !detailed {
+			continue
+		}
+		fmt.Fprintf(out, "\n%s\n", dashboardHeading(s.Title, cc))
 		if err := s.Render(ctx, out, scope, period, cc, data); err != nil {
 			return fmt.Errorf("%s: %w", s.Title, err)
 		}
 	}
 	return nil
+}
+
+// dashboardHeaderLine states the scope and the window actually used — the
+// clamped From/To, never the raw -days computation alone — so a reader is
+// never guessing which window the numbers below cover. period.Days (what
+// -days asked for) is printed either way, so a clamped run still says what
+// was requested alongside what was used.
+func dashboardHeaderLine(scope metricsScope, period dashboardPeriod) string {
+	from, to := period.From.Local().Format("2006-01-02"), period.To.Local().Format("2006-01-02")
+	if !period.Clamped {
+		return fmt.Sprintf("%s, %s to %s (%d days)", dashboardScopeLabel(scope), from, to, period.Days)
+	}
+	return fmt.Sprintf("%s, %s to %s (%d days requested, clamped to the first observation in scope)",
+		dashboardScopeLabel(scope), from, to, period.Days)
+}
+
+// dashboardHeading bolds title (ANSI SGR 1) under any color capability and
+// leaves it plain otherwise — Ben's dashboard feedback, 2026-08-07, item 4.
+// The escape code is written directly here rather than through a new method
+// on colorCapability: dashcolor.go is a file this task does not touch, bold
+// is a heading-only concern with exactly this one caller, and cc.Reset()
+// already closes it (SGR 0 clears bold along with any color Paint set).
+func dashboardHeading(title string, cc colorCapability) string {
+	if cc == colorNone {
+		return title
+	}
+	return "\x1b[1m" + title + cc.Reset()
 }
 
 // dashboardScopeLabel names what was asked for, reusing metricsScope's own
