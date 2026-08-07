@@ -414,44 +414,46 @@ func TestHeatmapPlainGlyphsTakeTheAnchorAsAParameter(t *testing.T) {
 	}
 }
 
-// CRITERION wpZ. The half-block packs two day-rows into one terminal line, so
-// a colored grid is four lines tall where the plain one is seven — and a
-// 256-color terminal gets the same picture through the quantised palette,
-// never a fallback to nothing.
-func TestHeatmapPacksSevenDayRowsIntoFourLinesWhenColorIsAvailable(t *testing.T) {
+// CRITERION OHt. Every capability draws the grid as seven lines, one per
+// weekday, one cell per week — the half-block that packed two weekday rows
+// into one coloured line (four lines instead of seven) is deleted, not kept
+// as an option. This is Ben's own screenshot feedback on job dlIfA: the
+// four-line packed grid was squinty, and he asked for the full seven lines
+// in every capability, not only the plain-text fallback that already drew
+// them.
+func TestHeatmapDrawsSevenLinesInEveryCapability(t *testing.T) {
 	f := newHeatmapFixture(t, 30)
 	f.worked(f.days()[10], 5*time.Hour, 6*time.Hour, "Alderwick", "Ledger")
 	f.compute(t)
 
-	for _, c := range []struct {
-		cc         colorCapability
-		fg, bg     string
-		wantLines  int
-		wantGlyphs string
-	}{
-		{colorTruecolor, "\x1b[38;2;", "\x1b[48;2;", 4, string(heatmapUpper)},
-		{color256, "\x1b[38;5;", "\x1b[48;5;", 4, string(heatmapUpper)},
-	} {
-		out := f.render(t, c.cc, metricsScope{})
-		if lines := gridLines(out); len(lines) != c.wantLines {
-			t.Errorf("%v drew %d grid lines, want %d:\n%s", c.cc, len(lines), c.wantLines, out)
+	for _, cc := range []colorCapability{colorNone, color256, colorTruecolor} {
+		out := f.render(t, cc, metricsScope{})
+		if lines := gridLines(out); len(lines) != 7 {
+			t.Errorf("%v drew %d grid lines, want one per weekday:\n%s", cc, len(lines), out)
 		}
-		for _, want := range []string{c.fg, c.bg, c.wantGlyphs} {
-			if !strings.Contains(out, want) {
-				t.Errorf("%v output has no %q in it:\n%s", c.cc, want, out)
-			}
+		if strings.ContainsRune(out, '▀') || strings.ContainsRune(out, '▄') {
+			t.Errorf("%v drew a half-block; the seven-line grid has no use for one:\n%s", cc, out)
 		}
 	}
 
 	plain := f.render(t, colorNone, metricsScope{})
-	if lines := gridLines(plain); len(lines) != 7 {
-		t.Errorf("colorNone drew %d grid lines, want one per weekday:\n%s", len(lines), plain)
-	}
 	if strings.ContainsRune(plain, 0x1b) {
 		t.Errorf("colorNone emitted an escape code:\n%q", plain)
 	}
-	if strings.ContainsRune(plain, heatmapUpper) {
-		t.Errorf("colorNone drew a half-block, which needs two colors to mean two days:\n%s", plain)
+
+	for _, c := range []struct {
+		cc     colorCapability
+		fg, bg string
+	}{
+		{colorTruecolor, "\x1b[38;2;", "\x1b[48;2;"},
+		{color256, "\x1b[38;5;", "\x1b[48;5;"},
+	} {
+		out := f.render(t, c.cc, metricsScope{})
+		for _, want := range []string{c.fg, c.bg} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%v output has no %q in it:\n%s", c.cc, want, out)
+			}
+		}
 	}
 }
 
@@ -479,9 +481,10 @@ func TestHeatmapDrawsTheSameGridInTruecolorAnd256Color(t *testing.T) {
 	got, want := strip(f.render(t, color256, metricsScope{})), strip(f.render(t, colorTruecolor, metricsScope{}))
 	// A grid was actually drawn before the two are compared: two placeholders
 	// are also identical, and identical nothings would satisfy the comparison
-	// below without either capability having drawn a cell.
-	if lines := gridLines(want); len(lines) != 4 || !strings.ContainsRune(want, heatmapUpper) {
-		t.Fatalf("truecolor drew %d grid lines and no half-block; there is no grid to compare:\n%s",
+	// below without either capability having drawn a cell. The fixture leaves
+	// every day but one unobserved, so the hatch glyph is what proves it.
+	if lines := gridLines(want); len(lines) != 7 || !strings.ContainsRune(want, heatmapHatch) {
+		t.Fatalf("truecolor drew %d grid lines and no hatch glyph; there is no grid to compare:\n%s",
 			len(lines), want)
 	}
 	if got != want {
@@ -489,11 +492,10 @@ func TestHeatmapDrawsTheSameGridInTruecolorAnd256Color(t *testing.T) {
 	}
 }
 
-// A colored cell whose two days are BOTH unobserved is drawn as a dim hatch
-// rather than as a half-block, which is principle 3's own "dim hatch" in the
-// one place a glyph can still say it: a character cell covers two days, so
-// where they disagree only color can, and where they agree the glyph can too.
-func TestHeatmapDrawsWhollyUnobservedCellsAsAHatch(t *testing.T) {
+// A colored cell for an unobserved day is drawn as a dim hatch rather than as
+// a solid fill, which is principle 3's own "dim hatch" in the one place a
+// glyph, not just a color, can say it.
+func TestHeatmapDrawsUnobservedCellsAsAHatch(t *testing.T) {
 	f := newHeatmapFixture(t, 30)
 	f.compute(t)
 

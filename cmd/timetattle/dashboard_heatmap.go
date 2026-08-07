@@ -66,18 +66,43 @@ import (
 // is the SOURCE FRESHNESS section's own subject. The heatmap answers "was
 // anything known about this day", not "is what is known complete".
 //
-// # Why colour changes the LAYOUT and not just the paint
+// # Colour changes the PAINT, never the LAYOUT
 //
 // dashcolor.go's rule is that a section paints unconditionally and never
-// branches on capability, because Paint returns "" when there is none. That
-// holds for every colour written here. The half-block does not: '▀' encodes
-// two days in one character cell by giving the upper half the foreground
-// colour and the lower half the background, which is what packs seven
-// day-of-week rows into four terminal lines (design principle 5). With no
-// colour the two halves are indistinguishable, so there is nothing to encode
-// with and the grid falls back to one row per weekday and one character per
-// day. A capture, a pipe and a test all land there, and that plain grid is
-// what this section's tests assert against.
+// branches on capability, because Paint returns "" when there is none. This
+// section now follows it without exception: every capability draws the same
+// rectangle, seven terminal lines — one per weekday — and one character per
+// week, and colour changes what a cell's character says, never how many
+// lines the grid takes.
+//
+// That was not always true. Design principle 5 in
+// project/2026-08-07-cli-overhaul-plan.md specified '▀', the half-block,
+// packing two weekday rows into one coloured line by giving the upper day the
+// foreground colour and the lower day the background — four terminal lines
+// instead of seven, with a colour-less terminal falling back to the plain
+// seven-row grid because there was nothing to encode the pairing with. Ben's
+// own read of that grid, from a screenshot, was that four dense lines are
+// squinty; job dlIfA asked for the full seven lines in every capability, and
+// the half-block path is deleted rather than kept as a fallback or an
+// option. Principle 5 itself still describes the half-block in
+// project/2026-08-07-cli-overhaul-plan.md as of this change — that
+// document is outside this section's file ownership for this task and
+// needs its own correction-in-place pass, per this project's documentation
+// practice, before it agrees with the code.
+//
+// An observed day's cell is a background-painted space (heatmapDayCell)
+// rather than a foreground-painted glyph. The two render identically on a
+// terminal whose font draws block-drawing characters flush to the cell's
+// edge, but a background fill has no glyph to rasterize at all — the colour
+// is the character cell's own attribute, which every terminal honours the
+// same way regardless of font or colour depth. A foreground block is the
+// riskier of the two for exactly the density this grid draws at: some
+// terminal fonts, bitmap ones especially, leave a hairline gap around
+// block-drawing glyphs, which reads as a seam between adjacent cells. The
+// legend's ramp swatches (writeHeatmapSwatches) keep the older foreground
+// '█' regardless — they are a handful of large, isolated samples where a seam
+// is not at stake, and the legend is explicitly unchanged by this section's
+// brief.
 
 // defaultHeatmapAnchor is the hours a full working day is taken to be: where
 // the ramp reaches green, and where the escalation past it begins.
@@ -100,16 +125,13 @@ const (
 	heatmapGutter = 6
 )
 
-// The glyphs. heatmapUpper carries two days at once (foreground the upper,
-// background the lower); heatmapLower carries one when the day above it falls
-// outside the reported period; heatmapHatch is the dim hatch a cell whose two
-// days were BOTH unobserved is drawn with, which is principle 3's own "dim
-// hatch" in the one place a glyph can still say it — a character cell covers
-// two days, so where they disagree only colour can, and where they agree the
-// shape can too.
+// The glyphs. heatmapHatch is the dim hatch an unobserved day is drawn with —
+// principle 3's own "dim hatch" in the one place a shape, not just a colour,
+// can say it. heatmapFull is the legend's own ramp swatch, painted with the
+// foreground colour it demonstrates; the grid's own observed-day cells do
+// not use it — see this file's doc comment above for why a background fill
+// is the safer choice at the grid's density.
 const (
-	heatmapUpper rune = '▀'
-	heatmapLower rune = '▄'
 	heatmapHatch rune = '░'
 	heatmapFull  rune = '█'
 )
@@ -442,11 +464,7 @@ func writeHeatmap(out io.Writer, cc colorCapability, g heatmapGrid, anchor time.
 		return err
 	}
 	writeHeatmapMonths(&b, g)
-	if cc == colorNone {
-		writeHeatmapPlainRows(&b, g, anchor)
-	} else {
-		writeHeatmapBlockRows(&b, cc, g, anchor)
-	}
+	writeHeatmapRows(&b, cc, g, anchor)
 	writeHeatmapLegend(&b, cc, anchor)
 	_, err := io.WriteString(out, b.String())
 	return err
@@ -484,56 +502,39 @@ func writeHeatmapMonths(b *strings.Builder, g heatmapGrid) {
 		strings.TrimRight(string(labels), " "))
 }
 
-// writeHeatmapBlockRows draws the grid in four lines, two weekdays to a line.
-func writeHeatmapBlockRows(b *strings.Builder, cc colorCapability, g heatmapGrid, anchor time.Duration) {
-	for r := 0; r < len(g.Rows); r += 2 {
-		label := g.Rows[r].String()[:2]
-		if r+1 < len(g.Rows) {
-			label += " " + g.Rows[r+1].String()[:2]
-		}
-		fmt.Fprintf(b, "%s%-*s", heatmapIndent, heatmapGutter, label)
-		for _, col := range g.Columns {
-			// The seventh row has no partner, so its lower half is a day that
-			// does not exist and is drawn as outside the period — the same
-			// blank the padding days on either end of the grid get.
-			lower := heatmapCell{}
-			if r+1 < len(g.Rows) {
-				lower = col[r+1]
-			}
-			b.WriteString(heatmapBlock(cc, col[r], lower, anchor))
-		}
-		b.WriteByte('\n')
-	}
-}
-
-// heatmapBlock is one character cell, carrying up to two days.
-func heatmapBlock(cc colorCapability, upper, lower heatmapCell, anchor time.Duration) string {
-	switch {
-	case upper.State == heatmapOutside && lower.State == heatmapOutside:
-		return " "
-	case upper.State == heatmapUnobserved && lower.State == heatmapUnobserved:
-		return cc.Paint(heatmapUnobservedInk) + cc.PaintBG(heatmapUnobservedGround) +
-			string(heatmapHatch) + cc.Reset()
-	case lower.State == heatmapOutside:
-		return cc.Paint(heatmapColorOf(upper, anchor)) + string(heatmapUpper) + cc.Reset()
-	case upper.State == heatmapOutside:
-		return cc.Paint(heatmapColorOf(lower, anchor)) + string(heatmapLower) + cc.Reset()
-	default:
-		return cc.Paint(heatmapColorOf(upper, anchor)) + cc.PaintBG(heatmapColorOf(lower, anchor)) +
-			string(heatmapUpper) + cc.Reset()
-	}
-}
-
-// writeHeatmapPlainRows draws the grid one weekday to a line, which is what a
-// terminal with no colour can carry: see this file's doc comment on why the
-// layout and not merely the paint changes.
-func writeHeatmapPlainRows(b *strings.Builder, g heatmapGrid, anchor time.Duration) {
+// writeHeatmapRows draws the grid: one line per weekday, one character per
+// week, the same seven lines in every capability. Only the character a cell
+// draws changes with colour — see this file's doc comment for why the layout
+// itself no longer does.
+func writeHeatmapRows(b *strings.Builder, cc colorCapability, g heatmapGrid, anchor time.Duration) {
 	for r, weekday := range g.Rows {
 		fmt.Fprintf(b, "%s%-*s", heatmapIndent, heatmapGutter, weekday.String()[:3])
 		for _, col := range g.Columns {
-			b.WriteRune(heatmapPlainGlyph(col[r], anchor))
+			if cc == colorNone {
+				b.WriteRune(heatmapPlainGlyph(col[r], anchor))
+			} else {
+				b.WriteString(heatmapDayCell(cc, col[r], anchor))
+			}
 		}
 		b.WriteByte('\n')
+	}
+}
+
+// heatmapDayCell is one coloured day's character cell: a background-painted
+// space for a day with a figure (zero included — the ramp's own dark ground
+// is what says "measured and idle"), the dim slate hatch for a day nothing
+// was ever established about, or a blank for a day outside the reported
+// period. See this file's doc comment for why the fill lands on the
+// background rather than on a foreground glyph.
+func heatmapDayCell(cc colorCapability, c heatmapCell, anchor time.Duration) string {
+	switch c.State {
+	case heatmapOutside:
+		return " "
+	case heatmapUnobserved:
+		return cc.Paint(heatmapUnobservedInk) + cc.PaintBG(heatmapUnobservedGround) +
+			string(heatmapHatch) + cc.Reset()
+	default:
+		return cc.PaintBG(heatmapColorOf(c, anchor)) + " " + cc.Reset()
 	}
 }
 
