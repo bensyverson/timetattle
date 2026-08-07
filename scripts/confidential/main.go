@@ -401,28 +401,101 @@ func scanFiles(root string, rels []string, sc Scanner) ([]Finding, int) {
 	return out, files
 }
 
-// scanGitObjects reads every object in the store, reachable or not. This is the
+// gitObject is one line of `cat-file --batch-check`'s output: an object hash
+// and its type.
+type gitObject struct {
+	Hash string
+	Type string
+}
+
+// listGitObjects lists every object in root's store, reachable or not -- the
 // only view that shows an amended-away commit still present in .git/objects.
-func scanGitObjects(root string, sc Scanner) ([]Finding, int, error) {
+func listGitObjects(root string) ([]gitObject, error) {
 	b, err := gitCommand("-C", root, "cat-file", "--batch-all-objects",
 		"--batch-check=%(objectname) %(objecttype)").Output()
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing objects: %w", err)
+		return nil, fmt.Errorf("listing objects: %w", err)
 	}
-	var out []Finding
-	n := 0
+	var objs []gitObject
 	lines := bufio.NewScanner(bytes.NewReader(b))
 	for lines.Scan() {
 		f := strings.Fields(lines.Text())
-		if len(f) != 2 || (f[1] != "blob" && f[1] != "commit") {
+		if len(f) != 2 {
 			continue
 		}
-		content, err := gitCommand("-C", root, "cat-file", f[1], f[0]).Output()
+		objs = append(objs, gitObject{Hash: f[0], Type: f[1]})
+	}
+	return objs, nil
+}
+
+// fixtureBlobHashes returns the set of blob hashes that were ever recorded at
+// selfFixturePath in the tree of some commit object in objs -- reachable or
+// not, matching listGitObjects's own "every object in the store" contract. A
+// blob is content-addressed, not path-addressed: the object itself carries no
+// path, so this is the only way a scanned blob can be told "this IS (a
+// historical version of) main_test.go" rather than merely looking like it.
+// See the doc comment on selfFixturePath for why the exemption is scoped this
+// narrowly in the first place.
+func fixtureBlobHashes(root string, objs []gitObject) map[string]bool {
+	hashes := map[string]bool{}
+	for _, o := range objs {
+		if o.Type != "commit" {
+			continue
+		}
+		// ls-tree resolves a commit to its tree automatically, and the
+		// pathspec after -- prunes the walk to the one path, so this costs
+		// one git invocation per commit object in the store, not per file
+		// inside it.
+		out, err := gitCommand("-C", root, "ls-tree", "-r", o.Hash, "--", selfFixturePath).Output()
+		if err != nil {
+			// A malformed or partially-fetched commit object: skip it rather
+			// than abort the whole gate over one bad object.
+			continue
+		}
+		for ln := range strings.SplitSeq(strings.TrimRight(string(out), "\n"), "\n") {
+			fields := strings.Fields(ln)
+			if len(fields) >= 3 && fields[1] == "blob" {
+				hashes[fields[2]] = true
+			}
+		}
+	}
+	return hashes
+}
+
+// scanGitObjects reads every object in the store, reachable or not. This is the
+// only view that shows an amended-away commit still present in .git/objects.
+func scanGitObjects(root string, sc Scanner) ([]Finding, int, error) {
+	objs, err := listGitObjects(root)
+	if err != nil {
+		return nil, 0, err
+	}
+	fixtureBlobs := fixtureBlobHashes(root, objs)
+
+	var out []Finding
+	n := 0
+	for _, o := range objs {
+		if o.Type != "blob" && o.Type != "commit" {
+			continue
+		}
+		content, err := gitCommand("-C", root, "cat-file", o.Type, o.Hash).Output()
 		if err != nil || looksBinary(content) {
 			continue
 		}
 		n++
-		out = append(out, scanText(f[1]+" "+f[0][:12], string(content), sc)...)
+		label := o.Type + " " + o.Hash[:12]
+		if o.Type == "blob" && fixtureBlobs[o.Hash] {
+			// Scan under the real path so the exact same per-line
+			// gate:fixture check scanText already applies to the working
+			// tree also applies here -- then relabel the findings so a
+			// report still names which historical object they came from.
+			fs := scanText(selfFixturePath, string(content), sc)
+			for i := range fs {
+				fs[i].Path = label + " (" + selfFixturePath + ")"
+			}
+			out = append(out, fs...)
+			continue
+		}
+		out = append(out, scanText(label, string(content), sc)...)
 	}
 	return out, n, nil
 }

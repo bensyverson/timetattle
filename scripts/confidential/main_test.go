@@ -267,6 +267,130 @@ func TestSelfFixtureMarkerDoesNothingOutsideTheExemptFile(t *testing.T) {
 	}
 }
 
+// --- Defect 4: the -git object scan must honor the self-fixture marker too --
+//
+// scanTree's fixture exemption is keyed on an exact path match: scanText only
+// suppresses a marked line when path == selfFixturePath. scanGitObjects never
+// passes that path -- it labels every object "blob <hash>" or "commit <hash>"
+// for display, since a bare object has no path of its own -- so the condition
+// in scanText can never be true there, and every gate:fixture-marked line
+// this tool's own tests carry gets reported the moment it is committed. Since
+// -git is the mode that matters before publication (see the package doc
+// comment), the gate could never come back clean against its own fixtures.
+//
+// A blob is content-addressed, not path-addressed, so telling a scanned blob
+// object "this IS (a historical version of) main_test.go" requires walking
+// commit trees to ask where that content was ever recorded -- covering
+// unreachable commits too, since that is the entire reason -git mode exists.
+
+func TestScanGitObjectsHonorsTheSelfFixtureMarker(t *testing.T) {
+	dir := initGitDir(t)
+	writeTree(t, dir, map[string]string{
+		"scripts/confidential/main_test.go": "src := \"EXAMPLE_ACCESS_TOKEN=abcdefghijklmnopqrstuvwxyz\" // " + fixtureMarker + "\n" + // gate:fixture
+			"src2 := \"EXAMPLE_ACCESS_TOKEN=zzzzzzzzzzzzzzzzzzzzzzzz\"\n", // gate:fixture
+	})
+	runGit(t, dir, "add", "scripts/confidential/main_test.go")
+	commitGit(t, dir, "add fixture")
+
+	findings, n, err := scanGitObjects(dir, Scanner{})
+	if err != nil {
+		t.Fatalf("scanGitObjects: %v", err)
+	}
+	if n == 0 {
+		t.Fatalf("scanGitObjects scanned 0 text objects, want at least the committed blob")
+	}
+	if got := kindHits(findings, KindSecret); got != 1 {
+		t.Fatalf("scanGitObjects found %d secret findings, want 1: the marked line must be silenced "+
+			"even inside a git object, the unmarked one must not: %+v", got, findings)
+	}
+}
+
+// The same marker, on the same-shaped line, committed under a DIFFERENT path,
+// must not be silenced -- otherwise the marker becomes a repo-wide bypass
+// comment for the -git scan rather than an exemption scoped to the one file
+// that legitimately needs it. Mirrors TestSelfFixtureMarkerDoesNothingOutsideTheExemptFile.
+func TestScanGitObjectsMarkerDoesNothingOutsideTheExemptFile(t *testing.T) {
+	dir := initGitDir(t)
+	writeTree(t, dir, map[string]string{
+		"scripts/confidential/other.go": "src := \"EXAMPLE_ACCESS_TOKEN=abcdefghijklmnopqrstuvwxyz\" // " + fixtureMarker + "\n", // gate:fixture
+	})
+	runGit(t, dir, "add", "scripts/confidential/other.go")
+	commitGit(t, dir, "add non-exempt file")
+
+	findings, _, err := scanGitObjects(dir, Scanner{})
+	if err != nil {
+		t.Fatalf("scanGitObjects: %v", err)
+	}
+	if got := kindHits(findings, KindSecret); got != 1 {
+		t.Errorf("scanGitObjects found %d secret findings in a non-exempt file carrying the marker, want 1: "+
+			"the marker must not work here", got)
+	}
+}
+
+// -git mode's whole reason to exist is seeing objects that are no longer
+// reachable from any ref -- an amended-away commit still sitting in
+// .git/objects. The fixture exemption has to keep working there too: this
+// walks EVERY commit object the store holds, not just `git log`'s view of
+// history, precisely so an unreachable commit's blob is still recognised as
+// main_test.go.
+func TestScanGitObjectsHonorsTheMarkerEvenInAnUnreachableCommit(t *testing.T) {
+	dir := initGitDir(t)
+	writeTree(t, dir, map[string]string{
+		"scripts/confidential/main_test.go": "src := \"EXAMPLE_ACCESS_TOKEN=abcdefghijklmnopqrstuvwxyz\" // " + fixtureMarker + "\n" + // gate:fixture
+			"src2 := \"EXAMPLE_ACCESS_TOKEN=zzzzzzzzzzzzzzzzzzzzzzzz\"\n", // gate:fixture
+	})
+	runGit(t, dir, "add", "scripts/confidential/main_test.go")
+	commitGit(t, dir, "add fixture")
+
+	// Amend it away in place: HEAD now points at a new commit with clean
+	// content, but the ORIGINAL commit, tree and blob objects -- the ones
+	// carrying the marked and unmarked secret lines -- are still loose in
+	// .git/objects, just unreachable from any ref.
+	writeTree(t, dir, map[string]string{
+		"scripts/confidential/main_test.go": "nothing sensitive here\n",
+	})
+	runGit(t, dir, "add", "scripts/confidential/main_test.go")
+	setupGitTestHome(t)
+	runGit(t, dir, "commit", "--amend", "-q", "-m", "amended, fixture no longer reachable")
+
+	findings, _, err := scanGitObjects(dir, Scanner{})
+	if err != nil {
+		t.Fatalf("scanGitObjects: %v", err)
+	}
+	if got := kindHits(findings, KindSecret); got != 1 {
+		t.Fatalf("scanGitObjects found %d secret findings, want 1: the marked line must be silenced even in "+
+			"an unreachable commit, the unmarked one must still be caught: %+v", got, findings)
+	}
+}
+
+// commitGit commits whatever is staged, using a fixed, disposable identity so
+// the commit succeeds regardless of this machine's global git config -- see
+// setupGitTestHome.
+func commitGit(t *testing.T, dir, message string) {
+	t.Helper()
+	setupGitTestHome(t)
+	runGit(t, dir, "commit", "-q", "-m", message)
+}
+
+// setupGitTestHome points HOME at an empty, disposable directory for the
+// duration of one test, and disables system-wide config. Without it, `git
+// commit` here reads this machine's real ~/.gitconfig for author identity,
+// which makes tests nondeterministic across machines at best and, on this
+// project's sandboxed agent environments, outright fails ("Operation not
+// permitted") -- matching internal/gitenv/gitenv_test.go's, internal/gitlog/
+// gitlog_test.go's and internal/registry/worktree_test.go's identically named
+// helper, duplicated here rather than imported for the same reason
+// testGitRepoEnvPrefixes above is duplicated rather than imported.
+func setupGitTestHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_AUTHOR_NAME", "timetattle-test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "timetattle-test@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "timetattle-test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "timetattle-test@example.com")
+}
+
 func writeTree(t *testing.T, root string, files map[string]string) {
 	t.Helper()
 	for rel, content := range files {
