@@ -343,8 +343,14 @@ func statRows(scope metricsScope, observed, total int,
 	}
 	mergeNote := ""
 	if t.merges > 0 {
-		mergeNote = fmt.Sprintf("%s carried no diff and is summed into neither line count",
-			plural(t.merges, "merge commit"))
+		// Verb agreement, not just noun agreement: live output once read "45
+		// merge commits carried no diff and is summed" — plural's own noun was
+		// right and the verb was not, the same class of bug the terseness
+		// pass's "2 week iss" regression caught. See headline.go's identical
+		// map[bool]string idiom for the same agreement, applied there to "is"
+		// versus "are" on a different count.
+		mergeNote = fmt.Sprintf("%s carried no diff and %s summed into neither line count",
+			plural(t.merges, "merge commit"), map[bool]string{true: "are", false: "is"}[t.merges != 1])
 	}
 	rows = append(rows,
 		count("commits", t.commits, gitlog.CommitsID, mergeNote),
@@ -490,14 +496,42 @@ func statCountRow(label string, n, observed int, sourceObserved bool, note strin
 	return row
 }
 
-// Column widths. Fixed rather than measured, because the labels and the
-// magnitudes here are both known: a panel whose columns moved between two runs
-// of the same command could not be diffed.
+// Column widths. The label column is fixed, because the label set is fixed —
+// every run of this panel prints the same rows in the same order. The value
+// and average columns are floors, not fixed widths: format.go's own package
+// doc states the rule this panel violated on a live store ("A count clipped
+// to two digits is a wrong figure rather than a short one, so every table
+// below shrinks its label column and its padding before any figure is at
+// risk") — a fixed 9/11 truncated "181 of 365" to "181 of 3…", the divisor's
+// own value. statColumnWidths measures the actual rows below and widens past
+// the floor rather than ever clipping a number; the floors just keep an
+// ordinary, small-number run looking exactly as it always has.
 const (
-	statLabelWidth = 16
-	statValueWidth = 9
-	statAvgWidth   = 11
+	statLabelWidth    = 16
+	statMinValueWidth = 9
+	statMinAvgWidth   = 11
 )
+
+// statColumnWidths measures the value and average columns from the rows
+// actually being printed. A row's Marker (statUnrecorded / statNotMeasured)
+// is excluded from the measurement — it is rendered across both columns plus
+// their separator, per writeStatRows, and the floors already leave that
+// combined span room for either word.
+func statColumnWidths(rows []statRow) (value, avg int) {
+	value, avg = statMinValueWidth, statMinAvgWidth
+	for _, r := range rows {
+		if r.Marker != "" {
+			continue
+		}
+		if w := len([]rune(r.Value)); w > value {
+			value = w
+		}
+		if w := len([]rune(r.Avg)); w > avg {
+			avg = w
+		}
+	}
+	return value, avg
+}
 
 // statMarkerRGB paints a state rather than a number, and only ever as
 // emphasis: every marker is a WORD, so the panel says exactly the same thing
@@ -519,19 +553,28 @@ var (
 // under color: a painted value ends in an escape sequence, and a rule phrased
 // as "skip the padding when there is no note" would have to know whether it
 // had painted. This does not.
+//
+// The value and average columns are separated by an explicit space rather
+// than relying on padLeft's own leading padding to provide the gap: a live
+// run showed "lines + 2240021237.58/day", the count 224002 run directly into
+// the average 1237.58/day, because the average happened to fill its column
+// exactly and padLeft adds no padding when there is nothing left to add. Two
+// adjacent right-aligned columns are only ever guaranteed a gap when one of
+// them writes it.
 func writeStatRows(out io.Writer, cc colorCapability, rows []statRow) {
+	valueWidth, avgWidth := statColumnWidths(rows)
 	for _, r := range rows {
 		var line strings.Builder
 		fmt.Fprintf(&line, "  %s", pad(r.Label, statLabelWidth))
 		if r.Marker != "" {
 			fmt.Fprintf(&line, "%s%s%s", cc.Paint(statMarkerRGB),
-				pad(r.Marker, statValueWidth+statAvgWidth), cc.Reset())
+				pad(r.Marker, valueWidth+1+avgWidth), cc.Reset())
 		} else {
-			value := padLeft(r.Value, statValueWidth)
+			value := padLeft(r.Value, valueWidth)
 			if r.Emphasis {
 				value = cc.Paint(statValueRGB) + value + cc.Reset()
 			}
-			fmt.Fprintf(&line, "%s%s", value, padLeft(r.Avg, statAvgWidth))
+			fmt.Fprintf(&line, "%s %s", value, padLeft(r.Avg, avgWidth))
 		}
 		if r.Note != "" {
 			fmt.Fprintf(&line, "  %s", r.Note)

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"time"
-
-	"github.com/bensyverson/timetattle/internal/sessions"
 )
 
 // hoursPerDay is the strip's width: one column per LOCAL clock hour, 00
@@ -36,22 +34,51 @@ const hoursPerDay = 24
 // a second, independent call to time.Local, so the hour-of-day reading uses
 // the same zone the period itself was tiled with.
 //
-// # Unobserved hours: what data.Log can and cannot say
+// # Unobserved hours: what "observed" can and cannot say
 //
-// See observedDayCount's own doc comment for the full argument; in short,
-// collectionLog only resolves to day granularity (a capture or harvest run's
-// own timestamp, not a per-hour signal), so there is no way, with what
-// data.Log exposes, to tell hour 3 of an observed day from hour 19 of the
+// See observedDays' own doc comment (dashboard_stats.go) for the full
+// argument on what counts as an observed day and why; in short, neither
+// signal it unions resolves finer than day granularity (a capture or harvest
+// run's own timestamp, or an event's own anchor, never a per-hour signal),
+// so there is no way to tell hour 3 of an observed day from hour 19 of the
 // SAME day — every hour-of-day column is weighted by the same,
 // once-computed observed-day count, not a per-column one. That is a
-// disclosed simplification, not an oversight: the alternative (querying
-// data.Log at hourly granularity) would answer a different and wrong
+// disclosed simplification, not an oversight: the alternative (asking either
+// signal at hourly granularity) would answer a different and wrong
 // question, since a single batch harvest run ingests a whole day's evidence
 // at one instant and its timestamp says nothing about which hours of that
 // day it covered. A column with real sitting minutes always renders from
-// that evidence, whatever data.Log says (real minutes are not in question).
-// A column with NO sitting minutes renders UNOBSERVED when no day in the
-// period was collection-logged at all, and OBSERVED IDLE otherwise.
+// that evidence, whatever the day-level signal says (real minutes are not in
+// question). A column with NO sitting minutes renders UNOBSERVED when no day
+// in the period was observed at all, and OBSERVED IDLE otherwise.
+//
+// # Reconciling with component stats
+//
+// This strip and the component stats panel (dashboard_stats.go) both print
+// an "observed days" figure for the same dashboardData and period, and until
+// job kGFYV they disagreed: stats counted the union of run-recorded and
+// evidence-anchored days, and this file counted run-recorded days alone. On
+// a live store, that gap is not a rounding difference — harvest_run only
+// reaches back a matter of days, so a trailing-year window read "181 of 365"
+// from stats beside "8 observed days" here, an 18x undercount that came from
+// a definition, not a data gap. This file now calls dashboard_stats.go's own
+// observedDays rather than keeping a second definition, so the two sections
+// cannot drift again: a day with a run and no evidence, or evidence and no
+// run, counts here exactly as it counts there. The alternative this task
+// weighed was giving the strip its own, narrower population (run-recorded
+// only), reasoned from a concern that a day whose only "observation" is the
+// very session minutes this strip renders would make "observed" circular
+// with the strip's own content. That concern applies to a divisor a real
+// number is divided by; it does not apply here, because this strip performs
+// no such division — the hour-of-day shares below are relative to the
+// period's OWN total minutes and the busiest hour, never to observedDays,
+// which appears only in the trailing disclaimer line naming how many days
+// the pattern is drawn from. And "evidence" is not narrowed to sessions: it
+// is data.Events, the same raw stream stats reads, which includes commits,
+// file writes, job actions and transcripts a day could carry with zero
+// sitting minutes and still be a genuinely observed, idle day. Adopting the
+// union is therefore the honest choice for the same reason stats argued it,
+// with no divisor risk this section shares.
 func renderTimeOfDay(_ context.Context, out io.Writer, _ metricsScope, period dashboardPeriod,
 	cc colorCapability, data *dashboardData) error {
 	cal, err := data.Config.Calendar.Sessions()
@@ -93,8 +120,8 @@ func renderTimeOfDay(_ context.Context, out io.Writer, _ metricsScope, period da
 		}
 	}
 
-	observedDays, totalDays := observedDayCount(period, cal, data.Log)
-	anyObserved := observedDays > 0
+	observed, totalDays := observedDays(cal, period, data)
+	anyObserved := observed > 0
 
 	if _, err := fmt.Fprint(out, "  "); err != nil {
 		return err
@@ -118,9 +145,9 @@ func renderTimeOfDay(_ context.Context, out io.Writer, _ metricsScope, period da
 	if _, err := fmt.Fprintf(out, "  %s\n", hourLabels()); err != nil {
 		return err
 	}
-	if totalDays > 0 && observedDays < totalDays {
+	if totalDays > 0 && observed < totalDays {
 		if _, err := fmt.Fprintf(out, "  hours weighted over %s (of %d in period)\n",
-			plural(observedDays, "observed day"), totalDays); err != nil {
+			plural(observed, "observed day"), totalDays); err != nil {
 			return err
 		}
 	}
@@ -155,29 +182,6 @@ func hourBuckets(start, end time.Time, loc *time.Location) [hoursPerDay]time.Dur
 		cur = next
 	}
 	return buckets
-}
-
-// observedDayCount is how many of the period's calendar days data.Log says
-// collection was running during, by cal's own day tiling — the SAME
-// day-level collectionLog.during check the activity heatmap's own cells use
-// (dashboardData.Log's doc comment in dashboard.go). A day counts as
-// observed whether or not any run inside it lost data; collectionLost still
-// means collection was running, which is the only question asked here.
-func observedDayCount(period dashboardPeriod, cal sessions.Calendar, log collectionLog) (observed, total int) {
-	if !period.From.Before(period.To) {
-		return 0, 0
-	}
-	// The end is exclusive and a day's bounds are half-open (series.go's
-	// seriesOf does the identical thing for the identical reason), so the
-	// last instant that must be covered is the one before period.To.
-	for _, d := range cal.Days(period.From, period.To.Add(-time.Nanosecond)) {
-		total++
-		start, end := cal.Bounds(d)
-		if log.during(start, end) != collectionUnrecorded {
-			observed++
-		}
-	}
-	return observed, total
 }
 
 // cellGlyph is one column of the strip. worked is whether this hour has any

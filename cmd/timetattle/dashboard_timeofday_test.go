@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/bensyverson/timetattle/internal/config"
+	"github.com/bensyverson/timetattle/internal/gitlog"
 	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/sessions"
+	"github.com/bensyverson/timetattle/internal/source"
 )
 
 // THE LOAD-BEARING PARTITIONING INVARIANT: a sitting spanning 09:30-11:15
@@ -102,12 +104,17 @@ func TestHourBucketsUsesLocalZoneNotUTC(t *testing.T) {
 	}
 }
 
-// observedDayCount uses the SAME day-level collectionLog.during check the
-// activity heatmap's own cells use (dashboardData.Log's doc comment in
-// dashboard.go) — a day with any logged capture or harvest run counts as
-// observed, whether or not it lost anything; a day with no run at all does
-// not.
-func TestObservedDayCountUsesDayGranularity(t *testing.T) {
+// The strip now shares dashboard_stats.go's own observedDays rather than
+// keeping a second definition (see the reconciliation tests below for why),
+// so these two granularity checks call it directly, through a bare
+// dashboardData carrying only Log — the same day-level collectionLog.during
+// check the activity heatmap's own cells use (dashboardData.Log's doc
+// comment in dashboard.go): a day with any logged capture or harvest run
+// counts as observed, whether or not it lost anything; a day with no run
+// and no evidence at all does not. Neither fixture here sets Events, so the
+// union collapses to the log-only case and the expectations are unchanged
+// from when this called the file's own now-removed observedDayCount.
+func TestObservedDaysForTheStripUsesDayGranularity(t *testing.T) {
 	cal := mustCalendar(t)
 	day0 := cal.DayOf(time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC))
 	from, _ := cal.Bounds(day0)
@@ -123,7 +130,7 @@ func TestObservedDayCountUsesDayGranularity(t *testing.T) {
 		lost: []bool{false, false},
 	}
 
-	observed, total := observedDayCount(period, cal, log)
+	observed, total := observedDays(cal, period, &dashboardData{Log: log})
 	if total != 3 {
 		t.Fatalf("total = %d, want 3", total)
 	}
@@ -132,22 +139,75 @@ func TestObservedDayCountUsesDayGranularity(t *testing.T) {
 	}
 }
 
-// An empty log (nothing ever recorded a capture or harvest run) leaves every
-// day unobserved — the state a real historical corpus is mostly in, per
-// series.go's own doc comment on collectionUnrecorded.
-func TestObservedDayCountZeroWhenLogIsEmpty(t *testing.T) {
+// An empty log and no events (nothing ever recorded a capture or harvest run,
+// nothing ever anchored) leaves every day unobserved — the state a real
+// historical corpus is mostly in, per series.go's own doc comment on
+// collectionUnrecorded.
+func TestObservedDaysForTheStripZeroWhenNothingWasRecorded(t *testing.T) {
 	cal := mustCalendar(t)
 	day0 := cal.DayOf(time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC))
 	from, _ := cal.Bounds(day0)
 	to, _ := cal.Bounds(day0.AddDays(5))
 	period := dashboardPeriod{Days: 5, From: from, To: to}
 
-	observed, total := observedDayCount(period, cal, collectionLog{})
+	observed, total := observedDays(cal, period, &dashboardData{Log: collectionLog{}})
 	if total != 5 {
 		t.Fatalf("total = %d, want 5", total)
 	}
 	if observed != 0 {
 		t.Errorf("observed = %d, want 0", observed)
+	}
+}
+
+// THE RECONCILIATION (job kGFYV, criterion FWN). Component stats and the
+// time-of-day strip both print an "observed days" figure for the SAME
+// dashboardData and period, and a live run showed them disagreeing — stats
+// said "181 of 365", the strip said "8 observed days" — because the strip
+// counted only collectionLog runs while stats also counted days a retained
+// observation anchors in. harvest_run only reaches back a matter of days, so
+// a trailing year window makes that gap enormous rather than incidental.
+//
+// This fixture mirrors the live shape: a collectionLog reaching back only 7
+// days (harvest_run's own limited retention) inside a 200-day period, plus
+// git evidence anchored on 50 days scattered earlier in the window that no
+// run ever touched. The union the two sections must now agree on is
+// 50 (evidence-only days) + 7 (log-only days) = 57 of 200 — nowhere near
+// either the log-only count (7) or a coincidental match.
+func TestObservedDaysReconcileBetweenStatsAndTheStrip(t *testing.T) {
+	cal := mustCalendar(t)
+	day0 := cal.DayOf(time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC))
+	from, _ := cal.Bounds(day0)
+	to, _ := cal.Bounds(day0.AddDays(200))
+	period := dashboardPeriod{Days: 200, From: from, To: to}
+
+	var log collectionLog
+	for i := 193; i < 200; i++ {
+		start, _ := cal.Bounds(day0.AddDays(i))
+		log.add(start.Add(time.Hour), false)
+	}
+
+	var events []source.Event
+	for i := range 50 {
+		start, _ := cal.Bounds(day0.AddDays(i * 3))
+		events = append(events, statsCommit(start.Add(time.Hour), gitlog.Stat{Insertions: 1}))
+	}
+
+	data := &dashboardData{Config: config.Default(), Events: events, Log: log}
+
+	statsOut := renderStats(t, metricsScope{}, period, data)
+	var todOut bytes.Buffer
+	if err := renderTimeOfDay(context.Background(), &todOut, metricsScope{}, period, colorNone, data); err != nil {
+		t.Fatalf("renderTimeOfDay: %v", err)
+	}
+
+	statsDays := lineWith(t, statsOut, "observed days")
+	if !strings.Contains(statsDays, "57 of 200") {
+		t.Fatalf("stats observed days reads %q, want 57 of 200 (fixture assumption broken)",
+			strings.TrimSpace(statsDays))
+	}
+	if !strings.Contains(todOut.String(), "57 observed day") {
+		t.Errorf("time-of-day reads %q, want the same 57 observed days stats counted, not a "+
+			"log-only undercount:\n%s", todOut.String(), todOut.String())
 	}
 }
 
