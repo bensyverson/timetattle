@@ -84,11 +84,9 @@ import (
 // own read of that grid, from a screenshot, was that four dense lines are
 // squinty; job dlIfA asked for the full seven lines in every capability, and
 // the half-block path is deleted rather than kept as a fallback or an
-// option. Principle 5 itself still describes the half-block in
-// project/2026-08-07-cli-overhaul-plan.md as of this change — that
-// document is outside this section's file ownership for this task and
-// needs its own correction-in-place pass, per this project's documentation
-// practice, before it agrees with the code.
+// option. Principle 5 in project/2026-08-07-cli-overhaul-plan.md carries a
+// marked correction-in-place recording that retirement, per this project's
+// documentation practice.
 //
 // An observed day's cell is a small foreground-painted square
 // (heatmapSquareGlyph, U+25A0) on the panel's own ground, rather than a
@@ -132,9 +130,9 @@ const (
 // The glyphs. heatmapHatch is the dim hatch an unobserved day is drawn with —
 // principle 3's own "dim hatch" in the one place a shape, not just a colour,
 // can say it. heatmapFull is the legend's own ramp swatch, painted with the
-// foreground colour it demonstrates; the grid's own observed-day cells do
-// not use it — see this file's doc comment above for why a background fill
-// is the safer choice at the grid's density.
+// foreground colour it demonstrates; the grid's own observed-day cells use
+// heatmapSquareGlyph instead — see this file's doc comment above for the
+// choice and the spacer column that gives it room at the grid's density.
 const (
 	heatmapHatch rune = '░'
 	heatmapFull  rune = '█'
