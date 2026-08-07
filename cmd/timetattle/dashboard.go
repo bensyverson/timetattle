@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -74,24 +73,11 @@ both commands share.`,
 		"include sections too dense for every run, such as SOURCE FRESHNESS (omitted by default)")
 	exact := fs.Bool("exact", false,
 		"print full, non-humanized figures in Component Stats instead of the default k/M/B abbreviation")
-	heatmapStyle := fs.String("heatmap-style", heatmapStyleFilled,
-		"TEMPORARY (job z47sR): activity heatmap cell style while Ben compares them in his own terminal — "+
-			"one of "+strings.Join(heatmapStyleNames(), ", ")+"; delete this flag once one wins")
 	cmd.RunE = func(*cobra.Command, []string) error {
 		set := flagsSet(fs)
 		if *days < 1 {
 			return fmt.Errorf("-days %d: must be at least 1, since a window of zero or fewer days "+
 				"describes no report at all", *days)
-		}
-		// heatmapStyleOf itself falls back silently to filled for a name it does
-		// not recognise — see its own doc comment for why (so a fixture that
-		// never sets the field draws today's default) — so the CLI's own
-		// refusal has to happen HERE, against the exact same heatmapStyles
-		// registry, or a typo'd -heatmap-style would draw filled with no
-		// indication anything was wrong.
-		if _, ok := heatmapStyles[*heatmapStyle]; !ok {
-			return fmt.Errorf("-heatmap-style %q: must be one of %s", *heatmapStyle,
-				strings.Join(heatmapStyleNames(), ", "))
 		}
 
 		var err error
@@ -197,18 +183,17 @@ both commands share.`,
 		}
 
 		data := &dashboardData{
-			Store:        st,
-			Config:       cfg,
-			Params:       p,
-			Filter:       filter,
-			Excludes:     excludes,
-			Drop:         drop,
-			Events:       events,
-			Report:       report,
-			ClientMap:    cm,
-			Log:          log,
-			Exact:        *exact,
-			HeatmapStyle: *heatmapStyle,
+			Store:     st,
+			Config:    cfg,
+			Params:    p,
+			Filter:    filter,
+			Excludes:  excludes,
+			Drop:      drop,
+			Events:    events,
+			Report:    report,
+			ClientMap: cm,
+			Log:       log,
+			Exact:     *exact,
 		}
 		// CLAMPING HAPPENS ONCE, HERE, BEFORE ANY SECTION RENDERS — see
 		// clampPeriodToFirstObservation's own doc comment and dashboardPeriod's
@@ -308,23 +293,6 @@ type dashboardData struct {
 	// alone today; any other section is free to read it the same way rather
 	// than inventing a second per-run switch.
 	Exact bool
-	// HeatmapStyle is -heatmap-style verbatim (job z47sR): a TEMPORARY switch
-	// among the activity heatmap's four cell-rendering variants, read by
-	// dashboard_heatmap.go's own heatmapStyleOf — the exact seam Exact above
-	// rides, for the exact same reason (a per-run flag reaching inside one
-	// section's render function without widening dashboardRenderFunc's
-	// signature). The empty string, this field's own zero value, resolves to
-	// "filled", today's shipped look, so a fixture or a caller built before
-	// this task landed draws exactly what it always drew.
-	//
-	// DELETE ON RESOLUTION. Once Ben has compared the four in his own
-	// terminal and picked one, a follow-up hardcodes that one heatmapStyle
-	// literal at renderActivityHeatmap's own call to writeHeatmap and deletes
-	// this field, the -heatmap-style flag above, its validation, and the
-	// whole heatmapStyle mechanism in dashboard_heatmap.go — see that file's
-	// package doc, "Temporary cell styles", for the complete list. Nothing
-	// else in this struct or in renderDashboard needs to change either way.
-	HeatmapStyle string
 }
 
 // dashboardPeriod is the reporting window: Days trailing WORKING days ending

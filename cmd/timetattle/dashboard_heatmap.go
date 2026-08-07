@@ -90,38 +90,23 @@ import (
 // needs its own correction-in-place pass, per this project's documentation
 // practice, before it agrees with the code.
 //
-// An observed day's cell is a background-painted space (heatmapDayCell)
-// rather than a foreground-painted glyph. The two render identically on a
-// terminal whose font draws block-drawing characters flush to the cell's
-// edge, but a background fill has no glyph to rasterize at all — the colour
-// is the character cell's own attribute, which every terminal honours the
-// same way regardless of font or colour depth. A foreground block is the
-// riskier of the two for exactly the density this grid draws at: some
-// terminal fonts, bitmap ones especially, leave a hairline gap around
-// block-drawing glyphs, which reads as a seam between adjacent cells. The
-// legend's ramp swatches (writeHeatmapSwatches) keep the older foreground
-// '█' regardless — they are a handful of large, isolated samples where a seam
-// is not at stake, and the legend is explicitly unchanged by this section's
-// brief.
-//
-// # Temporary cell styles — job z47sR
-//
-// Ben's own screenshot feedback on the paragraph above's grid was that a
-// 30-day window of solid-filled cells reads compact and hard to tease apart,
-// and he wants to SEE alternatives before picking one: a smaller foreground
-// glyph instead of a filled background, a blank spacer column between
-// weeks, or both. dashboard's own -heatmap-style flag (dashboard.go)
-// selects among heatmapStyle below's four registered values —
-// heatmapStyles — and the render path reads exactly one of them, resolved
-// once in renderActivityHeatmap via heatmapStyleOf(data.HeatmapStyle). THIS
-// IS EXPLICITLY TEMPORARY: once Ben picks a winner, a follow-up hardcodes
-// that one heatmapStyle literal at renderActivityHeatmap's own call to
-// writeHeatmap, and deletes heatmapStyle, heatmapStyles, the four name
-// constants, heatmapStyleOf, heatmapSquareGlyph, heatmapIdleGlyphInk,
-// heatmapSquareCell, the Style parameters this task threads through
-// writeHeatmap/writeHeatmapRows/writeHeatmapMonths/writeHeatmapLegend, and
-// the flag itself in dashboard.go. Nothing else changes: every other
-// function in this file is unaware the flag exists.
+// An observed day's cell is a small foreground-painted square
+// (heatmapSquareGlyph, U+25A0) on the panel's own ground, rather than a
+// background-painted space. job z47sR put both renderings, plus a spaced
+// (one blank column between weeks) variant of each, behind a temporary
+// -heatmap-style flag so Ben could compare them in his own terminal; his
+// screenshot pick was square-spaced — the foreground glyph, with the spacer
+// column — and job xLn3T hardcoded that one choice here, deleting the flag
+// and the other three variants along with their tests. A background fill has
+// no glyph to rasterize at all, which would have been the safer choice at
+// density (some terminal fonts, bitmap ones especially, leave a hairline gap
+// around block-drawing glyphs, read as a seam between adjacent cells); the
+// spacer column this grid always draws now is what makes the foreground
+// glyph's breathing room the point rather than the risk. The legend's ramp
+// swatches (writeHeatmapSwatches) keep the older foreground '█' regardless —
+// they are a handful of large, isolated samples where a seam was never at
+// stake, and the legend's own rendering does not depend on the grid's cell
+// style.
 
 // defaultHeatmapAnchor is the hours a full working day is taken to be: where
 // the ramp reaches green, and where the escalation past it begins.
@@ -198,75 +183,19 @@ var (
 	heatmapUnobservedGround = RGB{0x1e, 0x24, 0x30}
 )
 
-// heatmapStyle is one of the four TEMPORARY cell-rendering variants job
-// z47sR asked for — see this file's package doc, "Temporary cell styles",
-// for the whole mechanism and for exactly what a follow-up deletes once Ben
-// picks a winner. It is a struct selected in ONE place, heatmapStyleOf,
-// rather than a name string branched on scattered through the renderer —
-// every function below that takes a heatmapStyle reads only Pitch or Glyph,
-// never the name that produced them.
-type heatmapStyle struct {
-	// Pitch is drawn columns per week: 1 for today's shipped one-column
-	// grid, 2 when a blank spacer column follows every week but the last
-	// (writeHeatmapRows). writeHeatmapMonths and writeHeatmapLegend both
-	// scale by Pitch too, so a spaced grid's wider columns and its month
-	// labels and legend never drift apart from each other.
-	Pitch int
-	// Glyph, true, draws an observed day as heatmapSquareCell — a
-	// foreground-painted small square on the panel's own ground — instead
-	// of heatmapDayCell's default background-filled space. See this file's
-	// package doc above for why a background fill is ordinarily the safer
-	// choice; a Glyph style is opting into that trade-off on purpose, in
-	// exchange for the breathing room around each cell Ben's feedback asked
-	// to see.
-	Glyph bool
-}
+// heatmapPitch is the fixed number of printed columns per week: the cell
+// itself, plus one blank spacer column after every week but the last
+// (writeHeatmapRows). writeHeatmapMonths and writeHeatmapLegend both scale
+// by it too, so the grid's wider columns and its month labels and legend
+// never drift apart from each other. It was a per-style field (heatmapStyle
+// below, job z47sR) while filled/square/spaced/square-spaced were being
+// compared; job xLn3T hardcoded Ben's square-spaced pick and this became a
+// constant.
+const heatmapPitch = 2
 
-// The four style names -heatmap-style accepts (dashboard.go), in the fixed
-// order this file and dashboard.go both use for validation and usage text.
-const (
-	heatmapStyleFilled       = "filled"
-	heatmapStyleSquare       = "square"
-	heatmapStyleSpaced       = "spaced"
-	heatmapStyleSquareSpaced = "square-spaced"
-)
-
-// heatmapStyles is the ONE registry every name resolves against — dashboard.go's
-// own flag validation checks membership in this exact map, so a name the
-// flag accepts and a name heatmapStyleOf resolves can never drift apart into
-// two different lists of what counts as valid.
-var heatmapStyles = map[string]heatmapStyle{
-	heatmapStyleFilled:       {Pitch: 1, Glyph: false},
-	heatmapStyleSquare:       {Pitch: 1, Glyph: true},
-	heatmapStyleSpaced:       {Pitch: 2, Glyph: false},
-	heatmapStyleSquareSpaced: {Pitch: 2, Glyph: true},
-}
-
-// heatmapStyleNames lists every valid -heatmap-style value in the fixed
-// order the constants above declare them, for the flag's own usage text and
-// for dashboardCmd's refusal message — never for validation itself, which
-// checks heatmapStyles directly so the two can never disagree about what is
-// valid.
-func heatmapStyleNames() []string {
-	return []string{heatmapStyleFilled, heatmapStyleSquare, heatmapStyleSpaced, heatmapStyleSquareSpaced}
-}
-
-// heatmapStyleOf resolves dashboardData.HeatmapStyle to the struct that
-// drives rendering. The empty string — a fixture that never sets the field,
-// or dashboardCmd's own flag default — and any name dashboardCmd's flag
-// validation did not already catch both resolve to filled, today's shipped
-// behaviour: nothing that never asks for a style change draws any
-// differently than it did before this task landed.
-func heatmapStyleOf(name string) heatmapStyle {
-	if s, ok := heatmapStyles[name]; ok {
-		return s
-	}
-	return heatmapStyles[heatmapStyleFilled]
-}
-
-// heatmapSquareGlyph is the Glyph styles' own foreground glyph — job z47sR's
-// ask for "a smaller square" than today's background fill, Ben's own
-// screenshot feedback naming U+25FC as a starting point.
+// heatmapSquareGlyph is the grid's foreground glyph — job z47sR's ask for
+// "a smaller square" than the background fill the grid used before it, Ben's
+// own screenshot feedback naming U+25FC as a starting point.
 //
 // U+25FC BLACK MEDIUM SQUARE was rejected, per the brief: it carries
 // Unicode's Ambiguous East Asian Width (a CJK-locale terminal may double-
@@ -305,16 +234,17 @@ func heatmapStyleOf(name string) heatmapStyle {
 // changing this one rune, nothing that reads it.
 const heatmapSquareGlyph = '■' // U+25A0 BLACK SQUARE
 
-// heatmapIdleGlyphInk is the fixed colour an IDLE day's square draws in
-// under a Glyph style — a day heatmapColorOf would otherwise colour with
-// heatmapGround, the ramp's own near-black "has not started yet" tone.
+// heatmapIdleGlyphInk is the fixed colour an IDLE day's square draws in — a
+// day heatmapColorOf would otherwise colour with heatmapGround, the ramp's
+// own near-black "has not started yet" tone.
 //
-// heatmapGround was rejected for this glyph specifically. heatmapDayCell's
-// default (non-Glyph) styles paint the ramp's colour onto the CELL'S OWN
-// BACKGROUND, where a near-black fill still reads as "the dark end of the
-// ramp" against the lighter cells around it. heatmapSquareCell instead
-// paints only a FOREGROUND glyph on whatever the terminal's own background
-// already is — a colour this file never controls. A near-black glyph on a
+// heatmapGround was rejected for this glyph specifically. A background-fill
+// rendering (heatmapDayCell's, before job xLn3T hardcoded the foreground
+// glyph) paints the ramp's colour onto the CELL'S OWN BACKGROUND, where a
+// near-black fill still reads as "the dark end of the ramp" against the
+// lighter cells around it. heatmapSquareCell instead paints only a
+// FOREGROUND glyph on whatever the terminal's own background already is — a
+// colour this file never controls. A near-black glyph on a
 // dark terminal theme is not dim, it is INVISIBLE, and an invisible idle
 // cell then reads exactly like a day outside the period: the very
 // collapse — a measured zero indistinguishable from nothing recorded — this
@@ -602,24 +532,26 @@ func renderActivityHeatmap(_ context.Context, out io.Writer, scope metricsScope,
 	if err != nil {
 		return err
 	}
-	return writeHeatmap(out, cc, g, defaultHeatmapAnchor, heatmapStyleOf(data.HeatmapStyle))
+	return writeHeatmap(out, cc, g, defaultHeatmapAnchor)
 }
 
 // writeHeatmap draws a built grid. It is separate from the render function
 // above so that the drawing can be exercised against a constructed grid
-// without a store, a config or a report anywhere near it. style is the
-// TEMPORARY (job z47sR) cell-style selection — see this file's package doc,
-// "Temporary cell styles" — read here and nowhere upstream of this call.
-func writeHeatmap(out io.Writer, cc colorCapability, g heatmapGrid, anchor time.Duration, style heatmapStyle) error {
+// without a store, a config or a report anywhere near it.
+func writeHeatmap(out io.Writer, cc colorCapability, g heatmapGrid, anchor time.Duration) error {
 	var b strings.Builder
 	if len(g.Columns) == 0 {
 		fmt.Fprintf(&b, "%sno days in the period\n", heatmapIndent)
 		_, err := io.WriteString(out, b.String())
 		return err
 	}
-	writeHeatmapMonths(&b, g, style)
-	writeHeatmapRows(&b, cc, g, anchor, style)
-	writeHeatmapLegend(&b, cc, anchor, style)
+	writeHeatmapMonths(&b, g)
+	writeHeatmapRows(&b, cc, g, anchor)
+	// ONE BLANK LINE between the grid and the legend — Ben's finishing touch
+	// on job xLn3T, so the legend reads as a caption beneath the picture
+	// rather than an eighth row of it.
+	b.WriteByte('\n')
+	writeHeatmapLegend(&b, cc, anchor)
 	_, err := io.WriteString(out, b.String())
 	return err
 }
@@ -635,14 +567,12 @@ func writeHeatmap(out io.Writer, cc colorCapability, g heatmapGrid, anchor time.
 // is exactly the kind of quiet omission the rest of this codebase spends its
 // comments refusing.
 //
-// A week's own printed column is c*style.Pitch, not c: writeHeatmapRows below
-// draws style.Pitch columns per week (the cell, plus a blank spacer under a
-// spaced style), and a label computed in WEEK-index space rather than
-// printed-column space would drift right under every week after the first
-// once Pitch is 2. Pitch 1 makes this identical to c, so a filled or square
-// grid's labels land exactly where they always have.
-func writeHeatmapMonths(b *strings.Builder, g heatmapGrid, style heatmapStyle) {
-	width := len(g.Columns) * style.Pitch
+// A week's own printed column is c*heatmapPitch, not c: writeHeatmapRows
+// below draws heatmapPitch columns per week (the cell, plus a blank spacer),
+// and a label computed in WEEK-index space rather than printed-column space
+// would drift right under every week after the first.
+func writeHeatmapMonths(b *strings.Builder, g heatmapGrid) {
+	width := len(g.Columns) * heatmapPitch
 	labels := make([]rune, width+3)
 	for i := range labels {
 		labels[i] = ' '
@@ -654,7 +584,7 @@ func writeHeatmapMonths(b *strings.Builder, g heatmapGrid, style heatmapStyle) {
 			continue
 		}
 		prev = m
-		pos := c * style.Pitch
+		pos := c * heatmapPitch
 		if pos < next {
 			continue
 		}
@@ -668,22 +598,22 @@ func writeHeatmapMonths(b *strings.Builder, g heatmapGrid, style heatmapStyle) {
 // writeHeatmapRows draws the grid: one line per weekday, one cell per week,
 // the same seven lines in every capability. Colour and glyph shape change
 // what a cell draws — see this file's doc comment for why the LAYOUT itself
-// no longer varies with colour. style.Pitch, when 2, adds one blank spacer
-// column after every week but the last — "a blank column BETWEEN weeks", not
-// a trailing margin — under colorNone exactly as under colour, since a
-// reader of a piped or captured plain-text grid must see the same spacing a
+// no longer varies with colour. heatmapPitch adds one blank spacer column
+// after every week but the last — "a blank column BETWEEN weeks", not a
+// trailing margin — under colorNone exactly as under colour, since a reader
+// of a piped or captured plain-text grid must see the same spacing a
 // terminal does.
-func writeHeatmapRows(b *strings.Builder, cc colorCapability, g heatmapGrid, anchor time.Duration, style heatmapStyle) {
+func writeHeatmapRows(b *strings.Builder, cc colorCapability, g heatmapGrid, anchor time.Duration) {
 	for r, weekday := range g.Rows {
 		fmt.Fprintf(b, "%s%-*s", heatmapIndent, heatmapGutter, weekday.String()[:3])
 		for i, col := range g.Columns {
 			if cc == colorNone {
 				b.WriteRune(heatmapPlainGlyph(col[r], anchor))
 			} else {
-				b.WriteString(heatmapDayCell(cc, col[r], anchor, style))
+				b.WriteString(heatmapDayCell(cc, col[r], anchor))
 			}
-			if style.Pitch > 1 && i < len(g.Columns)-1 {
-				b.WriteString(strings.Repeat(" ", style.Pitch-1))
+			if i < len(g.Columns)-1 {
+				b.WriteString(strings.Repeat(" ", heatmapPitch-1))
 			}
 		}
 		b.WriteByte('\n')
@@ -691,16 +621,11 @@ func writeHeatmapRows(b *strings.Builder, cc colorCapability, g heatmapGrid, anc
 }
 
 // heatmapDayCell is one coloured day's character cell: the dim slate hatch
-// for a day nothing was ever established about (UNCHANGED by style — see
-// heatmapIdleGlyphInk's own doc comment for why unobserved keeps its
-// existing treatment rather than growing a Glyph variant of its own), a
-// blank for a day outside the reported period, or — for an observed day —
-// either a background-painted space (style.Glyph false, today's shipped
-// look) or heatmapSquareCell's foreground glyph (style.Glyph true). See this
-// file's doc comment for why a background fill is the DEFAULT style's safer
-// choice; a Glyph style is opting into the foreground-glyph trade-off on
-// purpose.
-func heatmapDayCell(cc colorCapability, c heatmapCell, anchor time.Duration, style heatmapStyle) string {
+// for a day nothing was ever established about (see heatmapIdleGlyphInk's
+// own doc comment for why unobserved keeps its own treatment rather than
+// drawing the square glyph too), a blank for a day outside the reported
+// period, or — for an observed day — heatmapSquareCell's foreground glyph.
+func heatmapDayCell(cc colorCapability, c heatmapCell, anchor time.Duration) string {
 	switch c.State {
 	case heatmapOutside:
 		return " "
@@ -708,18 +633,15 @@ func heatmapDayCell(cc colorCapability, c heatmapCell, anchor time.Duration, sty
 		return cc.Paint(heatmapUnobservedInk) + cc.PaintBG(heatmapUnobservedGround) +
 			string(heatmapHatch) + cc.Reset()
 	default:
-		if style.Glyph {
-			return heatmapSquareCell(cc, c, anchor)
-		}
-		return cc.PaintBG(heatmapColorOf(c, anchor)) + " " + cc.Reset()
+		return heatmapSquareCell(cc, c, anchor)
 	}
 }
 
-// heatmapSquareCell is one OBSERVED day under a Glyph style: heatmapSquareGlyph,
-// painted the ramp's own colour, with no PaintBG call at all — that absence
-// is exactly what gives the cell the breathing room Ben's feedback asked
-// for, since the glyph sits on the panel's own ground rather than on a
-// painted rectangle. An idle day (Hours <= 0) is the one exception: see
+// heatmapSquareCell is one OBSERVED day: heatmapSquareGlyph, painted the
+// ramp's own colour, with no PaintBG call at all — that absence is exactly
+// what gives the cell the breathing room Ben's feedback asked for, since the
+// glyph sits on the panel's own ground rather than on a painted rectangle.
+// An idle day (Hours <= 0) is the one exception: see
 // heatmapIdleGlyphInk's own doc comment for why it draws a fixed dim grey
 // rather than heatmapColorOf's own near-black ramp-ground colour.
 func heatmapSquareCell(cc colorCapability, c heatmapCell, anchor time.Duration) string {
@@ -733,11 +655,13 @@ func heatmapSquareCell(cc colorCapability, c heatmapCell, anchor time.Duration) 
 // writeHeatmapLegend states the scale, including the anchor in force — never a
 // hard-coded eight hours, so that a moved anchor can never leave the legend
 // asserting the wrong thing about the picture beside it. Its ramp swatches
-// (writeHeatmapSwatches) draw style.Pitch times as many samples across the
-// same two spans, so a spaced grid's doubled column pitch is matched by a
-// legend that is also twice as wide, rather than one that stays the old
-// width beside a grid that just grew.
-func writeHeatmapLegend(b *strings.Builder, cc colorCapability, anchor time.Duration, style heatmapStyle) {
+// (writeHeatmapSwatches) draw ONE SWATCH PER HOUR the span covers —
+// heatmapLegendSwatchCount — decoupled from the grid's own column pitch
+// (job xLn3T): with the shipped 8h anchor that is 8 swatches across 0h-8h
+// and 16 across 8h-24h, Ben's own ask, rather than the doubled 12-and-24 an
+// earlier draft drew by scaling the swatch count with heatmapPitch instead
+// of with the hours themselves.
+func writeHeatmapLegend(b *strings.Builder, cc colorCapability, anchor time.Duration) {
 	if cc == colorNone {
 		fmt.Fprintf(b, "%s%c unobserved  %c idle  %s to %s  %c %c beyond\n", heatmapIndent,
 			heatmapPlainUnobserved, heatmapPlainIdle, heatmapPlainRampKey(), heatmapHoursLabel(anchor),
@@ -745,11 +669,22 @@ func writeHeatmapLegend(b *strings.Builder, cc colorCapability, anchor time.Dura
 		return
 	}
 	fmt.Fprintf(b, "%s0h ", heatmapIndent)
-	writeHeatmapSwatches(b, cc, 6*style.Pitch, 0, anchor, anchor)
+	writeHeatmapSwatches(b, cc, heatmapLegendSwatchCount(anchor), 0, anchor, anchor)
 	fmt.Fprintf(b, " %s ", heatmapHoursLabel(anchor))
-	writeHeatmapSwatches(b, cc, 12*style.Pitch, anchor, 2*anchor, anchor)
+	writeHeatmapSwatches(b, cc, heatmapLegendSwatchCount(2*anchor), anchor, 2*anchor, anchor)
 	fmt.Fprintf(b, " %s+   %s%s%c%s unobserved\n", heatmapHoursLabel(3*anchor),
 		cc.Paint(heatmapUnobservedInk), cc.PaintBG(heatmapUnobservedGround), heatmapHatch, cc.Reset())
+}
+
+// heatmapLegendSwatchCount is one ramp swatch per hour span covers, so the
+// legend's own width is a function of the anchor alone and never of the
+// grid's column pitch. A span shorter than an hour still draws one swatch —
+// there is nothing to show with zero.
+func heatmapLegendSwatchCount(span time.Duration) int {
+	if n := int(span / time.Hour); n > 0 {
+		return n
+	}
+	return 1
 }
 
 // writeHeatmapSwatches draws n blocks sampling the ramp across [from, from+span),

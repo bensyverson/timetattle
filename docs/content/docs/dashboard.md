@@ -78,9 +78,9 @@ rather than choosing.
 
 A GitHub-style year grid: one column per week (weeks start where the
 configured calendar starts them), seven day-of-week rows, one terminal line
-per row. Observed days paint as background-filled cells — a fill is the
-terminal cell's own attribute, so the grid stays seamless in fonts that
-don't draw block glyphs flush. A cell's color is that
+per row. Observed days paint as a small foreground square (■, U+25A0) rather
+than a filled cell, with a blank column after each week for breathing room.
+A cell's color is that
 day's hours — presence when unscoped, the scoped engaged share under a
 project or client — never the per-project sum, which double-counts concurrent
 work. The ramp anchors at eight hours: darkness to green up to the anchor,
