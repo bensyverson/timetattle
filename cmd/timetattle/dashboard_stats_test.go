@@ -210,9 +210,13 @@ func TestComponentStatsSumsInsertionsAndDeletionsAndExcludesMerges(t *testing.T)
 	if row := lineWith(t, out, "lines -"); !strings.Contains(row, "40") {
 		t.Errorf("lines - reads %q, want 40", strings.TrimSpace(row))
 	}
-	if !strings.Contains(out, "merge") {
-		t.Errorf("nothing in the panel says a merge commit carried no diff:\n%s", out)
-	}
+	// A prior version of this test also asserted the panel said "merge"
+	// somewhere: the commits row carried a note explaining that a merge
+	// commit's diff is not summed. That note lived in the per-row
+	// commentary column this task removes entirely (job dGWPc); the merge
+	// is still counted (asserted above — "commits" == 3) and still
+	// excluded from the line sums (asserted above), which is the actual
+	// behavior. Only the sentence explaining it is gone.
 }
 
 // The remaining live counts, one fixture each, so a miswired source id shows
@@ -246,27 +250,26 @@ func TestComponentStatsCountsFilesJobsAndTranscripts(t *testing.T) {
 	}
 }
 
-// A stat the data model does not record AT ALL is a third state again, and it
-// is neither an observed zero nor an unrecorded window: nothing anywhere in
-// the store could ever answer it. It is printed rather than omitted, because
-// a row that silently vanished is the absence this project keeps misreading
-// as an observation — and it is never printed as a number.
-func TestComponentStatsPrintsUnreachableStatsAsUnmeasuredWithAReason(t *testing.T) {
+// CRITERION Txj: the three rows this panel used to print as "not measured"
+// carried nothing but their reasons — no figure was ever real — so with the
+// commentary column gone (criterion 9BH) there is nothing left to render
+// them WITH. They are omitted rather than printed empty. "jobs agents" was
+// dropped for good (Ben approved dropping it outright); "claude sessions"
+// and "tokens, cost" are pending the source-schema work under task 3jDIu and
+// return as real numeric rows when it lands — the reasoning for all three
+// lives in docs/content/docs/dashboard.md, not here.
+//
+// This is a regression test for the removal itself: a label reappearing here
+// with no way to render its reason would be worse than the row never coming
+// back, so the panel must never again print one without a source behind it.
+func TestComponentStatsOmitsTheThreeRowsTheCommentaryColumnUsedToExplain(t *testing.T) {
 	p := statsPeriod(t)
 	out := renderStats(t, metricsScope{}, p, statsData(nil, collectedThroughout(p)))
 
 	for _, label := range []string{"jobs agents", "claude sessions", "tokens, cost"} {
-		row := lineWith(t, out, label)
-		if !strings.Contains(row, "not measured") {
-			t.Errorf("row %q reads %q, want it marked not measured", label, strings.TrimSpace(row))
-		}
-		if strings.ContainsAny(strings.TrimPrefix(strings.TrimSpace(row), label), "0123456789") {
-			t.Errorf("row %q reads %q — a stat nothing records must carry no figure",
-				label, strings.TrimSpace(row))
-		}
-		if len(strings.TrimSpace(row)) <= len(label)+len(" not measured")+4 {
-			t.Errorf("row %q reads %q, want it to name WHY nothing records it",
-				label, strings.TrimSpace(row))
+		if strings.Contains(out, label) {
+			t.Errorf("panel still prints %q, want it omitted now the commentary column that explained it is gone:\n%s",
+				label, out)
 		}
 	}
 }
@@ -333,10 +336,27 @@ func TestComponentStatsTakesTheScopedProjectsOwnHours(t *testing.T) {
 
 // The backlight is the literal screen-on reading, and internal/metrics
 // reports it store-wide because knowledgeC and Biome carry no path and can
-// never be attributed to a project (metrics.ReasonUnlocatable). Printing a
-// store-wide figure under a project filter would attribute it; printing
-// nothing would read as zero. So the row says which it is.
-func TestComponentStatsSaysScreenOnIsStoreWideUnderAFilteredScope(t *testing.T) {
+// never be attributed to a project (metrics.ReasonUnlocatable). Before this
+// task the row said so with a note — "store-wide: the presence sources
+// carry no path and attribute to no project" — printed in the per-row
+// commentary column criterion 9BH removes. That note is gone with the
+// column, so a project-scoped screen-on figure now prints with no caveat
+// distinguishing it from an attributed one.
+//
+// PUSHBACK, NOT SILENTLY DROPPED: every other note this task removes is
+// prose that explains a number without changing how it should be read (a
+// merge's diff isn't summed, a birth and an mtime are two writes). This one
+// is different — a reader who does not already know the backlight is
+// store-wide will misread "3h" as alpha's own screen time under `-project
+// alpha`. Folding "(store-wide)" into the row's Label was considered and
+// rejected: statLabelWidth is a fixed 16 columns and pad() truncates rather
+// than widens, so "screen-on (store-wide)" would render as "screen-on (sto…"
+// — the label column would need widening for every row to fit one row's
+// qualifier, which is a real design decision, not a one-line fix owned by
+// this task. Flagged in job dGWPc's note for a human or task 3jDIu to
+// resolve, most likely by stating the store-wide rule once in
+// docs/content/docs/dashboard.md rather than per capture.
+func TestComponentStatsScreenOnFigureIsUnaffectedByScopeThoughItsAttributionIsStoreWide(t *testing.T) {
 	p := statsPeriod(t)
 	data := statsData(nil, collectedThroughout(p))
 	data.Report = metrics.Report{
@@ -347,8 +367,8 @@ func TestComponentStatsSaysScreenOnIsStoreWideUnderAFilteredScope(t *testing.T) 
 
 	out := renderStats(t, metricsScope{Project: "alpha"}, p, data)
 	row := lineWith(t, out, "screen-on")
-	if !strings.Contains(row, "store-wide") {
-		t.Errorf("screen-on reads %q, want it to say the figure is store-wide", strings.TrimSpace(row))
+	if !strings.Contains(row, "6.0") {
+		t.Errorf("screen-on reads %q, want the backlight's own 6h regardless of scope", strings.TrimSpace(row))
 	}
 }
 
@@ -454,30 +474,47 @@ func TestComponentStatsColumnsFitLiveWidthNumbersWithoutTruncationOrCollision(t 
 	}
 }
 
-// "45 merge commits carried no diff and is summed" was live output (job
-// kGFYV) — the noun pluralised correctly but the verb did not, the same class
-// of bug the terseness pass's "2 week iss" regression already caught once.
-// Both the singular and plural forms are pinned so neither can regress alone.
-func TestComponentStatsMergeNoteAgreesInNumber(t *testing.T) {
+// TestComponentStatsMergeNoteAgreesInNumber is REMOVED, not modified.
+//
+// It pinned "45 merge commits carried no diff and is summed" (live output,
+// job kGFYV) getting its verb agreement right on both the singular and
+// plural form. That sentence was the mergeNote printed in the per-row
+// commentary column criterion 9BH removes entirely — commits are still
+// counted including merges and merges are still excluded from the line
+// sums (TestComponentStatsSumsInsertionsAndDeletionsAndExcludesMerges,
+// above, still pins both numerically) — but there is no note left for a
+// verb to agree or disagree in. A test asserting exact wording of a
+// sentence that no longer exists would be pinning nothing.
+
+// The trailing loss disclosure is the one sentence still printed below the
+// table (renderComponentStats, not a per-row note), and it has to be
+// conditional on data.Log actually recording a lost or partial run inside
+// THIS window — printing it unconditionally would claim data loss on a
+// totally healthy capture, the exact "no data means zero work" collapse
+// this whole panel exists to avoid, one level up. The gate already existed
+// in code (`if data.Log.during(...) == collectionLost`) before this task;
+// this is the first test to pin it, in both directions.
+func TestComponentStatsPrintsLossLineWhenAWindowRunLostSomething(t *testing.T) {
 	p := statsPeriod(t)
-	at := p.From.Add(time.Hour)
-
-	one := statsCommit(at, gitlog.Stat{})
-	one.State = gitlog.StateMerge
-	outOne := renderStats(t, metricsScope{}, p, statsData([]source.Event{one}, collectedThroughout(p)))
-	if row := lineWith(t, outOne, "commits"); !strings.Contains(row, "1 merge commit carried no diff and is summed") {
-		t.Errorf("commits reads %q, want singular agreement (1 merge commit ... is summed)",
-			strings.TrimSpace(row))
+	var log collectionLog
+	log.add(p.From.Add(time.Hour), true) // lost
+	out := renderStats(t, metricsScope{}, p, statsData(nil, log))
+	if !strings.Contains(out, "lower bound") {
+		t.Errorf("panel does not report a lower bound though a run inside the window lost part of what it read:\n%s", out)
 	}
+}
 
-	twoA := statsCommit(at, gitlog.Stat{})
-	twoA.State = gitlog.StateMerge
-	twoB := statsCommit(at.Add(time.Minute), gitlog.Stat{})
-	twoB.State = gitlog.StateMerge
-	outTwo := renderStats(t, metricsScope{}, p, statsData([]source.Event{twoA, twoB}, collectedThroughout(p)))
-	if row := lineWith(t, outTwo, "commits"); !strings.Contains(row, "2 merge commits carried no diff and are summed") {
-		t.Errorf("commits reads %q, want plural agreement (2 merge commits ... are summed)",
-			strings.TrimSpace(row))
+// The other half: a clean run in the window, and no run at all, must both
+// print nothing about loss. Absence of loss is not itself printed — see this
+// file's own doc comment on why "not measured" rows are omitted rather than
+// asserted; the same discipline applies to a whole-table line as to a row.
+func TestComponentStatsOmitsLossLineWhenNothingInTheWindowWasLost(t *testing.T) {
+	p := statsPeriod(t)
+	if out := renderStats(t, metricsScope{}, p, statsData(nil, collectedThroughout(p))); strings.Contains(out, "lower bound") {
+		t.Errorf("panel claims a lower bound though every run in the window succeeded cleanly:\n%s", out)
+	}
+	if out := renderStats(t, metricsScope{}, p, statsData(nil, collectionLog{})); strings.Contains(out, "lower bound") {
+		t.Errorf("panel claims a lower bound with no collection log recorded at all:\n%s", out)
 	}
 }
 

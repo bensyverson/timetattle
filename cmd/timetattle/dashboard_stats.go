@@ -22,58 +22,59 @@ import (
 // See the section list in dashboard.go for the contract every render function
 // shares.
 //
-// # Three states, and this panel prints all three
+// # Two states, printed as a label plus a count and an average — nothing else
 //
 // Design principle 3 of project/2026-08-07-cli-overhaul-plan.md says "no data"
-// is never "zero work". Applied to a table of counts that splits into three
-// renderings, not two, and the third is the one a reader would otherwise
-// supply for themselves out of a blank:
+// is never "zero work". Applied to a table of counts, that is a distinction
+// this panel draws in exactly one place — the value column of a row — and
+// nowhere else:
 //
 //	0            OBSERVED ZERO. The window was observed and this source
 //	             reported nothing in it. A measurement.
 //	unrecorded   NOTHING WAS OBSERVED of this window, so a zero would be an
-//	             assertion nobody made. The row says which window, or which
-//	             source, was never read.
-//	not measured NOTHING ANYWHERE IN THE STORE could answer this, at any
-//	             scope or period, because no source records the quantity. It
-//	             is a fact about the data model and never about the period.
+//	             assertion nobody made. The row carries the marker and no
+//	             figure.
 //
-// The last is printed rather than omitted, and that is deliberate: a row that
-// silently vanished is precisely the absence this project keeps misreading as
-// an observation. Each one names WHY, so a reader can tell a gap that a
-// harvest would fill from one that only new collection code ever could.
+// Every row is label, count, average — a per-row commentary column that used
+// to sit to the right of those three (a sentence explaining a figure, or
+// standing in for one the store could not produce at all) is gone (job dGWPc,
+// Ben's dashboard feedback items 5 and 6a). A reader compares a panel like
+// this down a column, not across one row at a time, and a sentence attached
+// to a single row is read exactly once and then never again — so the reasons
+// that used to live there now live in docs/content/docs/dashboard.md, the
+// published record for what this panel shows and does not, which the task
+// that removed them (dGWPc) does not itself edit.
 //
-// # What is not reachable, and the evidence for each
+// # The rows dropped along with the column that explained them
 //
-// The stat list this panel was specified from is a wishlist, and three of its
-// entries cannot be answered honestly from what the store holds. Each is
-// printed as "not measured" with its reason, and none is approximated:
+// Three rows in the original stat list could not be answered honestly from
+// what the store holds, and were printed as a third state, "not measured",
+// with a sentence of reasoning in the now-removed column. With nowhere left
+// to carry that sentence, the rows are omitted rather than printed empty —
+// the same choice this file already makes for a source that was simply never
+// wired up (see statCountRow). None are coming back the same way:
 //
-//   - DISTINCT JOBS AGENTS. internal/jobs never SELECTs the actor column at
-//     all, by an explicit decision recorded in its own package doc: agent
-//     work counts fully, the actor titles are disposable, and source.Event
-//     has no free-form payload internal/store would persist it in anyway.
-//     There is no column to count.
+//   - DISTINCT JOBS AGENTS is not pending anything; Ben approved dropping it
+//     for good. internal/jobs never SELECTs the actor column at all, by an
+//     explicit decision recorded in its own package doc: agent work counts
+//     fully, the actor titles are disposable, and source.Event has no
+//     free-form payload internal/store would persist one in anyway. There is
+//     no column to count, ever, under this schema.
 //
-//   - CLAUDE SESSIONS. internal/transcripts emits one Point per transcript
-//     RECORD, with Identity.Document set to the record's uuid and Locator set
-//     to the record's own cwd — deliberately not the walked path, so the
-//     session file's name (which is the session id) never reaches the store.
-//     Counting distinct sittings from internal/sessions instead would answer
-//     a different question with the same word: a timetattle sitting is
-//     clustered across every source at once and is not a Claude session.
+//   - CLAUDE SESSIONS and TOKENS/COST are pending the source-schema work under
+//     task 3jDIu, and return as real numeric rows when it lands. Today,
+//     internal/transcripts emits one Point per transcript RECORD with
+//     Identity.Document set to the record's uuid and Locator set to the
+//     record's own cwd — never the session file's own name, which is the
+//     session id — and reads only type, timestamp, cwd and uuid plus the
+//     message content needed to tell a human turn from a tool result; no
+//     usage figure is parsed and there is nowhere on the event to put one
+//     (State is part of the store's event_identity key, so a per-record
+//     number there would make every record its own identity).
 //
-//   - TOKENS AND COST. The transcript record struct (internal/transcripts,
-//     event.go) parses four fields — type, timestamp, cwd, uuid — plus the
-//     message content it needs to tell a human turn from a tool result.
-//     Usage figures are never read, and there is nowhere to put them: the
-//     only scalar an event carries is State, which is part of the store's
-//     event_identity key, so a per-record number there would make every
-//     record its own identity.
-//
-// What IS recorded, and is therefore live: internal/gitlog puts a diff-stat
-// on every non-merge commit event's State (gitlog.Stat / ParseStat), so lines
-// inserted and removed are real figures rather than an estimate.
+// What IS recorded, and is therefore still a live row: internal/gitlog puts a
+// diff-stat on every non-merge commit event's State (gitlog.Stat / ParseStat),
+// so lines inserted and removed are real figures rather than an estimate.
 //
 // # Files created versus updated is one row, not two
 //
@@ -105,8 +106,8 @@ func renderComponentStats(ctx context.Context, out io.Writer, scope metricsScope
 			"unrecorded rather than zero")
 	}
 	if data.Log.during(period.From, period.To) == collectionLost {
-		fmt.Fprintf(out, "  %s\n", "a collection run in this window lost or partly lost what it read, "+
-			"so every count above is a lower bound")
+		fmt.Fprintf(out, "  %s\n", "some sources lost part of what they read in this window; "+
+			"counts are lower bounds")
 	}
 	return nil
 }
@@ -181,7 +182,6 @@ func observedDays(cal sessions.Calendar, period dashboardPeriod, data *dashboard
 // scoped events rather than one pass per row.
 type statTally struct {
 	commits    int
-	merges     int
 	insertions int
 	deletions  int
 
@@ -219,12 +219,13 @@ func tallyStats(scope metricsScope, data *dashboardData) statTally {
 			// that is not a stat this package wrote. gitlog keeps "no diff was
 			// computed" distinct from "a diff was computed and it was empty" —
 			// an --allow-empty commit is the second, and is real — so a merge
-			// is counted separately and never summed in as a zero.
+			// is counted in "commits" above but never summed into the line
+			// totals as a zero. (A per-row sentence explaining that used to
+			// print here; the per-row commentary column it lived in is gone —
+			// see this file's own doc comment.)
 			if s, ok := gitlog.ParseStat(e.State); ok {
 				t.insertions += s.Insertions
 				t.deletions += s.Deletions
-			} else {
-				t.merges++
 			}
 		case fsobserve.ID:
 			t.fileWrites++
@@ -303,28 +304,28 @@ func statsReachedWindow(f store.Fresh, period dashboardPeriod) bool {
 }
 
 // statRow is one printed line. Exactly one of the value forms is used, which
-// is what keeps the three states from ever collapsing into each other.
+// is what keeps the two states from ever collapsing into each other. There is
+// no field for a note: every row is a label plus a count and an average, full
+// stop — see this file's own doc comment for why the commentary column that
+// used to sit here is gone.
 type statRow struct {
 	Label string
 	// Value and Avg are the rendered figures, used when Marker is empty.
 	Value, Avg string
-	// Marker is "unrecorded" or "not measured" — a state rather than a
-	// figure.
+	// Marker is "unrecorded" — a state rather than a figure.
 	Marker string
-	// Note is the reason, or a qualification on a figure that is real.
-	Note string
 	// Emphasis marks a row worth the eye. Color is decoration only: every
 	// row reads identically under colorNone, which is what a captured run
 	// and every test gets.
 	Emphasis bool
 }
 
-// Markers. Two words, each meaning one thing, and neither ever standing in
-// for the other. See this file's own doc comment for the three-state table.
-const (
-	statUnrecorded  = "unrecorded"
-	statNotMeasured = "not measured"
-)
+// statUnrecorded is the one marker this panel prints now. A second marker,
+// "not measured", existed here for a row whose reason lived in the per-row
+// commentary column this task removes; with the column gone the three rows it
+// explained are omitted entirely (see this file's own doc comment) rather
+// than kept with no way to say why, so there is only ever one state to mark.
+const statUnrecorded = "unrecorded"
 
 // statRows lays the panel out. The order is hours, then git, then files, then
 // jobs, then Claude — the coarsest figure first, and each source's rows
@@ -334,46 +335,22 @@ func statRows(scope metricsScope, observed, total int,
 	rows := []statRow{{
 		Label: "observed days",
 		Value: fmt.Sprintf("%d of %d", observed, total),
-		Note:  "the divisor for every average below",
 	}}
 	rows = append(rows, statsHourRows(scope, observed, data)...)
 
-	count := func(label string, n int, sourceID, note string) statRow {
-		return statCountRow(label, n, observed, statsObserved(sourceID, observed, reach), note)
-	}
-	mergeNote := ""
-	if t.merges > 0 {
-		// Verb agreement, not just noun agreement: live output once read "45
-		// merge commits carried no diff and is summed" — plural's own noun was
-		// right and the verb was not, the same class of bug the terseness
-		// pass's "2 week iss" regression caught. See headline.go's identical
-		// map[bool]string idiom for the same agreement, applied there to "is"
-		// versus "are" on a different count.
-		mergeNote = fmt.Sprintf("%s carried no diff and %s summed into neither line count",
-			plural(t.merges, "merge commit"), map[bool]string{true: "are", false: "is"}[t.merges != 1])
+	count := func(label string, n int, sourceID string) statRow {
+		return statCountRow(label, n, observed, statsObserved(sourceID, observed, reach))
 	}
 	rows = append(rows,
-		count("commits", t.commits, gitlog.CommitsID, mergeNote),
-		count("lines +", t.insertions, gitlog.CommitsID, ""),
-		count("lines -", t.deletions, gitlog.CommitsID, ""),
-		count("file writes", t.fileWrites, fsobserve.ID, "a birth and an mtime are two writes of one file"),
-		count("files touched", len(t.files), fsobserve.ID, ""),
-		count("job actions", t.jobEvents, jobs.EventsID, "planning and coordination are work and are counted"),
-		count("tasks closed", len(t.closed), jobs.EventsID, ""),
-		count("claude records", t.records, transcripts.ID, ""),
-		count("claude prompts", t.prompts, transcripts.ID, "records a person typed"),
-	)
-
-	// The three the data model does not record. Printed, never omitted, and
-	// never as a figure — see this file's doc comment for the evidence behind
-	// each reason.
-	rows = append(rows,
-		statRow{Label: "jobs agents", Marker: statNotMeasured,
-			Note: "internal/jobs never reads the actor column, and an event has nowhere to carry it"},
-		statRow{Label: "claude sessions", Marker: statNotMeasured,
-			Note: "a transcript event carries the record's uuid and cwd, never the session's own id"},
-		statRow{Label: "tokens, cost", Marker: statNotMeasured,
-			Note: "a transcript record is read for type, timestamp, cwd and uuid; no usage figure is parsed"},
+		count("commits", t.commits, gitlog.CommitsID),
+		count("lines +", t.insertions, gitlog.CommitsID),
+		count("lines -", t.deletions, gitlog.CommitsID),
+		count("file writes", t.fileWrites, fsobserve.ID),
+		count("files touched", len(t.files), fsobserve.ID),
+		count("job actions", t.jobEvents, jobs.EventsID),
+		count("tasks closed", len(t.closed), jobs.EventsID),
+		count("claude records", t.records, transcripts.ID),
+		count("claude prompts", t.prompts, transcripts.ID),
 	)
 	return rows
 }
@@ -389,7 +366,6 @@ func statsHourRows(scope metricsScope, observed int, data *dashboardData) []stat
 	switch {
 	case !known && observed == 0:
 		presenceRow.Marker = statUnrecorded
-		presenceRow.Note = "no day in this window was observed"
 	default:
 		presenceRow.Value = fmt.Sprintf("%.1fh", presence.Hours())
 		presenceRow.Avg = statsAvgHours(presence, observed)
@@ -400,8 +376,12 @@ func statsHourRows(scope metricsScope, observed int, data *dashboardData) []stat
 	// knowledgeC and Biome carry no path at all, so their evidence is
 	// metrics.ReasonUnlocatable and can never be attributed to a project.
 	// Printing the store-wide figure under a project filter would attribute
-	// it; printing nothing would read as zero. So the row prints the figure
-	// and says what it is a figure ABOUT.
+	// it; printing nothing would read as zero. This row used to say which of
+	// the two it was doing, in the commentary column this task removes — see
+	// this file's own doc comment, and job dGWPc's note, for the pushback:
+	// unlike this panel's other removed notes, that one changed how the
+	// figure should be read under a filtered scope, and nothing replaces it
+	// here.
 	b := data.Report.Backlight
 	screen := statRow{Label: "screen-on"}
 	switch {
@@ -410,14 +390,9 @@ func statsHourRows(scope metricsScope, observed int, data *dashboardData) []stat
 		// screen was off. internal/metrics keeps that third state itself, in
 		// Backlight.Unwitnessed beside Lit, for the same reason.
 		screen.Marker = statUnrecorded
-		screen.Note = "no backlight reading covers this window"
 	default:
 		screen.Value = fmt.Sprintf("%.1fh", b.Lit.Hours())
 		screen.Avg = statsAvgHours(b.Lit, observed)
-		screen.Note = "store-wide: the presence sources carry no path and attribute to no project"
-		if !scope.filtering() {
-			screen.Note = "the backlight's own lit hours, wherever they fall"
-		}
 	}
 	return []statRow{presenceRow, screen}
 }
@@ -475,21 +450,18 @@ func statsObserved(sourceID string, observed int, reach map[string]bool) bool {
 // proof the source was being read — suppressing a figure that exists would be
 // the mirror image of the bug this panel is built around.
 //
-// An unrecorded row carries the marker and NOT a sentence, except in the one
-// case a reader could not otherwise diagnose: the window was observed and this
-// particular source was not. Where nothing at all was observed every row would
-// carry the same sentence, and nine copies of one finding is the prose this
-// command's terseness pass exists to keep out — renderComponentStats states it
-// once, beneath the table.
-func statCountRow(label string, n, observed int, sourceObserved bool, note string) statRow {
+// An unrecorded row carries the marker and nothing else. It used to add a
+// sentence in the one case a reader could not otherwise diagnose — the window
+// was observed and this particular source was not — but that sentence lived
+// in the per-row commentary column this task removes (see this file's own
+// doc comment); the marker alone is now what every unrecorded row says, same
+// as when nothing in the window at all was observed. renderComponentStats
+// still states the whole-window case once, beneath the table.
+func statCountRow(label string, n, observed int, sourceObserved bool) statRow {
 	if n == 0 && !sourceObserved {
-		row := statRow{Label: label, Marker: statUnrecorded}
-		if observed > 0 {
-			row.Note = "this source has never been harvested through this window"
-		}
-		return row
+		return statRow{Label: label, Marker: statUnrecorded}
 	}
-	row := statRow{Label: label, Value: fmt.Sprintf("%d", n), Note: note}
+	row := statRow{Label: label, Value: fmt.Sprintf("%d", n)}
 	if observed > 0 {
 		row.Avg = fmt.Sprintf("%.2f/day", float64(n)/float64(observed))
 	}
@@ -513,10 +485,10 @@ const (
 )
 
 // statColumnWidths measures the value and average columns from the rows
-// actually being printed. A row's Marker (statUnrecorded / statNotMeasured)
-// is excluded from the measurement — it is rendered across both columns plus
-// their separator, per writeStatRows, and the floors already leave that
-// combined span room for either word.
+// actually being printed. A row's Marker (statUnrecorded) is excluded from
+// the measurement — it is rendered across both columns plus their separator,
+// per writeStatRows, and the floors already leave that combined span room for
+// the word.
 func statColumnWidths(rows []statRow) (value, avg int) {
 	value, avg = statMinValueWidth, statMinAvgWidth
 	for _, r := range rows {
@@ -543,16 +515,20 @@ var (
 	statValueRGB  = RGB{R: 0x60, G: 0xc0, B: 0xa0}
 )
 
-// writeStatRows builds each line in a buffer so the column padding on a row
-// with no note can be trimmed back off. The padding has to be WRITTEN — it is
-// what puts the next column in the same place on every row — but a line ENDING
-// in it leaves trailing whitespace in every captured run, which a reader
-// cannot see and a diff of two captures can, so it is applied and then cut.
+// writeStatRows builds each line in a buffer so the column padding can be
+// trimmed back off. The padding has to be WRITTEN — it is what puts the next
+// column in the same place on every row — but a line ENDING in it leaves
+// trailing whitespace in every captured run, which a reader cannot see and a
+// diff of two captures can, so it is applied and then cut. Every row ends in
+// the average column now that no per-row note can follow it (that column
+// used to sit here — see this file's own doc comment for why it is gone),
+// but a row whose Avg is empty (no per-day figure applies) still pads out to
+// the column's width, so the trim still has work to do on every run.
 //
-// Trimming the built line rather than the note is what keeps that correct
-// under color: a painted value ends in an escape sequence, and a rule phrased
-// as "skip the padding when there is no note" would have to know whether it
-// had painted. This does not.
+// Trimming the built line rather than tracking whether anything was painted
+// is what keeps that correct under color: a painted value ends in an escape
+// sequence, not a space, so a rule that stopped at the last non-space rune
+// would have to know it had painted. This does not.
 //
 // The value and average columns are separated by an explicit space rather
 // than relying on padLeft's own leading padding to provide the gap: a live
@@ -575,9 +551,6 @@ func writeStatRows(out io.Writer, cc colorCapability, rows []statRow) {
 				value = cc.Paint(statValueRGB) + value + cc.Reset()
 			}
 			fmt.Fprintf(&line, "%s %s", value, padLeft(r.Avg, avgWidth))
-		}
-		if r.Note != "" {
-			fmt.Fprintf(&line, "  %s", r.Note)
 		}
 		fmt.Fprintln(out, strings.TrimRight(line.String(), " "))
 	}
