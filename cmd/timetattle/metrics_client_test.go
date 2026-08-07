@@ -87,7 +87,7 @@ func noConfig(t *testing.T) string {
 // appear too — a roll-up that replaced the detail would answer a different
 // question from the one asked.
 func TestMetricsRollsAClientUpAcrossItsProjects(t *testing.T) {
-	out := runMetrics(t, "-store", seedAClientAcrossManyProjects(t), "-config", noConfig(t))
+	out := runMetrics(t, "-store", seedAClientAcrossManyProjects(t), "-config", noConfig(t), "-all")
 
 	if !strings.Contains(out, "ENGAGED, per client") {
 		t.Errorf("the report has no client roll-up at all:\n%s", out)
@@ -169,7 +169,7 @@ func rowNames(report string) map[string]bool {
 // metrics is to see what share of a real day it took.
 func TestFilteringSelectsRowsWithoutChangingAnyFigureInThem(t *testing.T) {
 	path := seedAClientAcrossManyProjects(t)
-	whole := runMetrics(t, "-store", path, "-config", noConfig(t))
+	whole := runMetrics(t, "-store", path, "-config", noConfig(t), "-all")
 	one := runMetrics(t, "-store", path, "-config", noConfig(t), "-client", "atelier")
 
 	presence := func(report string) string {
@@ -235,7 +235,7 @@ func TestFilteringToSomethingWithNoEvidenceSaysSoRatherThanPrintingZeroes(t *tes
 // and outside the midnight instant, and that is the whole difference.
 func TestABareDateOnToCoversTheWholeOfThatDay(t *testing.T) {
 	out := runMetrics(t, "-store", seedAClientAcrossManyProjects(t), "-config", noConfig(t),
-		"-from", "2026-07-28", "-to", "2026-07-28")
+		"-from", "2026-07-28", "-to", "2026-07-28", "-all")
 
 	if strings.Contains(out, "nothing was recorded") {
 		t.Errorf("-from 2026-07-28 -to 2026-07-28 found nothing, so -to still means midnight "+
@@ -252,7 +252,7 @@ func TestABareDateOnToCoversTheWholeOfThatDay(t *testing.T) {
 // they were precise about.
 func TestAnExplicitInstantOnToIsStillThatInstant(t *testing.T) {
 	out := runMetrics(t, "-store", seedAClientAcrossManyProjects(t), "-config", noConfig(t),
-		"-from", "2026-07-28T00:00:00Z", "-to", "2026-07-28T00:00:00Z")
+		"-from", "2026-07-28T00:00:00Z", "-to", "2026-07-28T00:00:00Z", "-all")
 
 	if !strings.Contains(out, "nothing was recorded") {
 		t.Errorf("-to with an explicit midnight instant was widened to the end of the day; a "+

@@ -90,7 +90,7 @@ func runMetrics(t *testing.T, args ...string) string {
 // The command reports both normalisations side by side, so a reader does not
 // have to know which one a single column would have been.
 func TestMetricsReportsBothNormalisations(t *testing.T) {
-	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
+	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"), "-all")
 
 	for _, want := range []string{"absolute", "allocated", "ENGAGED", "PRESENCE", "Holiday Campaign", "Recruiting Site"} {
 		if !strings.Contains(out, want) {
@@ -103,7 +103,7 @@ func TestMetricsReportsBothNormalisations(t *testing.T) {
 // inference wearing the clothes of a measurement, so the report can never print
 // one without saying how much of it was observed.
 func TestMetricsNeverPrintsAnEngagedTotalWithoutItsMargin(t *testing.T) {
-	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
+	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"), "-all")
 
 	if !strings.Contains(out, "inferred by the clustering") {
 		t.Errorf("the report does not say how much of presence was inferred:\n%s", out)
@@ -123,7 +123,7 @@ func TestMetricsNeverPrintsAnEngagedTotalWithoutItsMargin(t *testing.T) {
 // printed as separate figures with separate advice, because one is fixed by
 // registering a directory and the other can never be.
 func TestMetricsSeparatesTheTwoKindsOfUnattributedPresence(t *testing.T) {
-	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
+	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"), "-all")
 
 	for _, want := range []string{
 		"UNATTRIBUTED PRESENCE",
@@ -147,7 +147,7 @@ func TestMetricsSeparatesTheTwoKindsOfUnattributedPresence(t *testing.T) {
 // line now says which question it cannot answer, and names the command that
 // can, rather than asserting an action that fails every time it is followed.
 func TestMetricsDoesNotClaimUnattributedPathsAreAllRegisterable(t *testing.T) {
-	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
+	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"), "-all")
 
 	if strings.Contains(out, "ACTIONABLE") {
 		t.Errorf("metrics still calls every unattributed path actionable, which it cannot "+
@@ -162,7 +162,7 @@ func TestMetricsDoesNotClaimUnattributedPathsAreAllRegisterable(t *testing.T) {
 // Criterion kHo at the command: the distribution is printed alongside the
 // total, not instead of it and not only on request.
 func TestMetricsPrintsTheSittingDistributionAlongsideTheTotal(t *testing.T) {
-	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
+	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"), "-all")
 
 	if !strings.Contains(out, "sitting lengths") {
 		t.Errorf("the report has no length distribution:\n%s", out)
@@ -177,7 +177,7 @@ func TestMetricsPrintsTheSittingDistributionAlongsideTheTotal(t *testing.T) {
 // of the codebase runs on, at the one place a user meets it.
 func TestMetricsSaysNothingWasRecordedRatherThanReportingZero(t *testing.T) {
 	out := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"),
-		"-from", "2020-01-01", "-to", "2020-01-02")
+		"-from", "2020-01-01", "-to", "2020-01-02", "-all")
 
 	if !strings.Contains(out, "nothing was recorded") {
 		t.Errorf("a span with no observations does not say so:\n%s", out)
@@ -195,7 +195,7 @@ func TestMetricsDoesNotWriteToTheStore(t *testing.T) {
 	before := query[int](t, path, "SELECT COUNT(*) FROM event")
 	sessionsBefore := query[int](t, path, "SELECT COUNT(*) FROM derived_session")
 
-	runMetrics(t, "-store", path, "-config", filepath.Join(t.TempDir(), "none.json"))
+	runMetrics(t, "-store", path, "-config", filepath.Join(t.TempDir(), "none.json"), "-all")
 
 	if after := query[int](t, path, "SELECT COUNT(*) FROM event"); after != before {
 		t.Errorf("event went from %d rows to %d", before, after)
@@ -232,7 +232,7 @@ func TestMetricsBoundariesUseTheSharedParser(t *testing.T) {
 func TestTheMetricsTableFitsAnEightyColumnTerminal(t *testing.T) {
 	var out bytes.Buffer
 	if err := metricsTo(atWidth{&out, 80}, []string{"-store", seedTwoProjects(t),
-		"-config", filepath.Join(t.TempDir(), "none.json")}); err != nil {
+		"-config", filepath.Join(t.TempDir(), "none.json"), "-all"}); err != nil {
 		t.Fatalf("metrics: %v", err)
 	}
 	got := out.String()
@@ -262,7 +262,7 @@ func TestTheMetricsTableFitsAnEightyColumnTerminal(t *testing.T) {
 func TestTheAbsenceFiguresWrapRatherThanLoseACount(t *testing.T) {
 	var out bytes.Buffer
 	if err := metricsTo(atWidth{&out, 80}, []string{"-store", seedTwoProjects(t),
-		"-config", filepath.Join(t.TempDir(), "none.json")}); err != nil {
+		"-config", filepath.Join(t.TempDir(), "none.json"), "-all"}); err != nil {
 		t.Fatalf("metrics: %v", err)
 	}
 	got := out.String()
@@ -275,7 +275,7 @@ func TestTheAbsenceFiguresWrapRatherThanLoseACount(t *testing.T) {
 }
 
 func TestMetricsIsNeverShortenedIntoAPipe(t *testing.T) {
-	got := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
+	got := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"), "-all")
 	if strings.Contains(got, "…") {
 		t.Errorf("piped output was truncated:\n%s", got)
 	}
@@ -290,7 +290,7 @@ func TestTheWeakColumnStandsBesideEveryProjectsAbsoluteTotal(t *testing.T) {
 	// reviewSeed builds a store whose every observation is a file modification
 	// time, which is exactly the shape the 88 surviving project-days have.
 	path, cfg := reviewSeed(t, []string{"2026-07-12"}, 9, 14)
-	got := runMetrics(t, "-store", path, "-config", cfg)
+	got := runMetrics(t, "-store", path, "-config", cfg, "-all")
 	t.Logf("report:\n%s", got)
 
 	var row string
@@ -320,7 +320,7 @@ func TestTheWeakColumnStandsBesideEveryProjectsAbsoluteTotal(t *testing.T) {
 // each be printed with a number: folding the third into either neighbour is the
 // distinction this project has shipped wrongly three times.
 func TestMetricsNamesAllThreeThingsEngagedTimeCanRestOn(t *testing.T) {
-	got := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"))
+	got := runMetrics(t, "-store", seedTwoProjects(t), "-config", filepath.Join(t.TempDir(), "none.json"), "-all")
 	flat := strings.Join(strings.Fields(got), " ")
 	// The three are named as three labelled figures rather than in a paragraph.
 	// What this test guards is that none of them is folded into a neighbour —

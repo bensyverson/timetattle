@@ -85,7 +85,7 @@ func seedThreeWorkingDays(t *testing.T) string {
 func runSeries(t *testing.T, path string, args ...string) string {
 	t.Helper()
 	base := []string{"-store", path, "-config", filepath.Join(t.TempDir(), "none.json"),
-		"-timezone", "UTC", "-from", "2026-07-19T05:00:00Z", "-to", "2026-07-23T05:00:00Z"}
+		"-timezone", "UTC", "-from", "2026-07-19T05:00:00Z", "-to", "2026-07-23T05:00:00Z", "-all"}
 	return runMetrics(t, append(base, args...)...)
 }
 
@@ -381,7 +381,7 @@ func TestTheCSVRendersPeriodEndpointsInTheCalendarsOwnZone(t *testing.T) {
 	out := runMetrics(t, "-store", seedThreeWorkingDays(t),
 		"-config", filepath.Join(t.TempDir(), "none.json"),
 		"-timezone", "America/Chicago", "-by", "day", "-csv",
-		"-from", "2026-07-19T05:00:00Z", "-to", "2026-07-23T05:00:00Z")
+		"-from", "2026-07-19T05:00:00Z", "-to", "2026-07-23T05:00:00Z", "-all")
 
 	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
 	if err != nil {

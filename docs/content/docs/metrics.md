@@ -53,12 +53,40 @@ ENGAGED, per project                          (six of 38 rows shown)
 ```
 
 The `(six of 38 rows shown)` note is this page's, not the command's: the sum row
-is over all 38 and does not add up from the six above it.
+is over all 38 and does not add up from the six above it. The report above is
+also this page's: it was captured with `-all`, which the rest of this section
+explains.
 
-Scope a run with `-from` and `-to`, narrow it to one client or one project with
-`-client` and `-project`, and override any clustering parameter for that run
-only with `-gap`, `-lead-in`, `-tail-out`, `-presence-sources`,
+Time-scope a run with `-from` and `-to`, narrow it to one client or one
+project with `-client` and `-project`, and override any clustering parameter
+for that run only with `-gap`, `-lead-in`, `-tail-out`, `-presence-sources`,
 `-ignore-sources` and `-exclude`. Nothing writes the configuration back.
+
+## Default scope: the working directory
+
+Run with no flags at all, `metrics` scopes to wherever it is run from, resolved
+through the registry the same way [`timetattle register`](registry.md) blesses
+a directory and the bare `timetattle` command reads one:
+
+- Inside a registered project — or any subdirectory of one — it reports only
+  that project.
+- Inside a directory that is itself unregistered but sits above one or more
+  registered projects that all name the **same client**, it reports that
+  client's projects, and only them. Client identity here is the markers'
+  `client` field, not anything about the directory's own name; two or more
+  clients found beneath it is refused rather than guessed at.
+- Anywhere else, it refuses rather than silently reporting everything:
+
+  ```console
+  $ cd ~ && timetattle metrics
+  timetattle metrics: /Users/you is not registered, and nothing under it is
+  either — `timetattle register` blesses it, or pass -all to report every
+  client and project
+  ```
+
+`-all` restores the old, unscoped behaviour: every client and project, from
+any directory. `-client` and `-project` still narrow the report exactly as
+before; giving either one bypasses directory scoping entirely; so does `-all`.
 
 **A bare date on `-to` means the end of that day.** `-to` takes an instant and
 the span is inclusive at both ends, so `-to 2026-08-03` once meant midnight that

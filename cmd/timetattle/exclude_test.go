@@ -83,8 +83,10 @@ func excludeSessionize(t *testing.T, path string, args ...string) string {
 func excludeMetrics(t *testing.T, path string, args ...string) string {
 	t.Helper()
 	var out bytes.Buffer
+	// -all: this helper's callers want the whole report, not whatever project
+	// the test binary's own working directory happens to resolve to.
 	if err := metricsTo(&out, append([]string{"-store", path, "-config",
-		filepath.Join(t.TempDir(), "absent.json")}, args...)); err != nil {
+		filepath.Join(t.TempDir(), "absent.json"), "-all"}, args...)); err != nil {
 		t.Fatalf("metrics: %v", err)
 	}
 	return out.String()
@@ -149,7 +151,7 @@ func TestTheExcludeFlagOverridesTheFileWithoutWritingIt(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := metricsTo(&out, []string{"-store", path, "-config", cfg,
-		"-exclude", "*.log.bz2"}); err != nil {
+		"-exclude", "*.log.bz2", "-all"}); err != nil {
 		t.Fatalf("metrics: %v", err)
 	}
 	if strings.Contains(out.String(), "logproject") {

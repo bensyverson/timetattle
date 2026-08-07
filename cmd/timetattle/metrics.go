@@ -57,6 +57,9 @@ never double-counted, and is the capacity denominator. Parameters come from
 	to := fs.String("to", "", "latest instant to consider; a bare date means the END of that day")
 	client := fs.String("client", "", "report only this client, and only their projects")
 	project := fs.String("project", "", "report only this project")
+	all := fs.Bool("all", false, "report every client and project, ignoring the working directory's scope")
+	indexPath := fs.String("index", "",
+		"registry index to resolve the working directory's scope against (default: ~/.timetattle/registered-directories.json)")
 	by := fs.String("by", "", "cut the span into a series of periods: day, week, month or span")
 	asCSV := fs.Bool("csv", false, "write the series as CSV instead of a report, for another program to read")
 	dayStart := fs.String("day-start", "", "wall clock a working day begins at, as 05:00 (default: from the config file)")
@@ -154,6 +157,22 @@ never double-counted, and is the capacity denominator. Parameters come from
 			return err
 		}
 
+		scope := metricsScope{Client: *client, Project: *project}
+		// DEFAULT SCOPE IS THE WORKING DIRECTORY, resolved through the registry —
+		// not applied when the reader already narrowed the report explicitly with
+		// -client or -project, and not applied at all under -all. An unregistered,
+		// unrelated directory refuses rather than silently reporting everything;
+		// see resolveWorkingScope. Resolved here, before the store is even opened,
+		// so that refusal costs nothing: it needs no event, and this command's
+		// hot loop is the clustering below, not the registry.
+		if !*all && !set["client"] && !set["project"] {
+			ws, err := workingDirectoryScope(*indexPath)
+			if err != nil {
+				return err
+			}
+			scope.Client, scope.Project = ws.Client, ws.Project
+		}
+
 		// Read-only: this command has no business appearing in the store's own
 		// history, and a check that CREATED or MIGRATED the database would report
 		// on a schema no harvest had ever run against.
@@ -206,7 +225,6 @@ never double-counted, and is the capacity denominator. Parameters come from
 		if err != nil {
 			return err
 		}
-		scope := metricsScope{Client: *client, Project: *project}
 		rows, err := seriesOf(report, cal, unit, sessions.Window{From: filter.From, To: filter.To}, log)
 		if err != nil {
 			return err
