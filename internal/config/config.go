@@ -41,10 +41,12 @@
 // # Adding a section
 //
 // Config is a struct of named sections, and a new one is a new field. Client
-// contract values (value, period, expected hours, nominal rate, kind) will
-// arrive as a "clients" section and need nothing here to change — which is why
-// the durations are their own type rather than a bare int64 of seconds: the
-// same Duration reads a retainer period as reads an idle gap.
+// contract values arrived exactly that way and needed nothing here to change:
+// they are the "engagements" section (engagements.go), split into clients and
+// projects because this tool scopes a report to either one. That section is
+// also why the durations are their own type rather than a bare int64 of
+// seconds — the same discipline that refuses a bare 900 for a gap is what
+// refuses a bare number for a contract's start date.
 package config
 
 import (
@@ -91,6 +93,13 @@ type Config struct {
 	// pass.md. Absent by default: a machine with no config maps nothing,
 	// which ResolveReferenceProject distinguishes from every other failure.
 	ReferenceProjects map[string]string `json:"reference_projects"`
+	// Engagements is what is owed and by whom: per client and per project, an
+	// hourly rate with a budget of hours per period, or a fixed contract total
+	// with the hours it was priced against. THIS IS THE ONE SECTION THAT HOLDS
+	// MONEY. It is absent by default and the tool works entirely without it;
+	// see engagements.go for the shapes and why an entry may declare only one
+	// of them.
+	Engagements Engagements `json:"engagements"`
 }
 
 // Sessions parameterises how observations are clustered into sittings.
@@ -324,7 +333,10 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("reference_projects[%q] is %q, which is not an absolute path", pseudonym, real)
 		}
 	}
-	return nil
+	// An engagement half-stated, or stated twice over, is money that cannot be
+	// reported honestly. It fails here rather than at the one section that
+	// would have had to guess — see engagements.go.
+	return c.Engagements.validate()
 }
 
 // Duration is a time.Duration written the way a person writes one.
