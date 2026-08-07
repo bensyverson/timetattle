@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/bensyverson/timetattle/internal/config"
+	"github.com/bensyverson/timetattle/internal/gitlog"
 	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/sessions"
@@ -852,6 +853,64 @@ func seedSingleEventStore(t *testing.T, anchor time.Time) string {
 		t.Fatalf("finish the seed run: %v", err)
 	}
 	return path
+}
+
+// seedLargeCommitStore opens a fresh store and writes one commit event
+// carrying 128,592 insertions — the SPEC's own pinned humanization example
+// (job yrAho) — so a CLI-level test can prove -exact actually reaches
+// Component Stats' render path, rather than trusting dashboard_stats_test.go's
+// direct dashboardData.Exact tests alone to cover the flag plumbing itself.
+func seedLargeCommitStore(t *testing.T, anchor time.Time) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "timetattle.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open a store to seed: %v", err)
+	}
+	defer st.Close()
+
+	e := source.NewPoint(anchor, source.Identity{}, gitlog.CommitsID)
+	e.Locator = "/w/repo"
+	e.Cause = source.CauseUserAction
+	e.State = gitlog.Stat{FilesChanged: 1, Insertions: 128592, Deletions: 0}.String()
+
+	ctx := context.Background()
+	run, err := st.BeginRun(ctx, store.RunSpec{SourceID: gitlog.CommitsID, Input: "/tmp/seed"})
+	if err != nil {
+		t.Fatalf("begin a run: %v", err)
+	}
+	if _, err := run.Write(ctx, []source.Event{e}); err != nil {
+		t.Fatalf("write the seed event: %v", err)
+	}
+	if err := run.Finish(ctx); err != nil {
+		t.Fatalf("finish the seed run: %v", err)
+	}
+	return path
+}
+
+// CRITERION eCg/Auy, THE FLAG-PLUMBING HALF. dashboard_stats_test.go's own
+// tests exercise the humanization rules directly against dashboardData.Exact;
+// this is the one test proving -exact — a dashboardCmd flag — actually sets
+// that field on a real CLI run, the same seam -detailed reaches
+// renderDashboard through (see dashboardCmd's RunE).
+func TestDashboardExactFlagRestoresRawFiguresInComponentStats(t *testing.T) {
+	storePath := seedLargeCommitStore(t, time.Now().Add(-time.Hour))
+
+	humanized := runDashboard(t, "-store", storePath, "-config", noConfig(t), "-all", "-days", "7")
+	if row := lineWith(t, humanized, "lines +"); !strings.Contains(row, "128.6k") {
+		t.Errorf("a bare run reads %q, want the humanized 128.6k", strings.TrimSpace(row))
+	}
+	if strings.Contains(lineWith(t, humanized, "lines +"), "128592") {
+		t.Errorf("a bare run still carries the raw 128592, want it abbreviated by default")
+	}
+
+	exact := runDashboard(t, "-store", storePath, "-config", noConfig(t), "-all", "-days", "7", "-exact")
+	if row := lineWith(t, exact, "lines +"); !strings.Contains(row, "128592") {
+		t.Errorf("-exact reads %q, want the raw untruncated 128592", strings.TrimSpace(row))
+	}
+	if strings.Contains(lineWith(t, exact, "lines +"), "128.6k") {
+		t.Errorf("-exact still reads the abbreviated 128.6k, want the raw figure restored")
+	}
 }
 
 func init() {

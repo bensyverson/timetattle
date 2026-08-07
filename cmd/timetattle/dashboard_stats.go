@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -351,7 +352,7 @@ func statRows(ctx context.Context, scope metricsScope, cal sessions.Calendar, ob
 	rows = append(rows, statsHourRows(scope, observed, data)...)
 
 	count := func(label string, n int, sourceID string) statRow {
-		return statCountRow(label, n, observed, statsObserved(sourceID, observed, reach))
+		return statCountRow(label, n, observed, statsObserved(sourceID, observed, reach), data.Exact)
 	}
 	rows = append(rows,
 		count("commits", t.commits, gitlog.CommitsID),
@@ -493,15 +494,114 @@ func statsObserved(sourceID string, observed int, reach map[string]bool) bool {
 // doc comment); the marker alone is now what every unrecorded row says, same
 // as when nothing in the window at all was observed. renderComponentStats
 // still states the whole-window case once, beneath the table.
-func statCountRow(label string, n, observed int, sourceObserved bool) statRow {
+func statCountRow(label string, n, observed int, sourceObserved bool, exact bool) statRow {
 	if n == 0 && !sourceObserved {
 		return statRow{Label: label, Marker: statUnrecorded}
 	}
-	row := statRow{Label: label, Value: fmt.Sprintf("%d", n)}
+	row := statRow{Label: label, Value: statHumanizeValue(int64(n), exact)}
 	if observed > 0 {
-		row.Avg = fmt.Sprintf("%.2f/day", float64(n)/float64(observed))
+		row.Avg = statHumanizeAvg(float64(n)/float64(observed), exact)
 	}
 	return row
+}
+
+// statHumanizeThreshold is the smallest count or per-day rate this panel
+// abbreviates. Ben's original request (job yrAho) named 10,000; he revised it
+// mid-task to 1,000, and this is that revised value.
+//
+// 1,000 is also exactly where the k suffix's own scale starts, so
+// "humanize" and "abbreviate" collapse into the same decision rather than
+// two thresholds that could drift apart — there is no band of four-digit
+// numbers (1,000-9,999) printed in full before abbreviation kicks in, the
+// gap a 10,000 threshold would have left. A reader never sees "9999" beside
+// "10.0k" on adjacent runs of the same panel as the underlying count crosses
+// a boundary that has nothing to do with where the suffix itself starts.
+const statHumanizeThreshold = 1000
+
+// statHumanizeValue renders n as today's plain integer when exact is
+// requested or n is below the threshold — unchanged from before this task —
+// and otherwise abbreviates it via humanizeMagnitude: one decimal digit and
+// a k/M/B suffix, ROUNDED rather than truncated (128592 -> "128.6k", the
+// SPEC's own pinned example; never "128.5k", which is what truncating the
+// third significant digit would give).
+func statHumanizeValue(n int64, exact bool) string {
+	if exact || n < statHumanizeThreshold {
+		return fmt.Sprintf("%d", n)
+	}
+	return humanizeMagnitude(float64(n))
+}
+
+// statHumanizeAvg is statHumanizeValue's twin for the per-day average
+// column, keeping today's two-decimal "/day" form below the threshold (or
+// under -exact) and switching to humanizeMagnitude's form, still suffixed
+// "/day", at or above it.
+//
+// Judged on the average's OWN magnitude, independently of its row's count —
+// a huge total spread over many observed days can average out to a small
+// per-day rate that stays exact right beside an abbreviated total, and
+// that is correct: the two columns answer different questions and one
+// crossing the threshold says nothing about the other. The reverse can
+// never happen (an average abbreviated while its own row's count is not),
+// since a per-day average can never exceed the total it is divided from —
+// see statsAvgHours' sibling row for the one place in this panel a bigger
+// number could otherwise sit next to a smaller one's abbreviation.
+func statHumanizeAvg(avg float64, exact bool) string {
+	if exact || avg < statHumanizeThreshold {
+		return fmt.Sprintf("%.2f/day", avg)
+	}
+	return humanizeMagnitude(avg) + "/day"
+}
+
+// humanizeTiers is ascending by scale (k, M, B) — see humanizeMagnitude for
+// why the order matters (the tier is stepped UP from the smallest one that
+// applies, to catch a rounding bump across a boundary).
+var humanizeTiers = []struct {
+	scale  float64
+	suffix string
+}{
+	{1e3, "k"},
+	{1e6, "M"},
+	{1e9, "B"},
+}
+
+// humanizeMagnitude renders x with exactly one decimal digit and a k/M/B
+// suffix, ROUNDED to that decimal — never truncated — and ALWAYS keeping the
+// trailing decimal even when it is zero: Ben's own phrasing for the revision
+// was "always one trailing decimal", so 46,984,830 renders "47.0M", never
+// "47M" — dropping the decimal on a value that happens to round evenly would
+// make the same panel print one figure with a decimal and its neighbor
+// without, for a reason no reader could see in the number itself.
+//
+// Rounding can carry a value INTO the next tier: 999,951 divided by 1,000 is
+// 999.951, which rounds to 1000.0 and would print "1000.0k" — the
+// four-digit-plus-suffix collision the whole threshold exists to avoid. This
+// re-checks the rounded value after each tier and steps up rather than
+// trusting the raw magnitude to pick the final tier in advance.
+func humanizeMagnitude(x float64) string {
+	tier := -1
+	for i, t := range humanizeTiers {
+		if math.Abs(x) >= t.scale {
+			tier = i
+		}
+	}
+	if tier == -1 {
+		return fmt.Sprintf("%.1f", round1(x))
+	}
+	for {
+		t := humanizeTiers[tier]
+		scaled := round1(x / t.scale)
+		if math.Abs(scaled) < 1000 || tier == len(humanizeTiers)-1 {
+			return fmt.Sprintf("%.1f%s", scaled, t.suffix)
+		}
+		tier++
+	}
+}
+
+// round1 rounds to one decimal place, half away from zero — math.Round's own
+// rule — which is what makes this ROUND rather than TRUNCATE:
+// 128592.0/1000 = 128.592, and round1 returns 128.6, never 128.5.
+func round1(x float64) float64 {
+	return math.Round(x*10) / 10
 }
 
 // statsUsageSourceID names the one source this panel's usage rows read.
@@ -538,11 +638,11 @@ func statsUsageRows(ctx context.Context, scope metricsScope, cal sessions.Calend
 	days := usageObservedDays(cal, scope, data)
 
 	return []statRow{
-		usageCountRow("claude sessions", int64(u.Sessions), days, u.Observations > 0),
-		usageCountRow("tokens out", u.Output.Total, days, u.Output.Records > 0),
-		usageCountRow("tokens in", u.Input.Total, days, u.Input.Records > 0),
-		usageCountRow("cache read", u.CacheRead.Total, days, u.CacheRead.Records > 0),
-		usageCountRow("cache written", u.CacheCreation.Total, days, u.CacheCreation.Records > 0),
+		usageCountRow("claude sessions", int64(u.Sessions), days, u.Observations > 0, data.Exact),
+		usageCountRow("tokens out", u.Output.Total, days, u.Output.Records > 0, data.Exact),
+		usageCountRow("tokens in", u.Input.Total, days, u.Input.Records > 0, data.Exact),
+		usageCountRow("cache read", u.CacheRead.Total, days, u.CacheRead.Records > 0, data.Exact),
+		usageCountRow("cache written", u.CacheCreation.Total, days, u.CacheCreation.Records > 0, data.Exact),
 	}, nil
 }
 
@@ -670,13 +770,13 @@ func usageObservedDays(cal sessions.Calendar, scope metricsScope, data *dashboar
 // this file's own doc comment above explains why that is the wrong question
 // for a figure that Store.Usage can already answer directly and more
 // narrowly.
-func usageCountRow(label string, n int64, days int, recorded bool) statRow {
+func usageCountRow(label string, n int64, days int, recorded bool, exact bool) statRow {
 	if !recorded {
 		return statRow{Label: label, Marker: statUnrecorded}
 	}
-	row := statRow{Label: label, Value: fmt.Sprintf("%d", n)}
+	row := statRow{Label: label, Value: statHumanizeValue(n, exact)}
 	if days > 0 {
-		row.Avg = fmt.Sprintf("%.2f/day", float64(n)/float64(days))
+		row.Avg = statHumanizeAvg(float64(n)/float64(days), exact)
 	}
 	return row
 }

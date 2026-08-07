@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"math"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -473,6 +475,19 @@ func TestComponentStatsLeavesNoTrailingWhitespace(t *testing.T) {
 // 2240021237.58/day", where 224002 and 1237.58/day (both real widths) ran
 // together with no separating space because the average happened to fill its
 // column exactly. This fixture reproduces both real figures.
+//
+// ALTERED by job yrAho, EXPLAINED RATHER THAN LEFT PASSING ON A STALE
+// PREMISE: this test's own two figures (224002 and 1237.58/day) are both
+// above yrAho's humanization threshold (1,000), so under yrAho's new
+// default they no longer print as raw digits at all — they print "224.0k"
+// and "1.2k/day", which is correct FOR the default and would make every
+// assertion below fail for a reason that has nothing to do with column
+// width. The bug this test exists to pin (kGFYV's live truncation and
+// collision) is a property of rendering the RAW figure in a narrow column,
+// which is now an -exact-only code path, so this test asks for -exact
+// (data.Exact = true) to keep exercising exactly the scenario it always
+// did. TestComponentStatsColumnWidthsFitBothHumanizedAndExactModes is this
+// task's own sibling coverage of the humanized-default case.
 func TestComponentStatsColumnsFitLiveWidthNumbersWithoutTruncationOrCollision(t *testing.T) {
 	cal := mustCalendar(t)
 	p := dashboardPeriodOf(365, cal, statsDay)
@@ -490,7 +505,9 @@ func TestComponentStatsColumnsFitLiveWidthNumbersWithoutTruncationOrCollision(t 
 	// widths: a six-digit count and a four-digit-plus-decimal average.
 	events := []source.Event{statsCommit(p.From.Add(time.Minute), gitlog.Stat{Insertions: 224002})}
 
-	out := renderStats(t, metricsScope{}, p, statsData(events, log))
+	data := statsData(events, log)
+	data.Exact = true
+	out := renderStats(t, metricsScope{}, p, data)
 
 	days := lineWith(t, out, "observed days")
 	if !strings.Contains(days, "181 of 365") {
@@ -572,6 +589,15 @@ func TestComponentStatsOmitsLossLineWhenNothingInTheWindowWasLost(t *testing.T) 
 // 223 to 1 on the live store — and a bug that folded them into one total
 // would still print A number, just the wrong one. Asserting each figure
 // individually is what catches that; asserting their sum would not.
+//
+// ALTERED by job yrAho, EXPLAINED RATHER THAN LEFT PASSING ON A STALE
+// PREMISE: three of these four figures (1100, 100_000_000, 200_000_000) are
+// above yrAho's humanization threshold and no longer print as raw digits by
+// default. This test's own point — that four figures of wildly different
+// magnitude are never folded into one total — needs the RAW digits to prove
+// (a summing bug can still produce a wrong number that happens to round to
+// a plausible-looking abbreviation at one decimal), so this asks for -exact
+// to keep the precision the assertions below actually rely on.
 func TestComponentStatsClaudeSessionsAndTokensRenderFromLiveUsage(t *testing.T) {
 	p := statsPeriod(t)
 	r1 := statsUsageEvent(t, p.From.Add(time.Hour), "u1", "sess-1", statsTokenFigures(3, 500, 100_000_000, 7))
@@ -583,6 +609,7 @@ func TestComponentStatsClaudeSessionsAndTokensRenderFromLiveUsage(t *testing.T) 
 	data := statsData([]source.Event{r1, r2}, collectedThroughout(p))
 	data.Store = st
 	data.Filter = store.Filter{From: p.From, To: p.To}
+	data.Exact = true
 
 	out := renderStats(t, metricsScope{}, p, data)
 	for _, c := range []struct{ label, want string }{
@@ -867,5 +894,268 @@ func attributeUsageProjects(t *testing.T, st *store.Store, client string, projec
 	})
 	if err != nil {
 		t.Fatalf("ResolveProjects: %v", err)
+	}
+}
+
+// Humanization: job yrAho. The threshold below was revised by Ben MID-TASK
+// from the brief's original 10,000 down to 1,000 — see statHumanizeThreshold's
+// own doc comment for the argument (1,000 is also exactly where the k suffix's
+// own scale starts, so there is no gap between the largest unabbreviated
+// figure and the smallest abbreviated one). Every fixture below uses 1,000.
+
+// CRITERION eCg, the abbreviation half: at or above the threshold, one
+// decimal digit and a k/M/B suffix, ROUNDED rather than truncated — 1259
+// rounds to 1.3k, not the 1.2k a truncation would give — and the suffix
+// keeps its trailing zero on a value that happens to round evenly (Ben's own
+// phrasing: 46984830 is "47.0M", never "47M").
+func TestStatHumanizeValueRoundsRatherThanTruncatesAtOrAboveTheThreshold(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{347, "347"},   // stays exact — well below the threshold
+		{999, "999"},   // stays exact — one below the threshold
+		{1000, "1.0k"}, // the threshold itself
+		{1259, "1.3k"}, // ROUNDS, not truncates: 1.259 -> 1.3, never 1.2
+		{2118, "2.1k"},
+		{12345, "12.3k"},
+		{128592, "128.6k"},  // the SPEC's own pinned example
+		{46984830, "47.0M"}, // Ben's own example — the trailing .0 is required
+		{12917913159, "12.9B"},
+	}
+	for _, c := range cases {
+		if got := statHumanizeValue(c.n, false); got != c.want {
+			t.Errorf("statHumanizeValue(%d, false) = %q, want %q", c.n, got, c.want)
+		}
+	}
+}
+
+// CRITERION eCg, the exact half: below the threshold, rendering is
+// unchanged — a plain integer, exactly what statCountRow always printed.
+func TestStatHumanizeValueStaysExactBelowTheThreshold(t *testing.T) {
+	for _, n := range []int64{0, 1, 347, 999} {
+		if got := statHumanizeValue(n, false); got != strconv.FormatInt(n, 10) {
+			t.Errorf("statHumanizeValue(%d, false) = %q, want the plain integer", n, got)
+		}
+	}
+}
+
+// CRITERION Auy: -exact restores the full figure even where the count would
+// otherwise be abbreviated.
+func TestStatHumanizeValueExactFlagRestoresTheRawFigureAboveTheThreshold(t *testing.T) {
+	for _, n := range []int64{1000, 128592, 46984830, 12917913159} {
+		if got := statHumanizeValue(n, true); got != strconv.FormatInt(n, 10) {
+			t.Errorf("statHumanizeValue(%d, true) = %q, want the untruncated raw figure %d", n, got, n)
+		}
+	}
+}
+
+// Rounding a value near a k/M/B boundary can carry it INTO the next tier —
+// 999,951 divided by 1,000 is 999.951, which rounds to 1000.0 and would print
+// the four-digit-plus-suffix collision "1000.0k" the threshold exists to
+// avoid — so the tier itself has to be re-picked after rounding, not decided
+// from the raw magnitude alone.
+func TestStatHumanizeValueBumpsATierWhenRoundingCrossesTheBoundary(t *testing.T) {
+	if got := statHumanizeValue(999_951, false); got != "1.0M" {
+		t.Errorf("statHumanizeValue(999951, false) = %q, want 1.0M — rounding 999.951k crosses into M", got)
+	}
+	if got := statHumanizeValue(999_999_951, false); got != "1.0B" {
+		t.Errorf("statHumanizeValue(999999951, false) = %q, want 1.0B — rounding crosses into B", got)
+	}
+}
+
+// statHumanizeAvg is statHumanizeValue's twin for the per-day average column,
+// keeping the "/day" suffix in both forms and judged on the average's OWN
+// magnitude — see statHumanizeAvg's own doc comment for why that is
+// independent of its row's count.
+func TestStatHumanizeAvgAppliesTheSameRulesAsValue(t *testing.T) {
+	cases := []struct {
+		avg  float64
+		want string
+	}{
+		{0.142857, "0.14/day"}, // below the threshold: today's two-decimal form, unchanged
+		{999, "999.00/day"},
+		{5591.83, "5.6k/day"}, // Ben's own live-capture example, "5.6k/day"
+		{18370.285714, "18.4k/day"},
+	}
+	for _, c := range cases {
+		if got := statHumanizeAvg(c.avg, false); got != c.want {
+			t.Errorf("statHumanizeAvg(%v, false) = %q, want %q", c.avg, got, c.want)
+		}
+	}
+	// -exact restores the two-decimal form even above the threshold.
+	if got := statHumanizeAvg(5591.83, true); got != "5591.83/day" {
+		t.Errorf("statHumanizeAvg(5591.83, true) = %q, want the raw two-decimal figure", got)
+	}
+}
+
+// CRITERION qAX, THE LOAD-BEARING AGREEMENT TEST. A display transform is not
+// exempt from this project's own "two figures nobody has subtracted" rule
+// (AGENTS.md) — parsing a humanized figure back must land within half of one
+// rounding step of the exact value it was derived from, for every tier
+// (including the below-threshold case, where the tolerance is zero: nothing
+// is rounded at all below the threshold).
+func TestStatHumanizeAgreesWithTheExactValueWithinRounding(t *testing.T) {
+	for _, n := range []int64{
+		0, 1, 347, 999, 1000, 1259, 2118, 12345, 128592, 999_951,
+		1_000_000, 1_234_567, 46_984_830, 999_999_951, 12_917_913_159,
+	} {
+		got := statHumanizeValue(n, false)
+		parsed, scale := parseHumanized(t, got)
+		exact := float64(n)
+		tolerance := scale * 0.05
+		if diff := math.Abs(parsed - exact); diff > tolerance {
+			t.Errorf("statHumanizeValue(%d) = %q parses back to %v (off by %v), want within %v of %v",
+				n, got, parsed, diff, tolerance, exact)
+		}
+	}
+}
+
+// parseHumanized parses a k/M/B-suffixed figure (or a plain integer, scale
+// 1) back to its magnitude, so a caller can check how far rounding was
+// allowed to move it from the exact value it renders.
+func parseHumanized(t *testing.T, s string) (value, scale float64) {
+	t.Helper()
+	scale = 1
+	numeric := s
+	switch s[len(s)-1:] {
+	case "k":
+		scale, numeric = 1e3, s[:len(s)-1]
+	case "M":
+		scale, numeric = 1e6, s[:len(s)-1]
+	case "B":
+		scale, numeric = 1e9, s[:len(s)-1]
+	}
+	v, err := strconv.ParseFloat(numeric, 64)
+	if err != nil {
+		t.Fatalf("parse %q back to a number: %v", s, err)
+	}
+	return v * scale, scale
+}
+
+// CRITERION eCg, THROUGH THE FULL PANEL. A single commit's own diff-stat
+// carries 128,592 insertions — the SPEC's own pinned example — over the
+// seven-day statsPeriod, fully observed: the row must read "128.6k" and its
+// average, 128592/7 = 18370.29, must read "18.4k/day". The commit COUNT
+// itself (1) stays exact regardless, on the same row's own label — this is
+// the row-vs-column distinction: each figure is judged on its own magnitude.
+func TestComponentStatsHumanizesCountsAndAveragesAtOrAboveTheThresholdByDefault(t *testing.T) {
+	p := statsPeriod(t)
+	at := p.From.Add(time.Hour)
+	events := []source.Event{statsCommit(at, gitlog.Stat{FilesChanged: 1, Insertions: 128592, Deletions: 0})}
+
+	out := renderStats(t, metricsScope{}, p, statsData(events, collectedThroughout(p)))
+
+	lines := lineWith(t, out, "lines +")
+	if !strings.Contains(lines, "128.6k") {
+		t.Errorf("lines + reads %q, want the abbreviated 128.6k", strings.TrimSpace(lines))
+	}
+	if !strings.Contains(lines, "18.4k/day") {
+		t.Errorf("lines + reads %q, want the abbreviated average 18.4k/day", strings.TrimSpace(lines))
+	}
+	if strings.Contains(lines, "128592") {
+		t.Errorf("lines + reads %q, still carries the raw figure though this is the default humanized run",
+			strings.TrimSpace(lines))
+	}
+
+	// The commit count on the SAME row's own label stays exact: 1 is nowhere
+	// near the threshold, and humanization is judged per figure, not per row.
+	commits := lineWith(t, out, "commits")
+	if !strings.Contains(commits, " 1 ") {
+		t.Errorf("commits reads %q, want the exact count 1 — well below the threshold", strings.TrimSpace(commits))
+	}
+}
+
+// CRITERION Auy, THROUGH THE FULL PANEL: -exact (data.Exact) restores every
+// raw figure in Component Stats, undoing exactly what the test above pins.
+func TestComponentStatsExactRestoresRawFiguresEverywhereInThePanel(t *testing.T) {
+	p := statsPeriod(t)
+	at := p.From.Add(time.Hour)
+	events := []source.Event{statsCommit(at, gitlog.Stat{FilesChanged: 1, Insertions: 128592, Deletions: 0})}
+
+	data := statsData(events, collectedThroughout(p))
+	data.Exact = true
+	out := renderStats(t, metricsScope{}, p, data)
+
+	lines := lineWith(t, out, "lines +")
+	if !strings.Contains(lines, "128592") {
+		t.Errorf("lines + reads %q, want the untruncated raw count 128592 under -exact", strings.TrimSpace(lines))
+	}
+	if strings.Contains(lines, "128.6k") {
+		t.Errorf("lines + reads %q, still abbreviated though -exact was requested", strings.TrimSpace(lines))
+	}
+	if !strings.Contains(lines, "18370.29/day") {
+		t.Errorf("lines + reads %q, want the raw two-decimal average 18370.29/day under -exact",
+			strings.TrimSpace(lines))
+	}
+}
+
+// Small counts (below the threshold) are unaffected by -exact, since there is
+// nothing for the flag to restore — statCountRow's own doc comment for the
+// "commits" row already prints them exactly, in both modes.
+func TestComponentStatsSmallCountsStayExactInBothModes(t *testing.T) {
+	p := statsPeriod(t)
+	at := p.From.Add(time.Hour)
+	events := []source.Event{statsCommit(at, gitlog.Stat{FilesChanged: 1, Insertions: 3, Deletions: 1})}
+
+	for _, exact := range []bool{false, true} {
+		data := statsData(events, collectedThroughout(p))
+		data.Exact = exact
+		out := renderStats(t, metricsScope{}, p, data)
+		if row := lineWith(t, out, "commits"); !strings.Contains(row, " 1 ") {
+			t.Errorf("exact=%v: commits reads %q, want the exact count 1", exact, strings.TrimSpace(row))
+		}
+	}
+}
+
+// CRITERION qAX's column-width half: the value and average columns are
+// content-sized (statColumnWidths/statLabelColumnWidth), and both rendering
+// modes must fit their own live widths without truncating a figure or
+// running two columns together with no separating space — the exact bug
+// TestComponentStatsColumnsFitLiveWidthNumbersWithoutTruncationOrCollision
+// already pins for the exact-only panel, reproduced here for BOTH modes with
+// this task's own live capture (12,917,913,159 cache reads).
+func TestComponentStatsColumnWidthsFitBothHumanizedAndExactModes(t *testing.T) {
+	p := statsPeriod(t)
+	r := statsUsageEvent(t, p.From.Add(time.Hour), "u1", "sess-1",
+		statsTokenFigures(46_984_830, 46_984_830, 12_917_913_159, 46_984_830))
+
+	st := openUsageStore(t)
+	harvestUsageEvents(t, st, []source.Event{r})
+
+	build := func(exact bool) string {
+		data := statsData([]source.Event{r}, collectedThroughout(p))
+		data.Store = st
+		data.Filter = store.Filter{From: p.From, To: p.To}
+		data.Exact = exact
+		return renderStats(t, metricsScope{}, p, data)
+	}
+
+	humanized, exact := build(false), build(true)
+
+	if row := lineWith(t, humanized, "cache read"); !strings.Contains(row, "12.9B") {
+		t.Errorf("cache read (humanized) reads %q, want 12.9B", strings.TrimSpace(row))
+	}
+	if row := lineWith(t, exact, "cache read"); !strings.Contains(row, "12917913159") {
+		t.Errorf("cache read (-exact) reads %q, want the untruncated 12917913159", strings.TrimSpace(row))
+	}
+
+	for _, out := range []string{humanized, exact} {
+		for line := range strings.SplitSeq(out, "\n") {
+			if line != strings.TrimRight(line, " ") {
+				t.Errorf("line %q ends in trailing whitespace", line)
+			}
+		}
+		// No two figures on the "cache read" row may run together with no
+		// separating space — the collision bug the live-width test above
+		// already pins for the exact panel; strings.Fields collapses any
+		// padding, so a collision changes the field count for the label's
+		// own two words plus its value and average.
+		row := lineWith(t, out, "cache read")
+		fields := strings.Fields(row)
+		if len(fields) != 4 {
+			t.Errorf("cache read row %q has %d whitespace-separated fields, want 4 (label's 2 words, value, "+
+				"average) — fewer means two figures ran together", row, len(fields))
+		}
 	}
 }

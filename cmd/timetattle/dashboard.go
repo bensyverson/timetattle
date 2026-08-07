@@ -71,6 +71,8 @@ both commands share.`,
 		"registry index to resolve the working directory's scope against (default: ~/.timetattle/registered-directories.json)")
 	detailed := fs.Bool("detailed", false,
 		"include sections too dense for every run, such as SOURCE FRESHNESS (omitted by default)")
+	exact := fs.Bool("exact", false,
+		"print full, non-humanized figures in Component Stats instead of the default k/M/B abbreviation")
 	cmd.RunE = func(*cobra.Command, []string) error {
 		set := flagsSet(fs)
 		if *days < 1 {
@@ -191,6 +193,7 @@ both commands share.`,
 			Report:    report,
 			ClientMap: cm,
 			Log:       log,
+			Exact:     *exact,
 		}
 		// CLAMPING HAPPENS ONCE, HERE, BEFORE ANY SECTION RENDERS — see
 		// clampPeriodToFirstObservation's own doc comment and dashboardPeriod's
@@ -280,6 +283,16 @@ type dashboardData struct {
 	// nothing, which is design principle 3 in the CLI overhaul plan stated
 	// as code rather than as a rule for someone to remember.
 	Log collectionLog
+	// Exact is -exact (job yrAho): print full, non-humanized figures rather
+	// than Component Stats' default k/M/B abbreviation. This is how a
+	// per-run flag reaches INSIDE a section's own render function without
+	// widening dashboardRenderFunc's signature — the same shared contract
+	// every section implements (see that type's own doc comment) — the way
+	// -detailed instead gates whether a section renders AT ALL, from
+	// renderDashboard, never from inside one. Read by dashboard_stats.go
+	// alone today; any other section is free to read it the same way rather
+	// than inventing a second per-run switch.
+	Exact bool
 }
 
 // dashboardPeriod is the reporting window: Days trailing WORKING days ending
