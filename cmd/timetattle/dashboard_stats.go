@@ -61,16 +61,15 @@ import (
 //     free-form payload internal/store would persist one in anyway. There is
 //     no column to count, ever, under this schema.
 //
-//   - CLAUDE SESSIONS and TOKENS/COST are pending the source-schema work under
-//     task 3jDIu, and return as real numeric rows when it lands. Today,
-//     internal/transcripts emits one Point per transcript RECORD with
-//     Identity.Document set to the record's uuid and Locator set to the
-//     record's own cwd — never the session file's own name, which is the
-//     session id — and reads only type, timestamp, cwd and uuid plus the
-//     message content needed to tell a human turn from a tool result; no
-//     usage figure is parsed and there is nowhere on the event to put one
-//     (State is part of the store's event_identity key, so a per-record
-//     number there would make every record its own identity).
+//   - CLAUDE SESSIONS and the four token figures were pending the
+//     source-schema work under task 3jDIu (job GcgVp) and are live rows now
+//     that it has landed: internal/usage's payload rides outside
+//     event_identity (see that package's own doc, and migration 0014), so
+//     the trap that used to block a per-record figure — State participating
+//     in identity — no longer applies. See statsUsageRows below for the five
+//     rows this reads out of Store.Usage, never summed into one "tokens"
+//     total (cache reads outweigh output tokens 223 to 1 on the corpus
+//     GcgVp measured — scripts/sessioncensus, 2026-08-07).
 //
 // What IS recorded, and is therefore still a live row: internal/gitlog puts a
 // diff-stat on every non-merge commit event's State (gitlog.Stat / ParseStat),
@@ -95,7 +94,10 @@ func renderComponentStats(ctx context.Context, out io.Writer, scope metricsScope
 	tally := tallyStats(scope, data)
 	reach := reachableSources(ctx, period, data)
 
-	rows := statRows(scope, observed, total, tally, reach, data)
+	rows, err := statRows(ctx, scope, cal, observed, total, tally, reach, data)
+	if err != nil {
+		return err
+	}
 	writeStatRows(out, cc, rows)
 
 	// The two things true of the whole table rather than of any one row, each
@@ -330,8 +332,18 @@ const statUnrecorded = "unrecorded"
 // statRows lays the panel out. The order is hours, then git, then files, then
 // jobs, then Claude — the coarsest figure first, and each source's rows
 // adjacent so a reader comparing two of them is not scanning across the panel.
-func statRows(scope metricsScope, observed, total int,
-	t statTally, reach map[string]bool, data *dashboardData) []statRow {
+//
+// The Claude group now ends in the five rows statsUsageRows reads out of
+// Store.Usage rather than data.Events — the one query in this whole panel
+// that reaches the store directly, for the reason reachableSources already
+// does: Store.Usage's own Observations/Records-vs-Total pairs already ARE the
+// three-state answer this file's own doc comment asks every row to give, and
+// re-deriving it from data.Events would be a second, possibly disagreeing
+// computation of the one thing Store.Usage exists to compute (the same
+// argument statsHourRows' own comment makes for reusing Report rather than
+// re-summing presence).
+func statRows(ctx context.Context, scope metricsScope, cal sessions.Calendar, observed, total int,
+	t statTally, reach map[string]bool, data *dashboardData) ([]statRow, error) {
 	rows := []statRow{{
 		Label: "observed days",
 		Value: fmt.Sprintf("%d of %d", observed, total),
@@ -352,7 +364,12 @@ func statRows(scope metricsScope, observed, total int,
 		count("claude records", t.records, transcripts.ID),
 		count("claude prompts", t.prompts, transcripts.ID),
 	)
-	return rows
+
+	usageRows, err := statsUsageRows(ctx, scope, cal, data)
+	if err != nil {
+		return nil, err
+	}
+	return append(rows, usageRows...), nil
 }
 
 // statsHourRows are the two duration rows, and both are REUSED from the report
@@ -377,13 +394,12 @@ func statsHourRows(scope metricsScope, observed int, data *dashboardData) []stat
 	// metrics.ReasonUnlocatable and can never be attributed to a project.
 	// Printing the store-wide figure under a project filter would attribute
 	// it; printing nothing would read as zero. This row used to say which of
-	// the two it was doing, in the commentary column this task removes — see
-	// this file's own doc comment, and job dGWPc's note, for the pushback:
-	// unlike this panel's other removed notes, that one changed how the
-	// figure should be read under a filtered scope, and nothing replaces it
-	// here.
+	// the two it was doing, in the commentary column dGWPc removed — job
+	// BwE29's pushback (c) flagged that the sentence's replacement, folding
+	// the caveat into the LABEL, was still missing and assigned it here; see
+	// statsScreenOnLabel below for where it now lives.
 	b := data.Report.Backlight
-	screen := statRow{Label: "screen-on"}
+	screen := statRow{Label: statsScreenOnLabel(scope)}
 	switch {
 	case b.Readings == 0:
 		// Zero lit hours out of zero readings is not an observation that the
@@ -395,6 +411,26 @@ func statsHourRows(scope metricsScope, observed int, data *dashboardData) []stat
 		screen.Avg = statsAvgHours(b.Lit, observed)
 	}
 	return []statRow{presenceRow, screen}
+}
+
+// statsScreenOnLabel folds job BwE29's pushback (c) into the row itself: the
+// backlight figure is store-wide always, so a reader under -project or
+// -client who sees a bare "screen-on" beside their own scope's other rows —
+// commits, files, presence, all genuinely theirs — has no reason in the row
+// to suspect this one is not. scope.filtering() covers both kinds of
+// narrowing identically, because the figure is unattributable to either one
+// identically (metrics.ReasonUnlocatable names no project AND no client).
+//
+// Under -all or an unfiltered scope there is nothing to disambiguate FROM —
+// the figure is store-wide and so is the reader's own view — so the plain
+// label stays, exactly as it always has (TestComponentStatsCallsScreenOnUnrecordedWithNoReadings
+// and every other unscoped test in this file's own suite still reads
+// "screen-on" verbatim).
+func statsScreenOnLabel(scope metricsScope) string {
+	if scope.filtering() {
+		return "screen-on, machine-wide"
+	}
+	return "screen-on"
 }
 
 // statsPresence is the scoped hours figure, taken out of the same report
@@ -468,21 +504,217 @@ func statCountRow(label string, n, observed int, sourceObserved bool) statRow {
 	return row
 }
 
-// Column widths. The label column is fixed, because the label set is fixed —
-// every run of this panel prints the same rows in the same order. The value
-// and average columns are floors, not fixed widths: format.go's own package
-// doc states the rule this panel violated on a live store ("A count clipped
-// to two digits is a wrong figure rather than a short one, so every table
-// below shrinks its label column and its padding before any figure is at
-// risk") — a fixed 9/11 truncated "181 of 365" to "181 of 3…", the divisor's
-// own value. statColumnWidths measures the actual rows below and widens past
-// the floor rather than ever clipping a number; the floors just keep an
-// ordinary, small-number run looking exactly as it always has.
+// statsUsageSourceID names the one source this panel's usage rows read.
+// Store.Usage's own Source filter defaults to every source that ever writes a
+// payload, which today is one source anyway (internal/usage's own doc), but
+// naming it here is how this panel says "Claude" rather than "whatever
+// happens to carry a payload" if a second source ever starts writing one.
+const statsUsageSourceID = transcripts.ID
+
+// statsUsageRows are the five rows Store.Usage answers: how many Claude
+// Code sessions touched the scope, and the four token figures, kept apart —
+// see internal/usage's own doc and store.Usage's own doc for why a summed
+// "tokens" total would be the cheapest figure (cache reads) wearing a
+// general name, 223 times over on the corpus GcgVp measured.
+//
+// Grouped at the end of the Claude rows (claude records, claude prompts)
+// rather than interleaved, for the same adjacency reason every other group
+// in statRows already keeps its source's rows together.
+//
+// Each row is gated by Store.Usage's OWN three-state signal — Observations
+// for sessions, a figure's own Records for a token row — never by
+// reachableSources/data.Log, which answers a different question (was a
+// harvest run recorded) than the one these rows need (did any record ever
+// carry a payload). The two can disagree in exactly the direction that
+// matters: a store with years of transcript harvests but only days of
+// payloads reads as "reached" by reachableSources and "unrecorded" by
+// Store.Usage, and Store.Usage's answer is the true one for a figure that did
+// not exist before migration 0014.
+func statsUsageRows(ctx context.Context, scope metricsScope, cal sessions.Calendar, data *dashboardData) ([]statRow, error) {
+	u, err := statsUsage(ctx, scope, data)
+	if err != nil {
+		return nil, err
+	}
+	days := usageObservedDays(cal, scope, data)
+
+	return []statRow{
+		usageCountRow("claude sessions", int64(u.Sessions), days, u.Observations > 0),
+		usageCountRow("tokens out", u.Output.Total, days, u.Output.Records > 0),
+		usageCountRow("tokens in", u.Input.Total, days, u.Input.Records > 0),
+		usageCountRow("cache read", u.CacheRead.Total, days, u.CacheRead.Records > 0),
+		usageCountRow("cache written", u.CacheCreation.Total, days, u.CacheCreation.Records > 0),
+	}, nil
+}
+
+// statsUsage asks the store, scoped exactly the way the rest of this panel
+// is: showsProject's own three cases (a project, a client, or neither),
+// spelled in terms of the one thing store.UsageFilter can select (one
+// project at a time) rather than a second scoping rule.
+//
+// data.Store == nil renders every usage row unrecorded rather than panicking
+// — the same guard reachableSources applies, and it is real in this file's
+// own tests (statsData builds a dashboardData with no store at all) even
+// though dashboardCmd always opens one.
+func statsUsage(ctx context.Context, scope metricsScope, data *dashboardData) (store.Usage, error) {
+	if data.Store == nil {
+		return store.Usage{}, nil
+	}
+	var out store.Usage
+	for _, f := range statsUsageFilters(scope, data) {
+		u, err := data.Store.Usage(ctx, f)
+		if err != nil {
+			return store.Usage{}, err
+		}
+		out.Observations += u.Observations
+		out.Sessions += u.Sessions
+		out.Input = addTokens(out.Input, u.Input)
+		out.Output = addTokens(out.Output, u.Output)
+		out.CacheRead = addTokens(out.CacheRead, u.CacheRead)
+		out.CacheCreation = addTokens(out.CacheCreation, u.CacheCreation)
+	}
+	return out, nil
+}
+
+// statsUsageFilters is one store.UsageFilter per project the scope names, or
+// one filter naming no project at all (the store's own "every project AND
+// the events attributed to none" total) when the scope is -project or
+// unfiltered.
+//
+// A -client scope has no counterpart field on store.UsageFilter, so it is
+// spelled here as one filter per project data.Report already lists under
+// that client and the results are ADDED — Observations, Sessions and every
+// Tokens pair. That is the same overshoot store.Usage.Sessions already
+// documents for a session touching two projects, one level up: a session
+// touching two of one client's projects was always going to be counted
+// twice by that rule, and a client scope choosing to hide the second
+// counting would need a rule for which project owns the session that
+// nothing here has evidence for — the same argument store.Usage's own doc
+// makes for not partitioning by project, extended to a client's basket of
+// projects.
+func statsUsageFilters(scope metricsScope, data *dashboardData) []store.UsageFilter {
+	base := store.UsageFilter{From: data.Filter.From, To: data.Filter.To, Source: statsUsageSourceID}
+	switch {
+	case scope.Project != "":
+		base.Project = scope.Project
+		return []store.UsageFilter{base}
+	case scope.Client != "":
+		var filters []store.UsageFilter
+		for _, c := range data.Report.Clients {
+			if c.Name != scope.Client {
+				continue
+			}
+			for _, p := range c.Projects {
+				f := base
+				f.Project = p
+				filters = append(filters, f)
+			}
+		}
+		return filters
+	default:
+		return []store.UsageFilter{base}
+	}
+}
+
+// addTokens sums two roll-ups of one figure, Records and Total both — the
+// only sum this file ever performs across the four token figures, and it
+// never mixes figures: see statsUsageFilters for the one thing being summed
+// here, one client's several projects, versus never adding output to cache
+// reads.
+func addTokens(a, b store.Tokens) store.Tokens {
+	return store.Tokens{Records: a.Records + b.Records, Total: a.Total + b.Total}
+}
+
+// usageObservedDays is the divisor every usage row's per-day average uses,
+// and it is deliberately NOT observed (statRows' own general divisor above).
+//
+// Payload-writing began at a fixed instant per store — the first harvest
+// after migration 0014 landed — and a day before that instant can hold
+// perfectly ordinary transcript activity (data.Events carries the records;
+// observedDays counts the day) while holding zero usage evidence at all. A
+// figure that only ever accrued on the days after that instant, divided by
+// the WIDER count of every day the window was observed at all, understates
+// the true rate by exactly the share of the window that predates payloads —
+// silently, since the row still prints a plausible-looking number. This
+// counts only the days a scoped, payload-carrying Claude record actually
+// anchors in, from data.Events (already the clamped, client-stamped slice
+// every other row in this file reads), so the average is never diluted by a
+// day that could not have contributed to it.
+//
+// A payload-carrying event is not the same test as "is a transcripts.ID
+// event": e.Payload == "" is exactly the pre-payload-era row
+// TestARowStoredWithoutAPayloadReadsAsNothingRecorded pins at the store
+// layer — the column is NULL, encode.Encode's own empty-string case — so
+// filtering on it here asks the identical question statsUsage's Observations
+// answers, just per day instead of summed over the whole window.
+func usageObservedDays(cal sessions.Calendar, scope metricsScope, data *dashboardData) int {
+	withPayload := make(map[sessions.Day]bool)
+	for _, e := range data.Events {
+		if e.Source != statsUsageSourceID || e.Payload == "" {
+			continue
+		}
+		if !scope.showsProject(e.Identity.Project, data.Report.Clients) {
+			continue
+		}
+		withPayload[cal.DayOf(e.Anchor())] = true
+	}
+	return len(withPayload)
+}
+
+// usageCountRow renders one usage-derived figure — claude sessions, or one
+// token total — against days, its OWN divisor (see usageObservedDays), never
+// the panel's general observed count statCountRow's other callers use.
+//
+// recorded is Store.Usage's own signal for this figure (Observations for
+// sessions, one Tokens pair's own Records for a token row) rather than
+// statsObserved/reachableSources: those answer whether a HARVEST ran, and
+// this file's own doc comment above explains why that is the wrong question
+// for a figure that Store.Usage can already answer directly and more
+// narrowly.
+func usageCountRow(label string, n int64, days int, recorded bool) statRow {
+	if !recorded {
+		return statRow{Label: label, Marker: statUnrecorded}
+	}
+	row := statRow{Label: label, Value: fmt.Sprintf("%d", n)}
+	if days > 0 {
+		row.Avg = fmt.Sprintf("%.2f/day", float64(n)/float64(days))
+	}
+	return row
+}
+
+// Column widths. All three columns are floors, not fixed widths:
+// format.go's own package doc states the rule this panel violated on a live
+// store ("A count clipped to two digits is a wrong figure rather than a
+// short one, so every table below shrinks its label column and its padding
+// before any figure is at risk") — a fixed 9/11 truncated "181 of 365" to
+// "181 of 3…", the divisor's own value. statColumnWidths and
+// statLabelColumnWidth measure the actual rows below and widen past the
+// floor rather than ever clipping a number or a word; the floors just keep
+// an ordinary, small-number run looking exactly as it always has.
+//
+// statLabelWidth stopped being a fixed width the moment a row's label could
+// vary at all — statsScreenOnLabel prints "screen-on, machine-wide" under a
+// filtered scope, 8 columns past this floor, and pad() truncates rather than
+// widens (job dGWPc's own note on why the caveat could not simply be
+// appended to the label until this floor became a floor). Every other label
+// in this panel is still fixed per run, so an unfiltered run's label column
+// is still exactly 16 wide, unchanged.
 const (
 	statLabelWidth    = 16
 	statMinValueWidth = 9
 	statMinAvgWidth   = 11
 )
+
+// statLabelColumnWidth is statColumnWidths' twin for the label column: the
+// floor unless some row's label is longer, per this file's own note above.
+func statLabelColumnWidth(rows []statRow) int {
+	width := statLabelWidth
+	for _, r := range rows {
+		if w := len([]rune(r.Label)); w > width {
+			width = w
+		}
+	}
+	return width
+}
 
 // statColumnWidths measures the value and average columns from the rows
 // actually being printed. A row's Marker (statUnrecorded) is excluded from
@@ -538,10 +770,11 @@ var (
 // adjacent right-aligned columns are only ever guaranteed a gap when one of
 // them writes it.
 func writeStatRows(out io.Writer, cc colorCapability, rows []statRow) {
+	labelWidth := statLabelColumnWidth(rows)
 	valueWidth, avgWidth := statColumnWidths(rows)
 	for _, r := range rows {
 		var line strings.Builder
-		fmt.Fprintf(&line, "  %s", pad(r.Label, statLabelWidth))
+		fmt.Fprintf(&line, "  %s", pad(r.Label, labelWidth))
 		if r.Marker != "" {
 			fmt.Fprintf(&line, "%s%s%s", cc.Paint(statMarkerRGB),
 				pad(r.Marker, valueWidth+1+avgWidth), cc.Reset())

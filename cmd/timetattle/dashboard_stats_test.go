@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,9 @@ import (
 	"github.com/bensyverson/timetattle/internal/jobs"
 	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/source"
+	"github.com/bensyverson/timetattle/internal/store"
 	"github.com/bensyverson/timetattle/internal/transcripts"
+	"github.com/bensyverson/timetattle/internal/usage"
 )
 
 // The component stats panel, and the one distinction it exists to keep: a
@@ -250,26 +253,48 @@ func TestComponentStatsCountsFilesJobsAndTranscripts(t *testing.T) {
 	}
 }
 
-// CRITERION Txj: the three rows this panel used to print as "not measured"
-// carried nothing but their reasons — no figure was ever real — so with the
-// commentary column gone (criterion 9BH) there is nothing left to render
-// them WITH. They are omitted rather than printed empty. "jobs agents" was
-// dropped for good (Ben approved dropping it outright); "claude sessions"
-// and "tokens, cost" are pending the source-schema work under task 3jDIu and
-// return as real numeric rows when it lands — the reasoning for all three
-// lives in docs/content/docs/dashboard.md, not here.
-//
-// This is a regression test for the removal itself: a label reappearing here
-// with no way to render its reason would be worse than the row never coming
-// back, so the panel must never again print one without a source behind it.
-func TestComponentStatsOmitsTheThreeRowsTheCommentaryColumnUsedToExplain(t *testing.T) {
+// CRITERION Txj, NARROWED BY TASK K2QMI. Of the three rows this panel used
+// to print as "not measured" (a state that carried nothing but a reason, and
+// had nowhere left to carry one once the commentary column that explained it
+// was removed — job dGWPc, criterion 9BH), only "jobs agents" is dropped for
+// good: Ben approved that one outright, and internal/jobs never SELECTs the
+// actor column at all (see this file's own doc comment). "claude sessions"
+// and the four token figures were the other two — pending the source-schema
+// work under task 3jDIu (job GcgVp) at the time this test was first written,
+// and back as real numeric rows now that K2QMI, this task, reads them out of
+// Store.Usage. This test is altered rather than left passing on a stale
+// premise: asserting their continued absence would pin exactly the omission
+// this task exists to undo. See TestComponentStatsUsageRowsAreUnrecordedWithNoStore
+// below for this file's replacement regression coverage of the one row still
+// gone, and TestComponentStatsClaudeSessionsAndTokensRenderFromLiveUsage for
+// the five rows that came back.
+func TestComponentStatsOmitsJobsAgentsPermanently(t *testing.T) {
 	p := statsPeriod(t)
 	out := renderStats(t, metricsScope{}, p, statsData(nil, collectedThroughout(p)))
 
-	for _, label := range []string{"jobs agents", "claude sessions", "tokens, cost"} {
-		if strings.Contains(out, label) {
-			t.Errorf("panel still prints %q, want it omitted now the commentary column that explained it is gone:\n%s",
-				label, out)
+	if strings.Contains(out, "jobs agents") {
+		t.Errorf("panel still prints %q, want it omitted for good: internal/jobs never SELECTs the actor "+
+			"column, so there is no figure to render\n%s", "jobs agents", out)
+	}
+}
+
+// The other half of criterion Txj's narrowing: the five rows Store.Usage now
+// answers are never omitted, even with nothing to say — they print
+// unrecorded, exactly like every other row in this panel with nothing
+// behind it (see TestComponentStatsRendersUnrecordedRatherThanZeroWhenNothingWasCollected
+// for the same rule applied to the older rows). data.Store is nil here, the
+// same as every other test in this file that does not seed a live store —
+// statsUsage's own nil guard renders every usage row unrecorded rather than
+// panicking (dashboardCmd itself always opens a store; the guard is only
+// ever exercised in a test).
+func TestComponentStatsUsageRowsAreUnrecordedWithNoStore(t *testing.T) {
+	p := statsPeriod(t)
+	out := renderStats(t, metricsScope{}, p, statsData(nil, collectedThroughout(p)))
+
+	for _, label := range []string{"claude sessions", "tokens out", "tokens in", "cache read", "cache written"} {
+		row := lineWith(t, out, label)
+		if !strings.Contains(row, "unrecorded") {
+			t.Errorf("row %q reads %q, want unrecorded with no store to consult", label, strings.TrimSpace(row))
 		}
 	}
 }
@@ -336,27 +361,25 @@ func TestComponentStatsTakesTheScopedProjectsOwnHours(t *testing.T) {
 
 // The backlight is the literal screen-on reading, and internal/metrics
 // reports it store-wide because knowledgeC and Biome carry no path and can
-// never be attributed to a project (metrics.ReasonUnlocatable). Before this
-// task the row said so with a note — "store-wide: the presence sources
+// never be attributed to a project (metrics.ReasonUnlocatable). Before job
+// dGWPc the row said so with a note — "store-wide: the presence sources
 // carry no path and attribute to no project" — printed in the per-row
-// commentary column criterion 9BH removes. That note is gone with the
-// column, so a project-scoped screen-on figure now prints with no caveat
-// distinguishing it from an attributed one.
+// commentary column that task removed, and BwE29's pushback (c) flagged the
+// gap this left: a reader who does not already know the backlight is
+// store-wide misreads "3h" as alpha's own screen time under `-project
+// alpha`. dGWPc considered folding "(store-wide)" into the row's Label and
+// rejected it because statLabelWidth was a fixed 16 columns and pad()
+// truncates rather than widens; this task (K2QMI) is the one that widens it
+// (statLabelColumnWidth), so the row now carries the caveat in place — see
+// statsScreenOnLabel.
 //
-// PUSHBACK, NOT SILENTLY DROPPED: every other note this task removes is
-// prose that explains a number without changing how it should be read (a
-// merge's diff isn't summed, a birth and an mtime are two writes). This one
-// is different — a reader who does not already know the backlight is
-// store-wide will misread "3h" as alpha's own screen time under `-project
-// alpha`. Folding "(store-wide)" into the row's Label was considered and
-// rejected: statLabelWidth is a fixed 16 columns and pad() truncates rather
-// than widens, so "screen-on (store-wide)" would render as "screen-on (sto…"
-// — the label column would need widening for every row to fit one row's
-// qualifier, which is a real design decision, not a one-line fix owned by
-// this task. Flagged in job dGWPc's note for a human or task 3jDIu to
-// resolve, most likely by stating the store-wide rule once in
-// docs/content/docs/dashboard.md rather than per capture.
-func TestComponentStatsScreenOnFigureIsUnaffectedByScopeThoughItsAttributionIsStoreWide(t *testing.T) {
+// This test is ALTERED, not left passing on the old assertion: the row
+// asserted here used to be pinned as identical to the unscoped row's label,
+// which is exactly the gap BwE29 flagged and this task closes. Renamed to
+// say what it now proves. The VALUE half of the old assertion — 6h
+// regardless of scope, because the figure genuinely is store-wide — still
+// holds and is still checked below.
+func TestComponentStatsScreenOnCarriesAMachineWideQualifierUnderAFilteredScope(t *testing.T) {
 	p := statsPeriod(t)
 	data := statsData(nil, collectedThroughout(p))
 	data.Report = metrics.Report{
@@ -365,10 +388,23 @@ func TestComponentStatsScreenOnFigureIsUnaffectedByScopeThoughItsAttributionIsSt
 		Clients:   []metrics.Client{{Name: "c1", Projects: []string{"alpha"}}},
 	}
 
-	out := renderStats(t, metricsScope{Project: "alpha"}, p, data)
-	row := lineWith(t, out, "screen-on")
-	if !strings.Contains(row, "6.0") {
-		t.Errorf("screen-on reads %q, want the backlight's own 6h regardless of scope", strings.TrimSpace(row))
+	unscoped := lineWith(t, renderStats(t, metricsScope{}, p, data), "screen-on")
+	if strings.Contains(unscoped, "machine-wide") {
+		t.Errorf("the unscoped row reads %q, want the plain label: there is nothing to disambiguate from "+
+			"under -all", strings.TrimSpace(unscoped))
+	}
+
+	for _, scope := range []metricsScope{{Project: "alpha"}, {Client: "c1"}} {
+		out := renderStats(t, scope, p, data)
+		row := lineWith(t, out, "screen-on")
+		if !strings.Contains(row, "machine-wide") {
+			t.Errorf("scope %+v: screen-on reads %q, want the machine-wide qualifier so a scoped reader "+
+				"cannot mistake this for their own scope's figure", scope, strings.TrimSpace(row))
+		}
+		if !strings.Contains(row, "6.0") {
+			t.Errorf("scope %+v: screen-on reads %q, want the backlight's own 6h regardless of scope",
+				scope, strings.TrimSpace(row))
+		}
 	}
 }
 
@@ -518,6 +554,201 @@ func TestComponentStatsOmitsLossLineWhenNothingInTheWindowWasLost(t *testing.T) 
 	}
 }
 
+// Job K2QMI: claude sessions and the four token figures, read out of
+// Store.Usage now that it exists (job GcgVp) and the window this panel
+// describes is honestly clamped (job BwE29). Unlike every test above, these
+// need a REAL store — Store.Usage is SQL, not something a fixture built from
+// data.Events alone can exercise — so they use openUsageStore/
+// harvestUsageEvents/attributeUsageProjects below, the same store.BeginRun /
+// Write / Finish / ResolveProjects path internal/store's own usage_test.go
+// and dashboard_freshness_test.go's TestRenderSourceFreshnessReadsTheStore
+// already use for the same reason.
+
+// The five rows, and the one thing they most need to prove: never summed.
+// output (500+600=1100), input (3+4=7), cache read (1e8+2e8=3e8) and cache
+// written (7+9=16) are four numbers of wildly different magnitude — cache
+// read alone dwarfs every other figure here by six orders of magnitude,
+// echoing GcgVp's own measurement that cache reads outweigh output tokens
+// 223 to 1 on the live store — and a bug that folded them into one total
+// would still print A number, just the wrong one. Asserting each figure
+// individually is what catches that; asserting their sum would not.
+func TestComponentStatsClaudeSessionsAndTokensRenderFromLiveUsage(t *testing.T) {
+	p := statsPeriod(t)
+	r1 := statsUsageEvent(t, p.From.Add(time.Hour), "u1", "sess-1", statsTokenFigures(3, 500, 100_000_000, 7))
+	r2 := statsUsageEvent(t, p.From.Add(2*time.Hour), "u2", "sess-2", statsTokenFigures(4, 600, 200_000_000, 9))
+
+	st := openUsageStore(t)
+	harvestUsageEvents(t, st, []source.Event{r1, r2})
+
+	data := statsData([]source.Event{r1, r2}, collectedThroughout(p))
+	data.Store = st
+	data.Filter = store.Filter{From: p.From, To: p.To}
+
+	out := renderStats(t, metricsScope{}, p, data)
+	for _, c := range []struct{ label, want string }{
+		{"claude sessions", "2"},
+		{"tokens out", "1100"},
+		{"tokens in", "7"},
+		{"cache read", "300000000"},
+		{"cache written", "16"},
+	} {
+		row := lineWith(t, out, c.label)
+		if !strings.Contains(row, c.want) {
+			t.Errorf("%s reads %q, want %s", c.label, strings.TrimSpace(row), c.want)
+		}
+		if strings.Contains(row, "unrecorded") {
+			t.Errorf("%s reads %q, want a real figure — the store holds two payload-carrying records",
+				c.label, strings.TrimSpace(row))
+		}
+	}
+}
+
+// CRITERION 8kU, THE WINDOW-BEFORE-ANY-PAYLOAD-EXISTS HALF. A transcript
+// record stored before this source wrote payloads carries none for ever
+// (event.payload NULL — TestARowStoredWithoutAPayloadReadsAsNothingRecorded
+// in internal/store/usage_test.go pins the store side of this), and
+// Store.Usage's own Observations answers "nothing was recorded", not zero.
+// This is the older row, "claude records", right beside the new ones: the
+// window WAS observed (claude records reads 1, an ordinary count) while the
+// usage rows read unrecorded — the three-state distinction this whole panel
+// exists to keep from collapsing, applied to the newest rows in it.
+func TestComponentStatsUsageRowsAreUnrecordedBeforeAnyPayloadExists(t *testing.T) {
+	p := statsPeriod(t)
+	plain := statsTranscript(p.From.Add(time.Hour), transcripts.StateMachine)
+
+	st := openUsageStore(t)
+	harvestUsageEvents(t, st, []source.Event{plain})
+
+	data := statsData([]source.Event{plain}, collectedThroughout(p))
+	data.Store = st
+	data.Filter = store.Filter{From: p.From, To: p.To}
+
+	out := renderStats(t, metricsScope{}, p, data)
+	if row := lineWith(t, out, "claude records"); !strings.Contains(row, "1") || strings.Contains(row, "unrecorded") {
+		t.Fatalf("claude records reads %q, want the one observed record — this test is about a store "+
+			"that DID observe something, just not a payload", strings.TrimSpace(row))
+	}
+	for _, label := range []string{"claude sessions", "tokens out", "tokens in", "cache read", "cache written"} {
+		row := lineWith(t, out, label)
+		if !strings.Contains(row, "unrecorded") {
+			t.Errorf("%s reads %q, want unrecorded — the one stored record carries no payload at all",
+				label, strings.TrimSpace(row))
+		}
+	}
+}
+
+// THE DIVISOR TREATMENT, THE HARD PART OF THIS TASK, RED-FIRST. Eight days
+// of the ten-day window carry only git commits — ordinary evidence with no
+// usage payload anywhere near it — and the last two carry the window's only
+// payload-bearing records, 40 and 60 output tokens. "observed days" (the
+// panel's GENERAL divisor) is honestly 10 of 10: every day in the window has
+// SOME evidence. But dividing the 100-token total by 10 would spread a
+// figure that only ever accrued on two days across eight it could not have
+// touched — 10.00/day, which understates the true rate fivefold — so the
+// usage rows must use their OWN divisor (the two payload-era days) and read
+// 50.00/day instead. Before statsUsageRows/usageObservedDays existed, this
+// test failed by not finding a "tokens out" row at all; the assertion
+// against 10.00/day is the one a naive implementation sharing statRows' own
+// `observed` would still fail after the row exists — proved by mutation
+// during development (usageObservedDays swapped for the general `observed`
+// count prints exactly 10.00/day; restored here).
+func TestComponentStatsUsageAveragesOverPayloadEraDaysNotGeneralObservedDays(t *testing.T) {
+	cal := mustCalendar(t)
+	p := dashboardPeriodOf(10, cal, statsDay)
+
+	var events []source.Event
+	var log collectionLog
+	for i := range 8 {
+		start, _ := cal.Bounds(cal.DayOf(p.From).AddDays(i))
+		at := start.Add(time.Hour)
+		events = append(events, statsCommit(at, gitlog.Stat{Insertions: 1}))
+		log.add(at, false)
+	}
+	day9, _ := cal.Bounds(cal.DayOf(p.From).AddDays(8))
+	day10, _ := cal.Bounds(cal.DayOf(p.From).AddDays(9))
+	r1 := statsUsageEvent(t, day9.Add(time.Hour), "u1", "sess-1", statsTokenFigures(0, 40, 0, 0))
+	r2 := statsUsageEvent(t, day10.Add(time.Hour), "u2", "sess-1", statsTokenFigures(0, 60, 0, 0))
+	events = append(events, r1, r2)
+
+	st := openUsageStore(t)
+	harvestUsageEvents(t, st, []source.Event{r1, r2})
+
+	data := statsData(events, log)
+	data.Store = st
+	data.Filter = store.Filter{From: p.From, To: p.To}
+
+	out := renderStats(t, metricsScope{}, p, data)
+
+	if days := lineWith(t, out, "observed days"); !strings.Contains(days, "10 of 10") {
+		t.Fatalf("observed days reads %q, want 10 of 10 — every day in this window carries SOME evidence, "+
+			"which is what makes this a real test of the usage rows' own divisor rather than a window "+
+			"that happens to have only two observed days anyway", strings.TrimSpace(days))
+	}
+
+	row := lineWith(t, out, "tokens out")
+	if !strings.Contains(row, " 100 ") {
+		t.Fatalf("tokens out reads %q, want the total 100", strings.TrimSpace(row))
+	}
+	if !strings.Contains(row, "50.00/day") {
+		t.Errorf("tokens out reads %q, want 50.00/day (100 over the two payload-era days)", strings.TrimSpace(row))
+	}
+	if strings.Contains(row, "10.00/day") {
+		t.Errorf("tokens out reads %q — averaged over the general 10-observed-day count instead of the "+
+			"two payload-era days, diluting the true rate fivefold", strings.TrimSpace(row))
+	}
+}
+
+// Store.UsageFilter has no Client field, so a -client scope is spelled here
+// as one filter per project the client's own report entry lists, summed —
+// the same overshoot store.Usage.Sessions already documents for one session
+// touching two projects, extended to a client's basket of them (see
+// statsUsageFilters' own comment). This also covers criterion OqS's "settled
+// scope semantics" for -project directly, and item 4 (-all vs a scoped run,
+// no special-casing): the four rows below are four calls into the exact same
+// code path, differing only in which filters statsUsageFilters builds.
+func TestComponentStatsUsageRowsRespectProjectAndClientScope(t *testing.T) {
+	p := statsPeriod(t)
+	quarry := statsUsageEvent(t, p.From.Add(time.Hour), "u1", "sess-quarry", statsTokenFigures(0, 50, 0, 0))
+	quarry.Locator = "/work/quarry"
+	quarry.Identity.Project = "quarry"
+	lantern := statsUsageEvent(t, p.From.Add(2*time.Hour), "u2", "sess-lantern", statsTokenFigures(0, 70, 0, 0))
+	lantern.Locator = "/work/lantern"
+	lantern.Identity.Project = "lantern"
+
+	st := openUsageStore(t)
+	harvestUsageEvents(t, st, []source.Event{quarry, lantern})
+	attributeUsageProjects(t, st, "c1", map[string]string{"/work/quarry": "quarry", "/work/lantern": "lantern"})
+
+	data := statsData([]source.Event{quarry, lantern}, collectedThroughout(p))
+	data.Store = st
+	data.Filter = store.Filter{From: p.From, To: p.To}
+	data.Report = metrics.Report{
+		Projects: []metrics.Project{{Name: "quarry"}, {Name: "lantern"}},
+		Clients:  []metrics.Client{{Name: "c1", Projects: []string{"quarry", "lantern"}}},
+	}
+
+	for _, c := range []struct {
+		name          string
+		scope         metricsScope
+		sessions, out string
+	}{
+		{"quarry alone", metricsScope{Project: "quarry"}, "1", "50"},
+		{"lantern alone", metricsScope{Project: "lantern"}, "1", "70"},
+		{"client c1, summed across its projects", metricsScope{Client: "c1"}, "2", "120"},
+		{"-all, the honest store-wide total", metricsScope{}, "2", "120"},
+	} {
+		out := renderStats(t, c.scope, p, data)
+		sess := lineWith(t, out, "claude sessions")
+		if !strings.Contains(sess, " "+c.sessions+" ") {
+			t.Errorf("%s: claude sessions reads %q, want %s", c.name, strings.TrimSpace(sess), c.sessions)
+		}
+		tok := lineWith(t, out, "tokens out")
+		if !strings.Contains(tok, " "+c.out+" ") {
+			t.Errorf("%s: tokens out reads %q, want %s", c.name, strings.TrimSpace(tok), c.out)
+		}
+	}
+}
+
 // Fixtures. Each mirrors the event its own source package actually writes —
 // see internal/gitlog, internal/fsobserve, internal/jobs and
 // internal/transcripts — so a change to any of those shapes breaks this
@@ -551,4 +782,90 @@ func statsTranscript(at time.Time, state string) source.Event {
 	e.Locator = "/w/repo"
 	e.State = state
 	return e
+}
+
+// statsUsageEvent is a transcript-shaped observation carrying an
+// internal/usage payload — the fixture the tests above use for both the real
+// store (via harvestUsageEvents) and data.Events, since a caller of
+// renderComponentStats always sees the same event in both places (Events is
+// exactly what a store query for Filter would return — dashboardData's own
+// doc comment). Mirrors internal/store/usage_test.go's own spent() helper,
+// which cannot be imported directly: that one lives in package store_test.
+func statsUsageEvent(t *testing.T, at time.Time, uuid, session string, tok *usage.Tokens) source.Event {
+	t.Helper()
+	e := source.NewPoint(at, source.Identity{Document: uuid}, transcripts.ID)
+	e.Locator = "/w/repo"
+	e.State = transcripts.StateMachine
+	payload, err := usage.Record{Session: session, Tokens: tok}.Encode()
+	if err != nil {
+		t.Fatalf("encode payload for session %q: %v", session, err)
+	}
+	e.Payload = payload
+	return e
+}
+
+// statsTokenFigures builds a fully-stated Tokens object — every figure a
+// real assistant turn states, never left nil, since a nil figure means "not
+// stated" (internal/usage's own three-state design) and every test above
+// wants a genuine observation.
+func statsTokenFigures(input, output, cacheRead, cacheCreation int64) *usage.Tokens {
+	return &usage.Tokens{
+		Input:         usage.Stated(input),
+		Output:        usage.Stated(output),
+		CacheRead:     usage.Stated(cacheRead),
+		CacheCreation: usage.Stated(cacheCreation),
+	}
+}
+
+// openUsageStore is a freshly migrated store, kept open for the test's
+// duration via t.Cleanup — the same lifecycle dashboard_freshness_test.go's
+// TestRenderSourceFreshnessReadsTheStore gives its own store, needed here
+// for the same reason: Store.Usage is SQL, and nothing short of a real store
+// can prove what it returns.
+func openUsageStore(t *testing.T) *store.Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "timetattle.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open a store to seed: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+// harvestUsageEvents writes events through one harvest run, the way a real
+// claude-transcripts harvest does — BeginRun/Write/Finish, the same sequence
+// internal/store/usage_test.go's own harvest() helper uses (unexported
+// there, in package store_test, so it cannot be shared directly).
+func harvestUsageEvents(t *testing.T, st *store.Store, events []source.Event) {
+	t.Helper()
+	ctx := context.Background()
+	run, err := st.BeginRun(ctx, store.RunSpec{SourceID: transcripts.ID, Input: "/synthetic-transcripts"})
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
+	if _, err := run.Write(ctx, events); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := run.Finish(ctx); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+}
+
+// attributeUsageProjects runs the resolution pass with a fixed
+// locator-to-project map, the way a registry would — store.UsageFilter's
+// Project field reads the store's own `project` column, which only
+// ResolveProjects ever populates.
+func attributeUsageProjects(t *testing.T, st *store.Store, client string, projects map[string]string) {
+	t.Helper()
+	_, err := st.ResolveProjects(context.Background(), func(locator string) (store.Attributed, bool, error) {
+		project, ok := projects[locator]
+		if !ok {
+			return store.Attributed{}, false, nil
+		}
+		return store.Attributed{Client: client, Project: project}, true, nil
+	})
+	if err != nil {
+		t.Fatalf("ResolveProjects: %v", err)
+	}
 }
