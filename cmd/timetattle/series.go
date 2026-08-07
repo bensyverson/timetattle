@@ -200,6 +200,21 @@ func (l collectionLog) during(start, end time.Time) collectionState {
 
 // seriesOf cuts a report into the periods a unit asks for.
 //
+// window.To IS THE EXCLUSIVE CLOSING INSTANT — the moment the window ends,
+// never one still inside it — matching Calendar.Bounds' half-open day
+// convention and dashboardPeriod's own documented "[From, To)" window (see
+// dashboard.go). metrics.go's own filter.To is store.Filter's INCLUSIVE
+// closing instant for the EVENT QUERY, a different question, and is handed in
+// unconverted: for any instant not sitting exactly on a working day's own
+// boundary the two readings agree on which day it falls in, and for the one
+// case they would not — filter.To landing exactly on a day's opening instant,
+// which is what a bare -to date already backs off of by a microsecond and
+// what a trailing window built from Calendar.Bounds produces exactly — this
+// convention is what keeps that instant from pulling in a day it only touches
+// at its own first nanosecond. This one convention is also what let
+// dashboard_heatmap.go's heatmapGridOf drop its own second, parallel day
+// computation and trust this function's rows directly.
+//
 // The edges are always WORKING DAYS, whatever the unit, and weeks and months
 // are folded from them. The day list is widened past the requested window to
 // whatever the report's own presence reaches, because a sitting begins a
@@ -213,18 +228,18 @@ func seriesOf(r metrics.Report, cal sessions.Calendar, unit seriesUnit, window s
 		if first := r.Segments[0].Start; from.IsZero() || first.Before(from) {
 			from = first
 		}
+		// Segment.End is exclusive, the same convention to now carries, so a
+		// segment reaching past the window replaces it directly.
 		if last := r.Segments[len(r.Segments)-1].End; to.IsZero() || last.After(to) {
-			// The end is exclusive and a day's bounds are half-open, so the
-			// last instant that must be covered is the one before it.
-			to = last.Add(-time.Nanosecond)
+			to = last
 		}
 	}
-	if from.IsZero() || to.IsZero() || to.Before(from) {
+	if from.IsZero() || to.IsZero() || !to.After(from) {
 		return nil, nil
 	}
 
 	if unit == unitSpan {
-		periods, err := r.Series([]time.Time{from, to.Add(time.Nanosecond)})
+		periods, err := r.Series([]time.Time{from, to})
 		if err != nil {
 			return nil, err
 		}
@@ -234,7 +249,12 @@ func seriesOf(r metrics.Report, cal sessions.Calendar, unit seriesUnit, window s
 		}}, nil
 	}
 
-	days := cal.Days(from, to)
+	// cal.Days itself still takes an INCLUSIVE end — that is Calendar's own,
+	// unrelated API and every other caller of it (ByDay, observedWindow) keeps
+	// that convention — so the exclusive `to` this function works in is
+	// converted at the one place it is spent on that call, rather than
+	// threading the conversion through every caller.
+	days := cal.Days(from, to.Add(-time.Nanosecond))
 	if len(days) == 0 {
 		return nil, nil
 	}

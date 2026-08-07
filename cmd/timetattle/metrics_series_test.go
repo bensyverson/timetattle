@@ -101,6 +101,23 @@ func TestByDayReportsEveryDayInTheSpanIncludingTheEmptyOnes(t *testing.T) {
 	}
 }
 
+// REGRESSION. -to is the window's closing instant and runSeries passes the
+// instant a working day BEGINS at (05:00, the fixture's day start) rather than
+// one inside the last requested day, exactly as dashboardPeriod's own To does
+// (see dashboard.go's doc comment: "half-open instant window: [From, To)").
+// seriesOf must therefore treat that instant as the boundary the window ends
+// AT rather than a moment inside one more day to report on; a day beyond the
+// four the window actually asked for is not "the calendar wearing no
+// disguise", it is the series inventing a day nobody requested.
+func TestByDayDoesNotReportADayBeyondTheRequestedWindow(t *testing.T) {
+	out := runSeries(t, seedThreeWorkingDays(t), "-by", "day")
+
+	if strings.Contains(out, "2026-07-23") {
+		t.Errorf("the series reports 2026-07-23, one day past the window asked for "+
+			"(2026-07-19T05:00:00Z to 2026-07-23T05:00:00Z):\n%s", out)
+	}
+}
+
 // THE RECONCILIATION, STATED BY THE REPORT ITSELF. The rows are cut out of the
 // same segments the ungrouped figures are summed from, so they sum to it
 // exactly; printing the difference is what makes that checkable rather than

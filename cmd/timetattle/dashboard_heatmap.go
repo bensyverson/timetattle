@@ -250,30 +250,30 @@ func heatmapGridOf(cal sessions.Calendar, period dashboardPeriod, scope metricsS
 	if err != nil {
 		return heatmapGrid{}, err
 	}
-	// seriesOf widens its own edges past the window to whatever the report's
-	// presence reaches, so it can hand back days on either side of the period.
-	// Indexing by label and looking up only the days the grid draws is what
-	// keeps those extra rows out without seriesOf having to know a heatmap
-	// exists.
-	byDay := make(map[string]metrics.Period, len(rows))
-	for _, r := range rows {
-		byDay[r.Label] = r.Period
-	}
 
-	// period.To is the EXCLUSIVE closing boundary — the instant tomorrow
-	// begins — and Days() takes an inclusive end, so asking it for period.To
-	// would hand back tomorrow as well.
-	days := cal.Days(period.From, period.To.Add(-time.Nanosecond))
-	if len(days) == 0 {
+	// seriesOf's window.To is now the SAME half-open [From, To) convention
+	// period itself carries (see series.go's own doc comment on seriesOf), so
+	// a row belongs to the grid exactly when its own day's start instant falls
+	// inside that window — no second, parallel call to cal.Days is needed just
+	// to correct a boundary mismatch, only this filter for the widening
+	// seriesOf still does on purpose (a sitting's lead-in or tail-out reaching
+	// past the requested period, which the grid never draws).
+	byDay := make(map[sessions.Day]metrics.Period, len(rows))
+	for _, r := range rows {
+		if r.Period.Start.Before(period.From) || !r.Period.Start.Before(period.To) {
+			continue
+		}
+		byDay[cal.DayOf(r.Period.Start)] = r.Period
+	}
+	if len(byDay) == 0 {
 		return heatmapGrid{}, nil
 	}
-	covered := make(map[sessions.Day]bool, len(days))
-	for _, d := range days {
-		covered[d] = true
-	}
 
-	g := heatmapGrid{index: make(map[sessions.Day]heatmapCell, len(days))}
-	first, last := cal.WeekOf(days[0]), cal.WeekOf(days[len(days)-1])
+	// period.To is the EXCLUSIVE closing boundary, so the last day the period
+	// itself holds is the one the instant just before it falls in.
+	firstDay, lastDay := cal.DayOf(period.From), cal.DayOf(period.To.Add(-time.Nanosecond))
+	g := heatmapGrid{index: make(map[sessions.Day]heatmapCell, len(byDay))}
+	first, last := cal.WeekOf(firstDay), cal.WeekOf(lastDay)
 	for i := range g.Rows {
 		g.Rows[i] = first.AddDays(i).Weekday()
 	}
@@ -281,8 +281,8 @@ func heatmapGridOf(cal sessions.Calendar, period dashboardPeriod, scope metricsS
 		var col [7]heatmapCell
 		for i := range col {
 			col[i] = heatmapCell{Day: d}
-			if covered[d] {
-				col[i] = heatmapCellOf(cal, d, byDay[d.String()], scope, data.Log)
+			if p, ok := byDay[d]; ok {
+				col[i] = heatmapCellOf(cal, d, p, scope, data.Log)
 				g.index[d] = col[i]
 			}
 			d = d.AddDays(1)

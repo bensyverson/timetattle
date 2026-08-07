@@ -225,7 +225,16 @@ never double-counted, and is the capacity denominator. Parameters come from
 		if err != nil {
 			return err
 		}
-		rows, err := seriesOf(report, cal, unit, sessions.Window{From: filter.From, To: filter.To}, log)
+		// filter.To is store.Filter's own INCLUSIVE closing instant for the
+		// EVENT QUERY, which is a different question from where the DAY
+		// SERIES stops: seriesOf's window.To is the EXCLUSIVE boundary that
+		// convention, and a -to landing exactly on a working day's opening
+		// instant (as a bare -to date already resolves one microsecond short
+		// of, and as a trailing window computed from cal.Bounds does exactly)
+		// must not pull that day's own zero-width touch into the series as a
+		// row of its own. See seriesOf's doc comment in series.go.
+		rows, err := seriesOf(report, cal, unit,
+			sessions.Window{From: filter.From, To: filter.To}, log)
 		if err != nil {
 			return err
 		}
