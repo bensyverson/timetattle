@@ -9,7 +9,8 @@ You are working on Timetattle, a tool to analyze Claude Code repositories to und
 When you need additional context, consult the docs:
 
 - [README.md](README.md) - Project overview and quick start
-- `project/private/` - Historical design documents and past project plans. NOT TRACKED: it is gitignored, stays on this machine and in the private mirror, and is the one part of this repository that does not ship. It measures one person's real working days against real clients, so it names them throughout.
+- `project/` - Dated design documents, plans and measurement findings. This trail is published; it is part of the repository's record.
+- `project/private/` - Historical design documents and findings whose subject is the client surface. NOT TRACKED: it is gitignored, stays on this machine and in the private mirror, and is the one part of this repository that does not ship. It measures one person's real working days against real clients, so it names them throughout.
 
 ## CLI conventions
 
@@ -84,8 +85,8 @@ At moments when significant work has been completed and accepted by the user, of
 
 ## Documentation practice
 
-- Findings and measurements go in `project/private/` as a dated document. Correct an earlier document **in place**, as a marked block quote, rather than silently editing the number or leaving the stale claim standing. Several documents there now correct each other and that trail is the point.
-- Every figure recorded in `project/private/` must name the tool and flags that reproduce it.
+- Findings and measurements go in `project/` as a dated document — that trail is deliberately published. A document goes in `project/private/` instead only when its **subject is the client surface itself** (real names, rates, hours against a named client, or the confidentiality pass — publishing such a document is publishing a map of what was removed; see the note in `.gitignore`). Correct an earlier document **in place**, as a marked block quote, rather than silently editing the number or leaving the stale claim standing. Several documents now correct each other and that trail is the point.
+- Every figure recorded in `project/` or `project/private/` must name the tool and flags that reproduce it.
 - **`project/private/` is gitignored and does not ship.** Write findings there freely and name real clients, directories and hours — that is what it is for, and a measurement pseudonymised until it cannot be reproduced is worse than one that is simply not published.
 - **What ships must stand on its own.** `docs/content/docs/`, `README.md` and the code comments are the published record, and a public reader cannot follow a citation into `project/private/`. A comment that says "see the memo" and nothing else has therefore said nothing. Carry the reasoning, not just the pointer.
 - **Nothing that ships may carry a real client name, rate, contract figure or developer identifier** — that includes docs, code comments, test names and fixtures. `go run ./scripts/confidential -names <names> -gate .` is the check. Note what it exists to catch: the live store and the on-disk registry markers still hold REAL names, so pasting a live `review`, `metrics` or `orient` capture into a published page re-imports exactly what was removed. Three such leaks shipped this way and were caught three days late.
