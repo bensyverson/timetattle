@@ -388,6 +388,27 @@ func TestComponentStatsWritesNoEscapeSequencesUnderColorNone(t *testing.T) {
 	}
 }
 
+// Column padding puts the next column in the same place on every row, so it
+// has to be written — but a line that ENDS in it carries trailing whitespace a
+// reader cannot see and a diff of two captured runs can. Caught by eye on the
+// first rendered fixture, pinned here.
+func TestComponentStatsLeavesNoTrailingWhitespace(t *testing.T) {
+	p := statsPeriod(t)
+	// Both renderings: a full table, and the all-unrecorded one, whose rows
+	// carry no note at all and are therefore the pure padding case.
+	for _, data := range []*dashboardData{
+		statsData([]source.Event{statsCommit(p.From.Add(time.Hour), gitlog.Stat{Insertions: 3})},
+			collectedThroughout(p)),
+		statsData(nil, collectionLog{}),
+	} {
+		for line := range strings.SplitSeq(renderStats(t, metricsScope{}, p, data), "\n") {
+			if line != strings.TrimRight(line, " ") {
+				t.Errorf("line %q ends in whitespace", line)
+			}
+		}
+	}
+}
+
 // Fixtures. Each mirrors the event its own source package actually writes —
 // see internal/gitlog, internal/fsobserve, internal/jobs and
 // internal/transcripts — so a change to any of those shapes breaks this

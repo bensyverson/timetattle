@@ -509,23 +509,34 @@ var (
 	statValueRGB  = RGB{R: 0x60, G: 0xc0, B: 0xa0}
 )
 
+// writeStatRows builds each line in a buffer so the column padding on a row
+// with no note can be trimmed back off. The padding has to be WRITTEN — it is
+// what puts the next column in the same place on every row — but a line ENDING
+// in it leaves trailing whitespace in every captured run, which a reader
+// cannot see and a diff of two captures can, so it is applied and then cut.
+//
+// Trimming the built line rather than the note is what keeps that correct
+// under color: a painted value ends in an escape sequence, and a rule phrased
+// as "skip the padding when there is no note" would have to know whether it
+// had painted. This does not.
 func writeStatRows(out io.Writer, cc colorCapability, rows []statRow) {
 	for _, r := range rows {
-		fmt.Fprintf(out, "  %s", pad(r.Label, statLabelWidth))
+		var line strings.Builder
+		fmt.Fprintf(&line, "  %s", pad(r.Label, statLabelWidth))
 		if r.Marker != "" {
-			fmt.Fprintf(out, "%s%s%s", cc.Paint(statMarkerRGB),
+			fmt.Fprintf(&line, "%s%s%s", cc.Paint(statMarkerRGB),
 				pad(r.Marker, statValueWidth+statAvgWidth), cc.Reset())
 		} else {
 			value := padLeft(r.Value, statValueWidth)
 			if r.Emphasis {
 				value = cc.Paint(statValueRGB) + value + cc.Reset()
 			}
-			fmt.Fprintf(out, "%s%s", value, padLeft(r.Avg, statAvgWidth))
+			fmt.Fprintf(&line, "%s%s", value, padLeft(r.Avg, statAvgWidth))
 		}
 		if r.Note != "" {
-			fmt.Fprintf(out, "  %s", r.Note)
+			fmt.Fprintf(&line, "  %s", r.Note)
 		}
-		fmt.Fprintln(out)
+		fmt.Fprintln(out, strings.TrimRight(line.String(), " "))
 	}
 }
 
