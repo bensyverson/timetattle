@@ -164,6 +164,31 @@ func TestTheGapIsMeasuredFromTheRunningEndNotTheStart(t *testing.T) {
 	}
 }
 
+func TestTheRunningEndOutlivesTheObservationsAppendedAfterIt(t *testing.T) {
+	// Two observations cannot tell a running MAXIMUM end from the end of
+	// whichever observation was appended last, because with two of them those
+	// are the same instant. Three can, and the distinction is the whole of the
+	// rule: a two-hour focus interval, a save ten minutes into it, and a save
+	// ten minutes after it ended.
+	//
+	// The reach of the run is the interval's end throughout. Carrying the last
+	// appended end instead would make the run reach only 0:10, put the final
+	// save 1h50m past it, and cut a continuous two hours in half.
+	events := []source.Event{
+		interval(0, 2*time.Hour),
+		point(10 * time.Minute),
+		point(2*time.Hour + 10*time.Minute),
+	}
+	res := cluster(t, events, params())
+
+	if len(res.Sessions) != 1 {
+		t.Fatalf("got %d sessions %v, want 1", len(res.Sessions), spans(res))
+	}
+	if got, want := res.Sessions[0].Duration(), 2*time.Hour+20*time.Minute; got != want {
+		t.Errorf("session lasted %v, want %v", got, want)
+	}
+}
+
 func TestOverlappingIntervalsDoNotDoubleCount(t *testing.T) {
 	res := cluster(t, []source.Event{interval(0, 30*time.Minute), interval(10*time.Minute, 20*time.Minute)}, params())
 

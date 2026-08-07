@@ -316,16 +316,30 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 	// previous start: a one-hour focus interval followed by a save five minutes
 	// later is one sitting, and measuring from the start would call it 65
 	// minutes and cut a continuous hour in half.
-	var clusters [][]observation
+	type run struct {
+		members []observation
+		// reach is the furthest END any member covers, carried forward rather
+		// than recomputed from the members on each append. Rescanning the run
+		// to find it is quadratic in the run's length, and a dense working day
+		// is one long run, so the cost is not theoretical: clustering 8,000
+		// observations into one run took 215ms by rescan and takes 1.9ms by
+		// carrying the value (BenchmarkClusterOneRun), which moved a full
+		// `metrics` pass over the live store from 77s to 18s.
+		//
+		// It is a MAXIMUM and not the last member's end. Members are sorted by
+		// start, so a long interval early in a run can still be the latest
+		// end, and it has to keep deciding the gap after shorter observations
+		// have been appended behind it.
+		reach time.Time
+	}
+	var clusters []run
 	for _, s := range kept {
-		if n := len(clusters); n > 0 {
-			last := clusters[n-1]
-			if s.span.Start.Sub(maxEnd(last)) <= p.Gap {
-				clusters[n-1] = append(last, s)
-				continue
-			}
+		if n := len(clusters); n > 0 && s.span.Start.Sub(clusters[n-1].reach) <= p.Gap {
+			clusters[n-1].members = append(clusters[n-1].members, s)
+			clusters[n-1].reach = timespan.LaterOf(clusters[n-1].reach, s.span.End)
+			continue
 		}
-		clusters = append(clusters, []observation{s})
+		clusters = append(clusters, run{members: []observation{s}, reach: s.span.End})
 	}
 
 	// Expand, then merge whatever the expansion made touch. Emitting both
@@ -340,10 +354,10 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 	for _, c := range clusters {
 		next := cluster{
 			span: timespan.Span{
-				Start: c[0].span.Start.Add(-p.LeadIn),
-				End:   maxEnd(c).Add(p.TailOut),
+				Start: c.members[0].span.Start.Add(-p.LeadIn),
+				End:   c.reach.Add(p.TailOut),
 			},
-			members: c,
+			members: c.members,
 		}
 		if n := len(expanded); n > 0 && !next.span.Start.After(expanded[n-1].span.End) {
 			res.Stats.MergedByExpansion++
@@ -402,15 +416,4 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 		}
 	}
 	return res, nil
-}
-
-// maxEnd is the furthest any observation in a cluster reached. Observations are
-// sorted by start, so a long interval early in the run can still be the latest
-// end.
-func maxEnd(run []observation) time.Time {
-	end := run[0].span.End
-	for _, o := range run[1:] {
-		end = timespan.LaterOf(end, o.span.End)
-	}
-	return end
 }
