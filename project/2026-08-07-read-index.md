@@ -454,3 +454,16 @@ and when a real store will pay for it; `eventsQuery` in `internal/store` states
 why the `ORDER BY` has exactly one spelling in the package; and the tests state
 which mutations they catch. None of it cites this document, per the rule that
 what ships must stand on its own.
+
+> **Integrator addendum (2026-08-07, quiet machine):** the number of record
+> this document leaves to the integrator was taken with no agents running.
+> `go build -o $TMPDIR/tt-quiet ./cmd/timetattle`, the live store migrated to
+> 0013 by `timetattle sessionize -dry-run` (a shipped writing command; the dry
+> run leaves stored sessions untouched but opens the store for writing, which
+> is what applies the migration), then five runs of
+> `/usr/bin/time -p $TMPDIR/tt-quiet metrics`: real 4.51, 4.56, 5.20, 5.53,
+> 5.55 — median 5.20s, best 4.51s. Against the criterion this is reported as
+> written: the under-5-second target is met by the best run and not by the
+> median. The morning's baseline was 72.97s; the day's four changes hold at
+> roughly 14x. Per the plan document, whether to pursue the remainder through
+> concurrency is Ben's decision, not a task any agent may self-assign.
