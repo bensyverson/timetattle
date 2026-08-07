@@ -166,6 +166,42 @@ Every genuinely timed record in this format already carries a `uuid`, so
 any real sense, but because it is the field that keeps distinct observations
 distinct.
 
+## The session and the tokens ride in the payload
+
+Every event this source emits carries a `payload` naming the session the record
+belonged to, and — where the record reported one — what the model spent on it:
+
+```json
+{"session":"…","tokens":{"input":2,"output":214,"cache_read":0,"cache_creation":46724}}
+```
+
+The session comes from the record's **own `sessionId` field**, never from the
+file name, for the same reason `cwd` never comes from the directory name. It is
+stored per record rather than once per file because a session is not confined to
+one working directory: 286 of 1,590 sessions in this machine's corpus carry
+records from more than one (`go run ./scripts/sessioncensus`), so "which
+sessions touched this project" is only answerable from the records that resolved
+to it. Subagent records need no special treatment here — every one of them
+carries the session it ran under.
+
+Four token figures are recorded and they are never added together. They are not
+interchangeable: cache reads are the cheapest tokens there are and cache writes
+the dearest, and on this corpus cache reads outweigh output tokens 223 to 1
+(44,912,093,420 against 201,285,356). A single "tokens" total would be the
+cheapest figure wearing a general name. A figure the record did not state is
+left out rather than written as `0`, because an unstated figure and a stated
+zero are different facts and this format states plenty of real zeroes.
+
+**Dollar cost is deliberately not recorded.** No transcript carries one; a cost
+figure would be these counts multiplied by a pricing table somebody has to
+maintain, and a maintained table is not an observation.
+
+The payload is the ONLY place these can go. `state` — which carries
+human-or-machine here — is part of the store's dedup key, and a per-record
+figure there would make each record its own identity; `payload` is named by no
+part of that key, so re-reading the whole corpus on every harvest continues to
+store nothing. See [the store](../store/) and migration 0014.
+
 ## What is skipped, and why that is not data loss
 
 A record becomes an event only if it carries **both** a `timestamp` and a

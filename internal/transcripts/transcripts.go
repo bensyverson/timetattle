@@ -261,7 +261,17 @@ func (r *Reader) Collect(ctx context.Context, since time.Time) ([]source.Event, 
 // The fix keeps one event per (Document, Start) and prefers whichever
 // candidate says StateHuman, because a human-shaped observation confirmed
 // anywhere is real signal and a StateMachine copy of it is a replay
-// artifact, never the other way around. This is conflict resolution between
+// artifact, never the other way around.
+//
+// The kept candidate's PAYLOAD comes with it, which matters for two readings
+// that disagree about what the record cost. Measured 2026-08-07 with
+// scripts/sessioncensus: of 7,182 repeat readings, 0 disagree about the
+// session and 52 disagree about the token figures, so the session a record
+// belonged to is never in doubt and 52 records report whichever copy this
+// rule kept. That disagreement is resolved HERE, before the store, precisely
+// because it cannot be resolved there: the payload is outside
+// event_identity, so a second, differing reading conflicts and does nothing
+// rather than standing beside the first as a second observation. This is conflict resolution between
 // two readings of one already-identified record, not session clustering --
 // no candidate is dropped for belonging to the "wrong" session, and nothing
 // here decides whether two DIFFERENT records belong together.
@@ -489,6 +499,20 @@ func scanFile(path string, isSubagent bool) ([]source.Event, error) {
 		if rec.CWD != "" && filepath.IsAbs(rec.CWD) {
 			e.Locator = rec.CWD
 		}
+		// The session and the tokens ride OUTSIDE identity, in the payload.
+		// Putting a per-record figure on State — the one field of an event
+		// that is in the store's dedup key — would make every record its own
+		// identity, and every harvest would insert the whole corpus again.
+		// See migration 0014 and internal/usage.
+		//
+		// A payload that will not encode loses this one record rather than
+		// the file: the timestamp and uuid are what an event needs, and the
+		// payload is what rides along with it.
+		payload, err := rec.payload().Encode()
+		if err != nil {
+			continue
+		}
+		e.Payload = payload
 		events = append(events, e)
 	}
 	if err := sc.Err(); err != nil {

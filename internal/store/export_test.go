@@ -9,3 +9,7 @@ package store
 // index, or does it sort? Answering that against a COPY of the query would
 // answer it about the copy.
 var EventsQuery = eventsQuery
+
+// UsageQuery is the SQL a usage roll-up issues, exposed for the same reason and
+// asked the same question: which rows does SQLite have to touch to answer it.
+var UsageQuery = usageQuery

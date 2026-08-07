@@ -115,11 +115,18 @@ func (s *Store) BeginRun(ctx context.Context, spec RunSpec) (*Run, error) {
 // vanish silently instead of being reported. DO NOTHING applies to uniqueness
 // alone, which is the only collision that is ordinary.
 //
-// project and payload are left to default NULL. project is filled by a
-// resolution pass, and nothing produces a payload yet.
+// project is left to default NULL and is filled by a resolution pass.
+//
+// payload IS written here, and it is written ONCE. It names no column of
+// event_identity, so a re-read of the same observation conflicts on identity
+// and DO NOTHING applies — the row already there keeps the payload it was
+// stored with. There is deliberately no DO UPDATE: an event is an observation
+// and is never rewritten, so a row stored before its source emitted payloads
+// carries none permanently, which is "nothing was recorded" and not zero. See
+// migration 0014.
 const insertEvent = `INSERT INTO event
-	(first_seen_run, source_id, shape, unknown, started_at, ended_at, app, document, state, locator, cause)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	(first_seen_run, source_id, shape, unknown, started_at, ended_at, app, document, state, locator, cause, payload)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT DO NOTHING`
 
 // Write stores a batch of events and reports how many were new.
@@ -171,7 +178,7 @@ func (r *Run) Write(ctx context.Context, events []source.Event) (int, error) {
 		res, err := stmt.ExecContext(ctx, r.ID, e.Source, string(e.Shape), nullable(string(e.Unknown)),
 			nullableTime(e.Start), nullableTime(e.End),
 			nullable(e.Identity.App), nullable(e.Identity.Document), nullable(e.State), nullable(e.Locator),
-			nullable(string(e.Cause)))
+			nullable(string(e.Cause)), nullable(e.Payload))
 		if err != nil {
 			return 0, fmt.Errorf("store the %s event from %s anchored at %s: %w",
 				e.Shape, e.Source, formatTime(e.Anchor()), err)

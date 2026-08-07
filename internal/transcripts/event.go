@@ -3,6 +3,8 @@ package transcripts
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/bensyverson/timetattle/internal/usage"
 )
 
 // State values this source writes to Event.State. See the package doc for
@@ -24,16 +26,70 @@ type record struct {
 	Timestamp time.Time      `json:"timestamp"`
 	CWD       string         `json:"cwd"`
 	UUID      string         `json:"uuid"`
+	SessionID string         `json:"sessionId"`
 	Message   *recordMessage `json:"message"`
 }
 
-// recordMessage is the part of a record's message this package inspects to
-// tell a human turn from a tool result relayed back to the model as a
-// "user"-role turn. Content is left raw because it takes two different JSON
-// shapes in real transcripts: a bare string for most human-typed prompts,
-// and an array of typed content blocks everywhere else.
+// recordMessage is the part of a record's message this package inspects: the
+// content, to tell a human turn from a tool result relayed back to the model as
+// a "user"-role turn, and the usage the model reported. Content is left raw
+// because it takes two different JSON shapes in real transcripts: a bare string
+// for most human-typed prompts, and an array of typed content blocks everywhere
+// else.
 type recordMessage struct {
 	Content json.RawMessage `json:"content"`
+	Usage   *recordUsage    `json:"usage"`
+}
+
+// recordUsage is the four figures of a record's usage object this package
+// keeps, out of the ten a real one carries.
+//
+// The pointers are the point. Every one of the 402,803 records carrying a usage
+// object in this machine's corpus on 2026-08-07 stated all four (measured with
+// scripts/sessioncensus), several of them explicitly zero — and an explicit
+// zero is an observation, while a figure the record never mentioned is not. A
+// plain int64 cannot tell those apart, and would publish "read nothing from
+// cache" for a record that said nothing about cache.
+//
+// What is deliberately NOT read: server_tool_use, service_tier, inference_geo,
+// speed, and the per-iteration breakdown. The outer figures are taken exactly
+// as the record states them rather than recomputed from `iterations`, which is
+// not always their sum — 199 of 164,455 records carrying iterations disagree
+// with their own outer figures (same measurement) — and the outer figure is the
+// one the record asserts about itself.
+type recordUsage struct {
+	Input         *int64 `json:"input_tokens"`
+	Output        *int64 `json:"output_tokens"`
+	CacheRead     *int64 `json:"cache_read_input_tokens"`
+	CacheCreation *int64 `json:"cache_creation_input_tokens"`
+}
+
+// payload is what this record says about itself beyond when it happened: the
+// session it belonged to, and what the model spent on it.
+//
+// It returns the empty record where there is nothing to say, which the store
+// writes as no payload at all. A record naming no session and reporting no
+// usage is not an error and is still an event: that a record exists at an
+// instant is the observation, and the payload is what rides along with it.
+func (rec record) payload() usage.Record {
+	out := usage.Record{Session: rec.SessionID}
+	if rec.Message == nil || rec.Message.Usage == nil {
+		return out
+	}
+	u := *rec.Message.Usage
+	if u.Input == nil && u.Output == nil && u.CacheRead == nil && u.CacheCreation == nil {
+		// A usage object that states none of the four figures records
+		// nothing about tokens. An empty tokens object would assert that it
+		// did.
+		return out
+	}
+	out.Tokens = &usage.Tokens{
+		Input:         u.Input,
+		Output:        u.Output,
+		CacheRead:     u.CacheRead,
+		CacheCreation: u.CacheCreation,
+	}
+	return out
 }
 
 // contentBlock is the one field this package needs from a content block:

@@ -320,6 +320,7 @@ that holds no rows.
 | `locator` | the absolute path the evidence was read from; provenance, not identity |
 | `cause` | what wrote the artifact: `user-action`, `timer` or `recovery`; NULL where the event is not an artifact |
 | `project` | the recomputable attribution, filled by resolution |
+| `payload` | a JSON object of what the source knows that no column describes; NULL where there is nothing extra to say |
 | `first_seen_run` | the harvest that first saw it |
 
 `cause` is NULL for everything that is not an artifact — a Biome focus interval
@@ -336,6 +337,42 @@ than needing to be represented: observed on is a row, observed off is a row, and
 **never sampled is the absence of a row**. That distinction decided whether 90
 minutes of confirmed work on 2026-07-14 counted, and every query written before
 it was understood collapsed it by selecting `WHERE value = 1`.
+
+### The payload, and why it sits outside identity
+
+`payload` is the one free-form column on an event, and it exists for facts that
+are real, per-record and describable by no column: today, which Claude Code
+session a transcript record belonged to and what the model spent on it. The
+shape is owned by `internal/usage`, which declares both the JSON keys and the
+paths the store's roll-up extracts, so the two cannot drift apart silently.
+
+```json
+{"session":"…","tokens":{"input":2,"output":214,"cache_read":0,"cache_creation":46724}}
+```
+
+**It is named by no part of `event_identity`, and that is the whole design.**
+`state` is in the dedup key, so it is the field a per-record figure could
+plausibly be smuggled into — and anything in the key has to be a fact that two
+readings of one observation agree about, because disagreement is spelled "two
+rows". Two readings of one transcript record are not hypothetical: 7,182
+repeated readings exist in this machine's corpus and 52 of them state different
+token figures (`go run ./scripts/sessioncensus`). In the key those become 52
+duplicate observations of records that happened once; outside it the first
+reading is stored and the second does nothing.
+
+A payload is written **once**, when the observation is first stored. There is no
+update path, because an event is an observation and is never rewritten — so a
+row stored before its source emitted payloads carries none for ever. That reads
+as *nothing was recorded*, never as zero, and `Store.Usage` reports it that way:
+its `Observations` count is how many rows carried a payload at all, and every
+token figure carries its own count of the records that stated it beside the
+total they add up to.
+
+A payload that is not a JSON object is refused at write time by the triggers
+migration 0014 adds, for a measured reason: `json_extract` answers NULL for
+every path of a value that is not an object, so `7` or `[1,2]` would store
+cleanly and then read back as a store that recorded nothing, while malformed
+JSON raises and takes the whole roll-up down with it.
 
 ### The invariant a collector author must not get wrong
 

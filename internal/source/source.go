@@ -38,9 +38,11 @@ package source
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -326,6 +328,45 @@ type Event struct {
 	// can never collide under the current collector wiring regardless of
 	// Locator: they simply coexist as two permanent rows.
 	Locator string
+	// Payload is what the source knows about this observation that no column
+	// on an event describes, as a JSON object, and is empty where there is
+	// nothing extra to say.
+	//
+	// It exists because two of the facts Timetattle was asked for are
+	// per-record figures with nowhere else to go: which Claude Code SESSION a
+	// transcript record belonged to, and what the model SPENT on it. See
+	// internal/usage for the shape and migration 0014 for the schema
+	// reasoning.
+	//
+	// IT IS DELIBERATELY OUTSIDE IDENTITY, AND THAT IS THE WHOLE POINT OF THE
+	// FIELD. State is in the store's dedup key, for a measured reason
+	// (knowledgeC writes two contradictory readings with identical endpoints),
+	// and a per-record token count carried there would make every record its
+	// own identity: the same transcript re-read on the next harvest would
+	// insert a second row for every record it holds, for ever. Payload is
+	// named by no part of event_identity, so re-reading a transcript writes
+	// nothing at all — which is the property TestHarvestingTheSameEventsTwice
+	// WithPayloadsChangesNothing pins in internal/store.
+	//
+	// It is likewise not part of Identity, which is compared by struct
+	// equality to recognise one document seen in two places. What a record
+	// cost is not what it is about.
+	//
+	// A payload is written ONCE, when the observation is first stored. An
+	// event that already exists is not rewritten to carry one, because events
+	// are observations and never change — so rows stored before a source began
+	// emitting payloads carry none, permanently, and that is "nothing was
+	// recorded" rather than zero.
+	//
+	// IT IS EMPTY ON EVERY EVENT READ BACK OUT OF THE STORE, and that is a
+	// deliberate asymmetry rather than a gap. store.Events does not select
+	// the column: a whole-corpus read is a million events, and carrying ~60
+	// MB of payload text through it would pay for something no reader of
+	// events wants — the figures are aggregated in SQL by store.Store.Usage,
+	// which never materialises a payload in Go at all. So an empty Payload on
+	// an event that came from the store says nothing whatever about whether
+	// one was recorded, and no caller may read it that way.
+	Payload string
 	// Cause is what wrote the artifact this event observes, and is empty for
 	// evidence that is not an artifact — a Biome focus interval and a presence
 	// row are not caused by anything a manifest can describe.
@@ -425,6 +466,18 @@ func (e Event) Validate() error {
 	if err := e.Cause.Validate(); err != nil {
 		return fmt.Errorf("event from %s for %s reports an %w", e.Source, e.subject(), err)
 	}
+	// A payload that is not a JSON object does not fail loudly downstream. The
+	// store reads it back with json_extract, which returns NULL for every path
+	// of a value that is not an object — so a malformed payload is
+	// indistinguishable, in every figure computed from it, from a source that
+	// recorded nothing. Refused here so that the registry loses the one event
+	// rather than a whole source's harvest, and refused again by the store's
+	// own trigger (migration 0014) for a writer that never came through here.
+	if e.Payload != "" && !isJSONObject(e.Payload) {
+		return fmt.Errorf("event from %s for %s carries a payload that is not a JSON object; "+
+			"the store reads payloads back by JSON path, and anything else reads as though nothing was recorded",
+			e.Source, e.subject())
+	}
 	switch e.Shape {
 	case Point, Interval:
 		if e.Start.IsZero() {
@@ -462,6 +515,21 @@ func (e Event) Validate() error {
 		return fmt.Errorf("event from %s for %s has unknown shape %q", e.Source, e.subject(), e.Shape)
 	}
 	return nil
+}
+
+// isJSONObject reports whether text is a well-formed JSON object.
+//
+// json.Valid alone is not enough: `7`, `"a"` and `[1,2]` are all valid JSON and
+// none of them answers a `$.session` lookup, so each would store cleanly and
+// then read back as an absence. The leading brace is checked after validity so
+// that the cheap test does not have to reason about leading whitespace on its
+// own.
+func isJSONObject(text string) bool {
+	if !json.Valid([]byte(text)) {
+		return false
+	}
+	trimmed := strings.TrimLeft(text, " \t\r\n")
+	return strings.HasPrefix(trimmed, "{")
 }
 
 // Anchor is whichever endpoint was actually observed.
