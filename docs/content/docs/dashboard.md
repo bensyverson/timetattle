@@ -101,15 +101,23 @@ here — the harvest log is the authority, and it has no row to show.
 
 Per-source counts for the window with per-day averages — presence and
 screen-on hours, commits and line counts from the git log, file writes and
-files touched, task actions from the jobs source, Claude records and prompts.
+files touched, task actions from the jobs source, Claude records, prompts,
+sessions and four token figures. The token figures stay separate — on a real
+corpus cache reads outweigh output tokens by hundreds to one, so a single
+"tokens" number would be the cheapest figure wearing a general name. A
+session counts toward every scope it *touched*, so per-project session
+counts legitimately sum to more than the store-wide total. Token averages
+divide only by days that carry token observations, so a window reaching
+past the payload era is never diluted.
 Averages divide by *observed* days, not calendar days, so a year-long window
 over a two-month store reports a rate somebody actually measured. A row
 prints `0` only when the sources were collecting and nothing happened;
-`unrecorded` means they were not collecting. Two caveats the terse rows no
-longer carry themselves: **screen-on is store-wide** — the presence sources
-record no path and attribute to no project, so that figure does not narrow
-under a scope; and merge commits carry no diff, so they count as commits but
-contribute to neither line count. When a collection run inside the window is
+`unrecorded` means they were not collecting. Under a scope the screen-on row
+labels itself "screen-on, machine-wide": the presence sources record no path
+and attribute to no project, so that figure never narrows — comparing it to
+the scoped presence row reads as "how much of the machine's lit time went
+here". Merge commits carry no diff, so they count as commits but contribute
+to neither line count. When a collection run inside the window is
 recorded as lost or partial, a closing line says the counts are lower
 bounds.
 

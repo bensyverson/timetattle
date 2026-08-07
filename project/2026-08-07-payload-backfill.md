@@ -308,9 +308,34 @@ go run ./scripts/payloadbackfill
 ```
 
 ```
-(dry-run output here: records read, matched, fillable, nothing to state,
- already carrying, matched no row, repeat offers, rows carrying no payload,
- unmatched, and the roll-up cross-check)
+root:  /Users/ben/.claude/projects
+store: /Users/ben/.timetattle/timetattle.db
+mode:  DRY RUN, through a read-only connection; nothing can be written
+
+RECORDS OFFERED (internal/transcripts, after its own replay resolution)
+  records read                             824792
+    matched a stored row                   822387
+      fillable                             822387
+      nothing to state                          0
+      already carrying a payload                0
+    matched no row                           2405
+    repeat offers of one identity               0
+      disagreeing with the first                0
+
+ROWS CARRYING NO PAYLOAD (claude-transcripts, counted before the pass)
+  rows                                     822387
+    fillable                               822387
+    nothing to state (stay NULL)                0
+    unmatched (stay NULL)                       0
+
+  rows filled by this pass                      0
+
+CROSS-CHECK against the usage roll-up
+  observations before                           0
+  observations after                            0
+  difference                                    0  (the pass filled 0)
+
+corpus read in 7.354s, whole pass 29.538s
 ```
 
 ```
@@ -318,7 +343,20 @@ go run ./scripts/payloadbackfill -dry-run=false
 ```
 
 ```
-(real-run output here — Filled must equal the dry run's Fillable)
+mode:  WRITING
+  records read                             824796
+    matched a stored row                   822387
+      fillable                             822387
+    matched no row                           2409
+
+  rows filled by this pass                 822387
+
+CROSS-CHECK against the usage roll-up
+  observations before                           0
+  observations after                       822387
+  difference                               822387  (the pass filled 822387)
+
+corpus read in 6.914s, whole pass 1m3.551s
 ```
 
 ```
@@ -326,8 +364,16 @@ go run ./scripts/payloadbackfill
 ```
 
 ```
-(third run: Filled 0, AlreadyCarrying equal to what the second run filled.
- This is the idempotence check, and it costs one corpus read)
+      already carrying a payload           822387
+  rows carrying no payload                      0
+  rows filled by this pass                      0
+
+CROSS-CHECK against the usage roll-up
+  observations before                      822387
+  observations after                       822387
+  difference                                    0  (the pass filled 0)
+
+corpus read in 6.876s, whole pass 36.353s
 ```
 
 Three things to record beside the output:
@@ -341,3 +387,13 @@ Three things to record beside the output:
 - **`timetattle metrics` before and after anyway**, if it is cheap. The argument
   above says it cannot move. An argument and a hash are not the same thing, and
   the hash costs two commands.
+
+> **Recorded (2026-08-07 evening, the integrator, live store):** `Fillable`
+> 822,387 equalled `Filled` 822,387 exactly — no harvest intervened; the
+> `matched no row` figure crept 2,405 → 2,409 → 2,411 across the three passes
+> as this very session appended records to its own live transcript, which is
+> this tool measuring the conversation that ran it. **`Unmatched` is 0**: every
+> transcript row ever stored still has its file on disk — the first measurement
+> of transcript-history survival, and it is total. `timetattle metrics` hashed
+> `0784339e…` before the fill and `0784339e…` after — the argument held, and
+> now it is also a hash. Commands as above; outputs quoted verbatim.
