@@ -244,6 +244,41 @@ func TestAnAssertionInsideAlreadyUnattributedPresenceStillBringsItsOwnEdges(t *t
 	}
 }
 
+// A PROJECT STRIPPED OF EVERY HOUR KEEPS ITS ROW, at zero, and keeps its
+// observation count.
+//
+// Dropping it would be the neatest-looking answer and the wrong one: the
+// evidence is still there and still says the project was worked, and a person
+// has said those hours were somebody else's. A reader who cannot see both has
+// only been told half of what the store knows — and a project that vanished
+// from a report would read as a project with no evidence at all, which is the
+// three-states collapse arriving through the correction layer.
+func TestAProjectCorrectedDownToNothingKeepsItsRowAndItsEvidence(t *testing.T) {
+	events := oneSitting("acorn")
+	r := corrected(t, events, []adjustments.Attribution{said(9, 0, 12, 0, "birch")})
+
+	acorn, ok := r.Project("acorn")
+	if !ok {
+		t.Fatalf("acorn is gone from the report entirely; %d projects remain", len(r.Projects))
+	}
+	if acorn.Engaged.Total != 0 {
+		t.Errorf("acorn still holds %v of a sitting asserted whole to birch", acorn.Engaged.Total)
+	}
+	if acorn.Events != len(events) {
+		t.Errorf("acorn's row rests on %d observations, want the %d that are still in the store; "+
+			"a correction moves hours and destroys no evidence", acorn.Events, len(events))
+	}
+	if acorn.Sittings.Count != 0 {
+		t.Errorf("acorn shows %d sittings against no engaged time at all", acorn.Sittings.Count)
+	}
+	// And the whole sitting went somewhere, on a person's word alone.
+	birch := projectOf(t, r, "birch")
+	if birch.Engaged.Total != r.Presence.Total || birch.Asserted != r.Presence.Total {
+		t.Errorf("birch holds %v engaged and %v asserted against %v of presence",
+			birch.Engaged.Total, birch.Asserted, r.Presence.Total)
+	}
+}
+
 // A person may name a project no evidence in the corpus mentions. The row that
 // results is honest — zero observations, and every hour in it a person's word —
 // and refusing to create it would silently discard the correction.
