@@ -268,10 +268,13 @@ Three answers, and the third is the one that is easy to lose:
 | --- | --- |
 | attested | an observation recorded an act: a message, a commit, a claim held |
 | `weak` | nothing but a file's modification time, which a cron writes too |
-| unaccounted | nothing at all — silence the gap threshold bridged inside the project's own cluster |
+| unaccounted | nothing at all — silence the gap threshold bridged inside the project's own cluster, or an hour a person assigned here by hand |
 
 The three sum to `absolute` exactly, and the sentence beneath the table prints
-all three so the remainder cannot be quietly folded into either neighbour.
+all three so the remainder cannot be quietly folded into either neighbour. Once
+anybody has recorded an attribution correction the remainder has two sources,
+and that sentence names both — see
+[Corrections](#corrections-what-a-person-said).
 
 **`weak` and `corroborated` are not opposite ends of one scale.** A focus
 interval says somebody was at the machine and says nothing whatever about which
@@ -375,6 +378,21 @@ different responses:
 3. **Bridged.** Clock no observation is near enough to account for. Nothing was
    recorded here, which is not the same as nothing having happened.
 
+A **fourth** line appears once somebody has recorded an attribution correction
+saying a span belonged to no project, and only then:
+
+```console
+        0.5h  a person having looked and said it belonged to no project. That is an
+              observation, not a gap in the registry, and no amount of registering
+              will change it.
+```
+
+It is deliberately not one of the three above. Those are all ways the machine
+*failed* to attribute an hour, and two of them send a reader off to register a
+directory; this one says the attribution is settled and the answer is *nobody*.
+Folding it into an unregistered directory would send somebody to fix a registry
+with nothing wrong with it. See [Corrections](#corrections-what-a-person-said).
+
 > **Corrected 2026-08-01.** This section previously labelled the first figure
 > ACTIONABLE and told the reader to run `timetattle register` on the directory.
 > That was measurably wrong. After the attribution pass caught up on 2026-08-01
@@ -385,6 +403,115 @@ different responses:
 > scratch directories. The old wording was the same actionable-versus-
 > unregisterable collapse one level up from the one the three figures avoid.
 > Reproduce with `timetattle orient`.
+
+## Corrections: what a person said
+
+Attribution is a **model**, and it is wrong in ways no source can see. A
+directory can be registered to one project and used for another's work for an
+afternoon; a meeting leaves a transcript in whichever repository happened to be
+open. [`timetattle review`](review.md) and
+[`timetattle adjust`](adjustments.md) both record a person's answer, keyed to a
+span of wall clock, and this command reads it.
+
+Every report says what it found, **including when it found nothing**:
+
+```console
+CORRECTIONS: none recorded over this span, so every figure above is the machine's
+own answer. `timetattle review` records one against a block; `timetattle adjust
+-assert attributed` records one directly.
+```
+
+That line prints on every run for a reason. Until 2026-08-10 the store recorded
+attribution assertions faithfully, and nothing read them: a person could
+reattribute a span, watch it survive re-derivation exactly as promised, and find
+every reported hour unmoved with nothing anywhere saying why. **Silence is
+indistinguishable from agreement**, so the report names the population it
+checked rather than leaving the reader to infer it from an absent section.
+
+When there are corrections, what they did is broken out:
+
+```console
+CORRECTIONS 1 attribution assertion applied
+        1.8h  moved to a project somebody named. Those hours are that project's on a
+              person's word and nothing else's, and they are counted in its asserted
+              column.
+        0.2h  fell outside every sitting and moved nothing. An attribution says whose
+              an hour was, never that there was one; `timetattle adjust -assert
+              engaged` is what makes the hour exist.
+```
+
+Four headings, and they partition the asserted clock exactly — the command
+refuses to print a report where they do not add up, because a correction that
+evaporated between the log and the figure is the failure this whole layer exists
+to end.
+
+| | |
+| --- | --- |
+| moved to a project | presence a person reattributed to a named project |
+| moved to no project | presence a person said belonged to nobody |
+| agreed | the machine had already said the same thing, so nothing moved |
+| outside every sitting | the correction reached clock no sitting covers |
+
+The last two are the ones worth reading hardest. A reader who has recorded a
+correction and sees nothing move needs to know **which** silence they are
+looking at, and they need different things next: agreement means the model was
+right; outside means the hour does not exist yet in the derivation, and
+`-assert engaged` is what makes it exist.
+
+### An attribution says whose an hour was, never that there was one
+
+Presence, the sitting-length distribution and the backlight figures are **byte
+for byte** what the uncorrected report gives. Letting an attribution create or
+destroy presence would make the capacity denominator a function of how much
+reviewing had been done.
+
+### Asserted hours are named, never mixed into the evidence
+
+A project handed an hour by a person is not thereby *observed* for that hour. Its
+`observed`, `attested` and `weak` columns do not move, so the hour lands in the
+unaccounted remainder — and the sentence beneath the table then says how much of
+that remainder is a person's word rather than bridged silence:
+
+```console
+  of 13.2h absolute: 10.4h attested, 1.3h weak (a file's modification time only),
+  1.4h unaccounted, of which 1.4h is a person's assertion and the rest bridged silence
+```
+
+The command checks this rather than intending it: if asserted time ever exceeded
+the unaccounted remainder, a person's word would have been counted somewhere as
+though something had observed it, and the report refuses to print.
+
+### The client follows the project, or the hours go clientless
+
+An assertion names a **project**. `metrics` reads no registry, so the client is
+taken from the report's own evidence: if exactly one client in the report owns
+that project, the hours follow. If the corpus cannot place the project, or two
+directories claim it for different clients, the hours belong to the project and
+to no client — the `clientless` figure, which already exists and already says
+what it means. Guessing an owner there would be last-writer-wins dressed as a
+roll-up.
+
+### Only the attribution half of the log is applied
+
+The same correction log carries `engaged` and `not-engaged` assertions, and
+`metrics` deliberately does **not** apply those. They move the capacity
+denominator every share here is divided by, and
+[the fitting](fitting.md) measures the clustering against exactly that
+difference: the residual between what the model said and what the reviewer said
+*is* the error signal, and a report that had already absorbed the reviewer's
+engagement corrections would shrink it toward zero for reasons having nothing to
+do with the model improving. Attribution carries no such hazard, because no
+parameter being fitted is an attribution parameter.
+
+### `-uncorrected` gives the machine's answer alone
+
+```console
+$ timetattle metrics -uncorrected
+```
+
+Every figure is what the derivation says with no human overlay on it, and the
+report says so instead of quietly looking like an uncorrected one. It is the
+comparison the fitting rests on, so it stays reachable.
 
 ## A series: day, week and month
 
@@ -510,11 +637,14 @@ exist. The `level` column says which question each figure answers:
 | `client` | the client | that client's **absolute** engaged time |
 | `project` | the project | that project's **absolute** engaged time |
 | `clientless` | empty | presence a project owns and no client does |
-| `unattributed` | `unregistered`, `unlocatable` or `bridged` | presence no project could be attributed, by reason |
+| `unattributed` | `unregistered`, `unlocatable`, `asserted` or `bridged` | presence no project could be attributed, by reason |
 
-The three `unattributed` rows have no total row above them, deliberately: they
-sum to the whole exactly, and a fourth row carrying the total would double-count
-for any consumer that added the column up.
+The four `unattributed` rows have no total row above them, deliberately: they
+sum to the whole exactly, and a further row carrying the total would
+double-count for any consumer that added the column up. All four are written on
+every period, including `asserted` on a store nobody has ever corrected, so the
+export's shape is fixed rather than a property of the data — a row that appeared
+only sometimes would break a program the first time somebody reviewed a day.
 
 **The figures are exact and re-aggregatable.** The table prints `0.1h`, which is
 six minutes of resolution — fine to read and useless to add up. These are

@@ -307,6 +307,92 @@ func TestAttributionDoesNotChangeEngagement(t *testing.T) {
 	want(t, got, "09:00–11:00")
 }
 
+// THE FOLD READ AS A LIST RATHER THAN A POINT QUERY.
+//
+// Project(at) answers about one instant, which is what a day review needs. A
+// report needs the other shape: every stretch somebody has pronounced on, so
+// that a segmentation can be cut at their edges before anything is summed. The
+// two readings must agree — a caller walking the list and a caller probing
+// instants cannot be allowed to reach different answers about the same log.
+func TestAttributionsAreTheResolvedPiecesInTimeOrder(t *testing.T) {
+	log := []adjustments.Adjustment{
+		{ID: 1, Start: at(9, 0), End: at(17, 0), Assertion: adjustments.Attributed,
+			Project: "first-project", Origin: "a", RecordedAt: day.Add(240 * time.Hour)},
+		{ID: 2, Start: at(13, 0), End: at(15, 0), Assertion: adjustments.Attributed,
+			Project: "second-project", Origin: "a", RecordedAt: day.Add(241 * time.Hour)},
+		{ID: 3, Start: at(15, 0), End: at(16, 0), Assertion: adjustments.Unattributed,
+			Origin: "a", RecordedAt: day.Add(242 * time.Hour)},
+	}
+	o := adjustments.Fold(nil, log)
+	got := o.Attributions()
+
+	type piece struct{ when, project string }
+	var flat []piece
+	for _, a := range got {
+		flat = append(flat, piece{describe([]adjustments.Span{a.Span}), a.Project})
+	}
+	expect := []piece{
+		{"09:00–13:00", "first-project"},
+		{"13:00–15:00", "second-project"},
+		{"15:00–16:00", ""},
+		{"16:00–17:00", "first-project"},
+	}
+	if len(flat) != len(expect) {
+		t.Fatalf("the fold resolved to %v, want %v", flat, expect)
+	}
+	for i := range expect {
+		if flat[i] != expect[i] {
+			t.Errorf("piece %d is %v, want %v", i, flat[i], expect[i])
+		}
+	}
+
+	// And the two readings of the same log agree, instant by instant. This is
+	// the property that makes the list usable by a report at all.
+	for _, probe := range []time.Time{at(9, 30), at(13, 30), at(15, 30), at(16, 30), at(18, 0)} {
+		wantProject, wantSaid := o.Project(probe)
+		gotProject, gotSaid := "", false
+		for _, a := range got {
+			if !probe.Before(a.Span.Start) && probe.Before(a.Span.End) {
+				gotProject, gotSaid = a.Project, true
+			}
+		}
+		if gotProject != wantProject || gotSaid != wantSaid {
+			t.Errorf("at %s the list says (%q, %v) and Project says (%q, %v)",
+				probe.Format("15:04"), gotProject, gotSaid, wantProject, wantSaid)
+		}
+	}
+}
+
+// An empty list and a list of empty-named pieces are different facts, and the
+// difference is the one this project keeps losing. Nobody having said anything
+// must produce NO pieces, rather than a piece saying "no project".
+func TestALogWithNoAttributionInItResolvesToNoPiecesAtAll(t *testing.T) {
+	log := []adjustments.Adjustment{
+		says(1, adjustments.Engaged, 9, 0, 11, 0),
+		says(2, adjustments.NotEngaged, 11, 0, 12, 0),
+	}
+	if got := adjustments.Fold(nil, log).Attributions(); len(got) != 0 {
+		t.Errorf("%d attribution pieces came out of a log holding none; an absent row is not "+
+			"an assertion that a span belonged to nobody", len(got))
+	}
+}
+
+// The pieces are handed out by value. A caller that sorts or rewrites them must
+// not be able to reach back into the overlay it got them from, because the
+// overlay is folded once and asked many times.
+func TestAttributionsCannotBeEditedThroughTheSliceItReturns(t *testing.T) {
+	log := []adjustments.Adjustment{
+		{ID: 1, Start: at(9, 0), End: at(11, 0), Assertion: adjustments.Attributed,
+			Project: "a-project", Origin: "a", RecordedAt: day.Add(240 * time.Hour)},
+	}
+	o := adjustments.Fold(nil, log)
+	got := o.Attributions()
+	got[0].Project = "somebody-else"
+	if again := o.Attributions(); again[0].Project != "a-project" {
+		t.Errorf("editing the returned slice changed the overlay to %q", again[0].Project)
+	}
+}
+
 // THE THIRD STATE. Reviewed-and-recalled, reviewed-and-not-recalled, and never
 // reviewed are three answers and the overlay must give three.
 func TestReviewHasThreeStates(t *testing.T) {

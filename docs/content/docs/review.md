@@ -128,6 +128,35 @@ a block would be false on them; and the parameters being fitted are all
 time-boundary parameters, which attribution is not one of. Attribution is
 asserted only where a reviewer corrects it with `p`.
 
+### Correcting who a block belonged to — `p`
+
+Walking the blocks (`n` at the day prompt, or a sampled day) offers `p` on each
+one. It asks who the block really belonged to and takes a project name, or a
+blank line:
+
+```console
+  block 2 of 6  10:00..11:30  1.5h  acorn
+  [Enter] right  [n] not work at all  [s] start  [e] end  [p] project  ...
+  > p
+  it belonged to? (a project, or blank for none) birch
+```
+
+A name records an `attributed` assertion over the block's span; a blank line
+records `unattributed`, which asserts the block belonged to **no** project. That
+is a thing a person can say and is not the same as saying nothing — the store
+has a separate assertion for it precisely so the two cannot collapse.
+
+`p` does not settle the block, so the same block can be reattributed *and*
+trimmed before you press Enter.
+
+**What it moves.** [`timetattle metrics`](metrics.md#corrections-what-a-person-said)
+reads these and reports what they changed: hours leave every project the span
+was not asserted to and arrive at the one it was, counted as *asserted* rather
+than as evidence, and a blank answer moves them into unattributed presence under
+a reason of its own. Presence never moves — an attribution says whose an hour
+was, never that there was one — so a correction laid over clock no sitting
+covers is reported as having moved nothing rather than silently doing nothing.
+
 ## Four states, and they are four on purpose
 
 | | what it means | what it writes |

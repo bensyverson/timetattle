@@ -334,3 +334,127 @@ func TestMetricsNamesAllThreeThingsEngagedTimeCanRestOn(t *testing.T) {
 		}
 	}
 }
+
+// metricsRow is one project's absolute engaged hours as the report prints them.
+func metricsRow(t *testing.T, report, project string) string {
+	t.Helper()
+	for line := range strings.SplitSeq(report, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, project) {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(trimmed, project))
+		if len(fields) == 0 {
+			continue
+		}
+		return fields[0]
+	}
+	t.Fatalf("no row for %q in:\n%s", project, report)
+	return ""
+}
+
+// CRITERION XGE, END TO END: a correction somebody records changes the figure
+// this command prints.
+//
+// Everything under it was already in place — migration 0008 stores the
+// assertion, `adjust` and `review` both write one, and the fold has always
+// resolved it. Nothing read it. A person could reattribute a span, watch the
+// row survive re-derivation exactly as promised, and find every reported hour
+// unmoved, with nothing anywhere saying why. This is the test that would have
+// failed for the whole of that time.
+func TestARecordedAttributionCorrectionChangesTheReportedFigure(t *testing.T) {
+	path := seedTwoProjects(t)
+	cfg := filepath.Join(t.TempDir(), "none.json")
+
+	before := runMetrics(t, "-store", path, "-config", cfg, "-all")
+	if got := metricsRow(t, before, "Holiday Campaign"); got == "0.0h" {
+		t.Fatalf("the fixture credits Holiday Campaign nothing to begin with:\n%s", before)
+	}
+	if !strings.Contains(before, "none recorded over this span") {
+		t.Errorf("a report over a store holding no corrections does not say so, so a reader "+
+			"cannot tell it from one that never looked:\n%s", before)
+	}
+
+	// The seed's two observations are three minutes apart inside one sitting.
+	// This says the first five minutes of it were the OTHER project's work.
+	if err := adjustTo(&bytes.Buffer{}, []string{"-store", path,
+		"-from", "2026-07-28T15:00:00Z", "-to", "2026-07-28T15:05:00Z",
+		"-assert", "attributed", "-project", "Recruiting Site", "-origin", "a-person"}); err != nil {
+		t.Fatalf("adjust -assert attributed: %v", err)
+	}
+
+	after := runMetrics(t, "-store", path, "-config", cfg, "-all")
+	if metricsRow(t, after, "Holiday Campaign") == metricsRow(t, before, "Holiday Campaign") {
+		t.Errorf("Holiday Campaign reports %s both before and after five minutes of it were "+
+			"asserted to be another project's:\n%s", metricsRow(t, after, "Holiday Campaign"), after)
+	}
+	if !strings.Contains(after, "CORRECTIONS") {
+		t.Errorf("the report never mentions the correction it applied:\n%s", after)
+	}
+	if !strings.Contains(after, "asserted") {
+		t.Errorf("the report never says any of its hours rest on a person's word:\n%s", after)
+	}
+
+	// AND THE MACHINE'S OWN ANSWER IS STILL REACHABLE, unchanged. The
+	// correction is an overlay, so the derivation underneath it has to be
+	// printable on demand — internal/fit measures the model against exactly
+	// that difference, and a tool that could only show the corrected answer
+	// would have quietly destroyed the comparison.
+	raw := runMetrics(t, "-store", path, "-config", cfg, "-all", "-uncorrected")
+	if metricsRow(t, raw, "Holiday Campaign") != metricsRow(t, before, "Holiday Campaign") {
+		t.Errorf("-uncorrected reports %s against %s before any correction existed",
+			metricsRow(t, raw, "Holiday Campaign"), metricsRow(t, before, "Holiday Campaign"))
+	}
+	if !strings.Contains(raw, "were not read") {
+		t.Errorf("-uncorrected does not say it ignored the corrections in the store:\n%s", raw)
+	}
+}
+
+// The other half of the same assertion, and the one that has to keep its own
+// reason. "I looked, and that stretch was nobody's" is an observation; the
+// three reasons the machine has for failing to attribute a span are all
+// failures, and two of them tell a reader to go and register a directory.
+func TestAssertingASpanWasNobodysIsReportedAsItsOwnReason(t *testing.T) {
+	path := seedTwoProjects(t)
+	cfg := filepath.Join(t.TempDir(), "none.json")
+
+	if err := adjustTo(&bytes.Buffer{}, []string{"-store", path,
+		"-from", "2026-07-28T15:00:00Z", "-to", "2026-07-28T15:05:00Z",
+		"-assert", "unattributed", "-origin", "a-person"}); err != nil {
+		t.Fatalf("adjust -assert unattributed: %v", err)
+	}
+
+	got := runMetrics(t, "-store", path, "-config", cfg, "-all")
+	flat := strings.Join(strings.Fields(got), " ")
+	if !strings.Contains(flat, "a person having looked and said it belonged to no project") {
+		t.Errorf("unattributed presence does not separate what a person asserted from what the "+
+			"registry could not resolve:\n%s", got)
+	}
+	if !strings.Contains(flat, "moved to NO project") {
+		t.Errorf("the corrections section never says the clock moved:\n%s", got)
+	}
+}
+
+// A CORRECTION THAT REACHES NO SITTING MOVES NOTHING, and the report has to say
+// that rather than print unchanged figures and leave the reader to conclude
+// their correction was never read. The two silences are indistinguishable
+// otherwise, and this command spent its whole life in the second one.
+func TestACorrectionOverClockNoSittingCoversSaysItMovedNothing(t *testing.T) {
+	path := seedTwoProjects(t)
+	cfg := filepath.Join(t.TempDir(), "none.json")
+
+	if err := adjustTo(&bytes.Buffer{}, []string{"-store", path,
+		"-from", "2026-07-28T03:00:00Z", "-to", "2026-07-28T04:00:00Z",
+		"-assert", "attributed", "-project", "Recruiting Site", "-origin", "a-person"}); err != nil {
+		t.Fatalf("adjust -assert attributed: %v", err)
+	}
+
+	got := runMetrics(t, "-store", path, "-config", cfg, "-all")
+	flat := strings.Join(strings.Fields(got), " ")
+	if !strings.Contains(flat, "fell outside every sitting and moved nothing") {
+		t.Errorf("a correction that reached no presence is not reported at all:\n%s", got)
+	}
+	if !strings.Contains(flat, "NOTHING ABOVE MOVED") {
+		t.Errorf("the report does not say that no figure changed:\n%s", got)
+	}
+}

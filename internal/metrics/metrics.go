@@ -145,6 +145,15 @@ const (
 	// was recorded here, which is neither "observed and unattributable" nor
 	// "observed and unregistered".
 	ReasonBridged Reason = "bridged"
+	// ReasonAsserted is a person having said the span belonged to no project.
+	//
+	// It is a FOURTH reason and not a variant of the other three, which are all
+	// ways the machine failed to attribute something and all of which suggest an
+	// action — register the directory, or accept that registering can never
+	// reach it. This one says the attribution is settled and correct: somebody
+	// looked and the hour was nobody's. Filing it under any of the others would
+	// send a reader to fix a registry that has nothing wrong with it.
+	ReasonAsserted Reason = "asserted"
 )
 
 // Segment is one atomic piece of presence: a span of wall clock across the
@@ -234,6 +243,14 @@ type Project struct {
 	Attested    time.Duration
 	Weak        time.Duration
 	Unaccounted time.Duration
+	// Asserted is how much of Engaged.Total this project holds ONLY because a
+	// person said so — clock no evidence of its own reaches, moved here by a
+	// recorded attribution correction. It is always part of Unaccounted, since
+	// an assertion is not an observation and never becomes one, and it is named
+	// separately because "nobody recorded anything here" and "somebody looked
+	// and told us whose it was" are opposite kinds of ignorance wearing the same
+	// number. Zero unless Corrected was given assertions.
+	Asserted time.Duration
 	// Sittings is the length distribution of this project's own active spans.
 	Sittings Distribution
 }
@@ -285,6 +302,9 @@ type Client struct {
 	Attested    time.Duration
 	Weak        time.Duration
 	Unaccounted time.Duration
+	// Asserted is the same figure Project.Asserted is, one level up: clock this
+	// client holds because a person named one of its projects for it.
+	Asserted time.Duration
 	// Sittings is the length distribution of this client's own active spans.
 	// It cannot be summed from its projects' distributions at all, which is a
 	// second reason a roll-up is computed rather than accumulated.
@@ -294,16 +314,18 @@ type Client struct {
 // Unattributed is presence no project could be attributed, and why.
 type Unattributed struct {
 	// Presence is the whole of it. Observed is the part an observation
-	// actually spanned, and it is NOT the sum of the three figures below: an
+	// actually spanned, and it is NOT the sum of the figures below: an
 	// instant is RESPONSIBLE for the lead-in and tail-out around it and
 	// OBSERVES neither, so Observed is always the smaller of the two. Every
 	// source that can be unattributed-by-registry emits instants, so on real
 	// data Observed here is a small fraction of Unregistered.
 	Presence Span
-	// Unregistered, Unlocatable and Bridged partition Presence.Total. See
-	// Reason for what each one means and why the last two are not one bucket.
+	// Unregistered, Unlocatable, Asserted and Bridged partition Presence.Total.
+	// See Reason for what each one means and why they are four buckets and not
+	// one. Asserted is zero unless Corrected was given assertions.
 	Unregistered time.Duration
 	Unlocatable  time.Duration
+	Asserted     time.Duration
 	Bridged      time.Duration
 	// UnregisteredEvents and UnlocatableEvents count the observations behind
 	// the first two, so a large bucket can be traced to how much evidence is
@@ -380,6 +402,11 @@ type Report struct {
 	Clientless time.Duration
 	// Unattributed is the rest of presence, and why.
 	Unattributed Unattributed
+	// Corrections is how much of this report is a person's word rather than the
+	// machine's answer, and how much of what they said moved nothing. It is the
+	// zero value on a report nobody has corrected, which is a different fact
+	// from a report whose corrections all agreed.
+	Corrections Corrections
 	// Backlight is how much of Presence the presence sources witnessed, and
 	// how much of it they were silent about.
 	Backlight Backlight
@@ -415,12 +442,55 @@ func (r Report) Client(name string) (Client, bool) {
 	return Client{}, false
 }
 
-// Compute derives both metrics from a slice of events.
+// Compute derives both metrics from a slice of events, with no human
+// correction laid over them: the machine's answer, alone.
 //
 // It is pure, like the clustering it rests on: the same events under the same
 // parameters give the same report, so a figure can be re-run and argued with
 // rather than being a property of a database.
 func Compute(events []source.Event, p sessions.Params) (Report, error) {
+	return Corrected(events, p, nil)
+}
+
+// Corrected derives the same metrics with a person's attribution assertions
+// laid over the machine's answer.
+//
+// said is a FOLDED log — adjustments.Overlay.Attributions — so the pieces are
+// disjoint and every "a correction to a correction" has already been resolved
+// by the time it arrives. An empty Project is the assertion that a span
+// belonged to NO project; the third state, nobody having said, is the absence
+// of a piece, and reading a missing piece as an empty one would turn every
+// unexamined hour in the corpus into a correction nobody made.
+//
+// # What an attribution assertion may and may not move
+//
+// It moves WHOSE an hour was. It never moves whether there was one. Presence,
+// the sitting distribution and the backlight figures are byte for byte what
+// Compute produces, and an assertion reaching clock no sitting covers moves
+// nothing at all — reported as Corrections.Outside rather than dropped, because
+// a correction that silently changed nothing is exactly the failure this
+// function exists to end.
+//
+// ENGAGED AND NOT-ENGAGED ASSERTIONS ARE DELIBERATELY NOT APPLIED HERE, though
+// the same folded log carries them. They move the capacity denominator every
+// share in the report is divided by, and internal/fit measures the model
+// against precisely that difference: the residual between what the clustering
+// said and what the reviewer said IS the error signal, and a metrics report
+// that had already absorbed the reviewer's engagement corrections would shrink
+// it toward zero for reasons having nothing to do with the model improving.
+// Attribution carries no such hazard, because no parameter being fitted is an
+// attribution parameter. Applying the other two needs its own case made.
+//
+// # Corrections are laid over the ATTRIBUTION and never over the clustering
+//
+// The assertions are applied to each level's active spans after every
+// clustering has run, never to the events going into one. Rewriting an event's
+// project before sessions.Cluster would make the correction an input to the
+// model it is meant to measure — the objection internal/adjustments' package
+// doc makes at length — and it could not express the case that matters most
+// anyway: a person can reattribute a stretch of bridged silence, where there is
+// no event to rewrite.
+func Corrected(events []source.Event, p sessions.Params, said []Attribution) (Report, error) {
 	global, err := sessions.Cluster(events, p)
 	if err != nil {
 		return Report{}, err
@@ -564,6 +634,38 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+
+	// THE HUMAN CORRECTION LAYER, applied here and nowhere earlier.
+	//
+	// Both levels are corrected by the same code against the same resolved log.
+	// The client level gets its target through the project-to-client mapping the
+	// report has ALREADY derived from its own events — clientOwns — rather than
+	// from a registry, which this package reads nothing of. A project the corpus
+	// cannot place, or one two clients claim, resolves to no client at all and
+	// its asserted hours land in Clientless, which is a figure that already
+	// exists and already says what it means. Guessing an owner there would be
+	// last-writer-wins dressed as a roll-up.
+	var (
+		assertedNone []span
+		gainedBy     map[string][]span
+		gainedFor    map[string][]span
+	)
+	if len(said) > 0 {
+		// Read BEFORE anything is corrected: what the machine said is the
+		// baseline the four correction figures are measured against.
+		if r.Corrections, err = account(said, presence, projects.active); err != nil {
+			return Report{}, err
+		}
+		owner, contested := ownersOf(clientOwns)
+		gainedBy = projects.correct(said, presence, func(a Attribution) string { return a.Project })
+		gainedFor = clients.correct(said, presence, func(a Attribution) string {
+			if a.Project == "" || contested[a.Project] {
+				return ""
+			}
+			return owner[a.Project]
+		})
+		assertedNone = assertedToNobody(said, presence)
+	}
 	names, active := projects.names, projects.active
 
 	// Cut presence at every boundary that could make one half of a piece
@@ -576,11 +678,18 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 	edges := cuts(observed, unregCover, unlocCover)
 	edges = append(edges, projects.cuts()...)
 	edges = append(edges, clients.cuts()...)
+	// An assertion that a span belonged to NOBODY moves no active run at all,
+	// so it contributes no cut through either level above and has to bring its
+	// own. Without it a segment straddles the edge of the assertion, covers
+	// reports false for the whole of it, and the reason silently reverts to
+	// whichever of the machine's three the rest of the segment carried.
+	edges = append(edges, cuts(assertedNone)...)
 	pieces := carve(presence, edges)
 
 	observedAt := &cursor{spans: observed}
 	unregAt := &cursor{spans: unregCover}
 	unlocAt := &cursor{spans: unlocCover}
+	assertedNoneAt := &cursor{spans: assertedNone}
 	projectAt, clientAt := projects.cursors(), clients.cursors()
 
 	totals := make(map[string]*Project, len(names))
@@ -671,8 +780,14 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 		if len(seg.Projects) == 0 {
 			// Priority, stated: an unregistered directory is actionable and a
 			// source with no path is not, so where both cover the same
-			// instant the actionable answer is the useful one to report.
+			// instant the actionable answer is the useful one to report. A
+			// PERSON'S ASSERTION OUTRANKS BOTH: the other three say why the
+			// machine could not attribute the span, and this one says it has
+			// been attributed — to nobody — by somebody who was there.
 			switch {
+			case assertedNoneAt.covers(piece):
+				seg.Unattributed = ReasonAsserted
+				r.Unattributed.Asserted += d
 			case unregAt.covers(piece):
 				seg.Unattributed = ReasonUnregistered
 				r.Unattributed.Unregistered += d
@@ -711,7 +826,7 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 		r.Segments = append(r.Segments, seg)
 	}
 	r.Unattributed.Bridged = r.Unattributed.Presence.Total -
-		r.Unattributed.Unregistered - r.Unattributed.Unlocatable
+		r.Unattributed.Unregistered - r.Unattributed.Unlocatable - r.Unattributed.Asserted
 	r.Unattributed.UnregisteredEvents = len(unregistered)
 	r.Unattributed.UnlocatableEvents = len(unlocatable)
 
@@ -722,6 +837,7 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 		// anything other than what the other two leave behind.
 		totals[name].Unaccounted = totals[name].Engaged.Total -
 			totals[name].Attested - totals[name].Weak
+		totals[name].Asserted = total(gainedBy[name])
 		r.Projects = append(r.Projects, *totals[name])
 	}
 	r.Clients = make([]Client, 0, len(clients.names))
@@ -729,6 +845,7 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 		clientTotals[name].Sittings = distribute(clients.active[name])
 		clientTotals[name].Unaccounted = clientTotals[name].Engaged.Total -
 			clientTotals[name].Attested - clientTotals[name].Weak
+		clientTotals[name].Asserted = total(gainedFor[name])
 		r.Clients = append(r.Clients, *clientTotals[name])
 	}
 
@@ -821,12 +938,26 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 				"leaving %v unaccounted; a negative remainder means one stretch was counted twice",
 				p.Name, p.Engaged.Total, p.Attested, p.Weak, p.Unaccounted)
 		}
+		// AN ASSERTION IS NOT AN OBSERVATION, checked rather than intended.
+		// Clock a person moved to a project is clock no evidence of that
+		// project's reaches, so it can only ever land in the unaccounted
+		// remainder. If it exceeded that remainder, the correction would have
+		// been counted as attested or weak somewhere — a project's hours
+		// reading as evidenced when a person's word is all there is behind
+		// them, which is the exact misreading every figure in this package is
+		// shaped to prevent.
+		if p.Asserted > p.Unaccounted {
+			return Report{}, fmt.Errorf("%s holds %v moved to it by a correction against %v "+
+				"unaccounted; asserted time has been counted as though something observed it",
+				p.Name, p.Asserted, p.Unaccounted)
+		}
 	}
 	if r.Unattributed.Bridged < 0 {
-		return Report{}, fmt.Errorf("unattributed presence is %v of which %v is unregistered and %v "+
-			"unlocatable, leaving %v bridged; a negative remainder means one stretch was counted "+
-			"under two reasons", r.Unattributed.Presence.Total, r.Unattributed.Unregistered,
-			r.Unattributed.Unlocatable, r.Unattributed.Bridged)
+		return Report{}, fmt.Errorf("unattributed presence is %v of which %v is unregistered, %v "+
+			"unlocatable and %v asserted to be nobody's, leaving %v bridged; a negative remainder "+
+			"means one stretch was counted under two reasons", r.Unattributed.Presence.Total,
+			r.Unattributed.Unregistered, r.Unattributed.Unlocatable, r.Unattributed.Asserted,
+			r.Unattributed.Bridged)
 	}
 	return r, nil
 }

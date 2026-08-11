@@ -400,6 +400,38 @@ func (o Overlay) EngagedAt(at time.Time) (bool, bool) { return lookup(o.engageme
 // never-examined events in the live store into assertions nobody made.
 func (o Overlay) Project(at time.Time) (string, bool) { return lookup(o.attributed, at) }
 
+// Attribution is one resolved stretch of the attribution log: a span, and who
+// the corrections say it belonged to once the later assertions have won.
+//
+// An empty Project is the assertion that the span belonged to NO project. The
+// third state — nobody has said — is the absence of a piece covering the
+// instant, and a caller that reads a missing piece as an empty one has turned
+// every unexamined hour in the corpus into a correction nobody made.
+type Attribution struct {
+	Span
+	Project string
+}
+
+// Attributions is the fold read as a list rather than as a point query.
+//
+// Project(at) is what a day review needs, an hour at a time. A report needs
+// this shape instead: the pieces are disjoint and in time order, so a
+// segmentation can be cut at their edges before any figure is summed over it.
+// Both are the same resolution of the same log — this returns exactly the
+// pieces Project() looks its answer up in — so the two readings cannot drift.
+//
+// The pieces are copied out. The overlay is folded once and asked many times,
+// and a caller that sorted or rewrote what it got back would be editing every
+// later reader's answer.
+func (o Overlay) Attributions() []Attribution {
+	out := make([]Attribution, 0, len(o.attributed))
+	for _, p := range o.attributed {
+		out = append(out, Attribution{Span: p.span, Project: p.value})
+	}
+	slices.SortStableFunc(out, func(a, b Attribution) int { return a.Start.Compare(b.Start) })
+	return out
+}
+
 // Review reports whether a span containing at has been looked at, and what the
 // reviewer could say about it.
 //

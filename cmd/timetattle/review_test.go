@@ -1063,3 +1063,77 @@ func TestADayExaminedOnlyInPartIsOfferedAgainAndSaysSoInTheListing(t *testing.T)
 		t.Errorf("the listing says %q for a day examined end to end", got)
 	}
 }
+
+// WHETHER A PERSON CAN ACTUALLY PRODUCE AN ATTRIBUTION ASSERTION.
+//
+// The store's schema has carried 'attributed' and 'unattributed' since
+// migration 0008, internal/dayview builds both from a Judgement, and its own
+// tests cover that. None of that is evidence that a reviewer sitting at the
+// prompt can reach either one: the write path existing in code and the write
+// path being reachable through the keys the command actually offers are
+// different claims, and the second one had never been checked. The live store
+// holds no attribution assertion of either kind, so nothing about the corpus
+// distinguishes "nobody has needed to reattribute a block" from "there is no
+// way to".
+//
+// This drives the command the way a person does — one key at a time, through
+// the block walk — so that the answer is established rather than inferred from
+// the presence of a case in a switch. It is deliberately end to end: the same
+// question asked of dayview.Confirm alone is the question that was already
+// answered.
+func TestAReviewerCanReattributeABlockThroughTheKeysTheCommandOffers(t *testing.T) {
+	// n walks the blocks, p asks who the block belonged to, and the blank line
+	// after the name settles the block — reattributing does not end the
+	// conversation about it, so the Enter is part of the script and not padding.
+	path, cfg := reviewSeed(t, []string{"2026-07-11"}, 9)
+	out, err := reviewRun(t, path, cfg, "n\np\nbirch\n\n",
+		"-date", "2026-07-11", "-origin", "a-person", "-drill-every", "0")
+	if err != nil {
+		t.Fatalf("review: %v\n%s", err, out)
+	}
+
+	_, adjs := reviewRecorded(t, path)
+	var attributed []adjustments.Adjustment
+	for _, a := range adjs {
+		if a.Assertion == adjustments.Attributed {
+			attributed = append(attributed, a)
+		}
+	}
+	if len(attributed) != 1 {
+		t.Fatalf("%d attribution assertions came out of a reattributed block, want 1; the "+
+			"transcript was:\n%s", len(attributed), out)
+	}
+	if attributed[0].Project != "birch" {
+		t.Errorf("the assertion names project %q, want the one that was typed", attributed[0].Project)
+	}
+	if attributed[0].Start.IsZero() || !attributed[0].End.After(attributed[0].Start) {
+		t.Errorf("the assertion covers %v..%v, which is not a span of work",
+			attributed[0].Start, attributed[0].End)
+	}
+}
+
+// The other half of the same question. Answering the project prompt with
+// nothing asserts the block belonged to NO project, which is a thing a person
+// can say and is not the same as saying nothing at all — and if the blank
+// answer were dropped on the floor the two would be indistinguishable in the
+// store.
+func TestAReviewerCanAssertABlockBelongedToNoProjectAtAll(t *testing.T) {
+	path, cfg := reviewSeed(t, []string{"2026-07-11"}, 9)
+	out, err := reviewRun(t, path, cfg, "n\np\n\n\n",
+		"-date", "2026-07-11", "-origin", "a-person", "-drill-every", "0")
+	if err != nil {
+		t.Fatalf("review: %v\n%s", err, out)
+	}
+
+	_, adjs := reviewRecorded(t, path)
+	var unattributed int
+	for _, a := range adjs {
+		if a.Assertion == adjustments.Unattributed {
+			unattributed++
+		}
+	}
+	if unattributed != 1 {
+		t.Fatalf("%d assertions of belonging to no project, want 1; the transcript was:\n%s",
+			unattributed, out)
+	}
+}

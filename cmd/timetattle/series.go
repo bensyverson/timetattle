@@ -359,6 +359,7 @@ func addPeriod(dst *metrics.Period, src metrics.Period) {
 	dst.Unattributed.Observed += src.Unattributed.Observed
 	dst.Unregistered += src.Unregistered
 	dst.Unlocatable += src.Unlocatable
+	dst.Asserted += src.Asserted
 	dst.Bridged += src.Bridged
 	dst.Projects = addShares(dst.Projects, src.Projects)
 	dst.Clients = addShares(dst.Clients, src.Clients)
@@ -603,10 +604,17 @@ func csvSeries(out io.Writer, cal sessions.Calendar, unit seriesUnit, rows []ser
 		}{
 			{"unregistered", row.Period.Unregistered},
 			{"unlocatable", row.Period.Unlocatable},
+			// A person having looked and said the span was nobody's. Always
+			// emitted, and zero on every period nobody has corrected: a
+			// consumer summing this column across an export must get the same
+			// answer whether or not the store happens to hold a correction,
+			// and a row that appeared only sometimes would make the schema a
+			// property of the data.
+			{"asserted", row.Period.Asserted},
 			{"bridged", row.Period.Bridged},
 		} {
-			// The three reasons and no total row: the total is their sum
-			// exactly, and a fourth row carrying it would double-count for any
+			// The reasons and no total row: the total is their sum exactly,
+			// and a further row carrying it would double-count for any
 			// consumer that added the column up.
 			if err := emit("unattributed", u.name, csvSeconds(u.d), "", "", "", "", "", ""); err != nil {
 				return err
