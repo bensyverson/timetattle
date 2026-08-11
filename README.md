@@ -234,6 +234,10 @@ until enough days have been through it.
 - [Running the tests](docs/content/docs/testing.md) — the two test runs, why
   the ordinary one does not touch your machine's data, what that means it has
   not verified, and the gate that keeps the two from merging back together.
+- [The publication gate](docs/content/docs/confidentiality.md) — what must
+  never reach a public mirror, the pre-commit check that hunts it, where its
+  list of names comes from now that it derives one instead of being handed
+  one, and why it refuses to answer rather than answering wrongly.
 
 ## Development
 
@@ -246,9 +250,22 @@ ln -sf ../../scripts/git-hooks/pre-commit .git/hooks/pre-commit
 ```
 
 A symlink rather than a copy, so edits to the script take effect without
-reinstalling. The hook runs `go vet`, `go fix`, `gofmt`, `go mod tidy`,
-`go test` and `go build`, and refuses loose `*.go` files directly under
-`scripts/` — those escape `./...` and would go unchecked.
+reinstalling. The hook runs the confidentiality gate first, then `go vet`,
+`go fix`, `gofmt`, `go mod tidy`, `go test` and `go build`, and refuses loose
+`*.go` files directly under `scripts/` — those escape `./...` and would go
+unchecked.
+
+The gate needs one piece of setup, once, because the names it hunts live outside
+the repository and it refuses to report clean when it cannot find them:
+
+```sh
+make classify > ~/.timetattle/publication-gate.json   # read it before saving it
+scripts/gatecheck                                     # is the gate wired, and does it fire?
+```
+
+[The publication gate](docs/content/docs/confidentiality.md) has the argument:
+what the gate hunts, why the hook asks a narrower question than `make gate`
+does, and why CI is not where this check can live.
 
 ### The two test runs
 

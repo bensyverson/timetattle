@@ -3,6 +3,72 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# THE CONFIDENTIALITY GATE RUNS FIRST, and both halves of that are deliberate.
+#
+# THAT IT RUNS HERE AT ALL. scripts/confidential works and, until this step
+# existed, nothing ran it: it was invoked by hand, twice, four days apart, and
+# in the three days between two commits landed three client-name leaks in
+# published documents. The interval between a leak landing and a human
+# happening to look was unbounded, and the pressure is constant rather than
+# occasional -- this project's house style asks agents to paste real `metrics`
+# and `review` output into project/ documents, while the live store and the
+# registry markers still hold the REAL names the repository was scrubbed of.
+#
+# A hook rather than CI, and this is the part that is NOT the usual trade-off.
+# The names deliberately do not live in the repository, so the only machine
+# that can run this check is the one holding ~/.timetattle. A CI runner would
+# necessarily run it with no name source at all -- which now exits 2 saying so,
+# rather than reporting clean, but a step that can only ever be red or silent
+# is not a gate. Putting the real client names into a CI secret would publish
+# the list into a third party to protect it from being published, and on a
+# public repository a fork's pull request does not get secrets, so the check
+# would go nameless exactly on untrusted input. A hook is bypassable with
+# --no-verify and absent on a fresh clone; those are real limits, and they are
+# limits on an accident detector, which is what this is. See
+# docs/content/docs/confidentiality.md.
+#
+# THAT IT RUNS BEFORE THE TESTS. Everything below takes minutes; this takes
+# seconds, and it is the only check here whose failure cannot be fixed by
+# amending afterwards -- once a real client name is in a commit object it is in
+# the history, and -git object scans exist precisely because an amended-away
+# commit is still sitting in .git/objects.
+echo "==> confidentiality gate"
+# BUILT, NOT `go run`. `go run` reports a program's non-zero exit as "exit
+# status N" on stderr and exits 1 itself, which collapses this gate's two
+# failures -- "found something" and "could not tell" -- into one code. Those
+# two need different sentences from the hook, and the whole point of exit 2 is
+# that it is not a pass and not a finding. -buildvcs=false for the reason the
+# `go build` step below gives: in a worktree the toolchain resolves the bare
+# main repository and `git status` fails against it.
+gate_bin="$(mktemp -d)/confidential"
+go build -buildvcs=false -o "$gate_bin" ./scripts/confidential
+set +e
+"$gate_bin" -staged -gate
+gate_status=$?
+set -e
+rm -rf "$(dirname "$gate_bin")"
+if [ "$gate_status" -eq 2 ]; then
+  echo ""
+  echo "The gate could not build its list, so it has NOT said this commit is clean."
+  echo "It says only that it could not tell. Fix whatever it named above; if this is"
+  echo "a fresh clone, the usual cause is that no name has been classified yet:"
+  echo ""
+  echo "  go run ./scripts/confidential -classify > ~/.timetattle/publication-gate.json"
+  echo ""
+  echo "Read that file before saving it: a name that identifies a client belongs in"
+  echo "scripts/pseudonymize, not in a list of things declared safe to publish."
+  exit 1
+elif [ "$gate_status" -ne 0 ]; then
+  echo ""
+  echo "This commit ADDS material that must not be published. The findings above are"
+  echo "the ones this commit introduces; anything listed as carried was already at"
+  echo "HEAD and is not what is blocking you."
+  echo ""
+  echo "A client name usually arrives here by pasting live output into a document."
+  echo "Pseudonymise it (scripts/pseudonymize) rather than deleting the measurement."
+  exit 1
+fi
+
 echo "==> go vet"
 go vet ./...
 

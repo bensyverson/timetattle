@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Prove that the confidentiality gate is WIRED and FIRES, rather than merely
+# present.
+#
+# WHY THIS EXISTS. scripts/confidential was correct and nothing ran it, so the
+# interval between a leak landing and a human happening to look was unbounded;
+# three leaks landed in that interval and were found four days later by a hand
+# run. The fix is a pre-commit step, and a pre-commit step has exactly the same
+# failure mode one level up: it is installed per clone, it is one symlink, and
+# a repository where nobody has made that symlink looks identical to one where
+# the gate passes. This script is what tells those two apart.
+#
+# It checks three things, in the order they can fail:
+#
+#   1. Is a hook installed at all, at the path THIS clone would use?
+#   2. Does the tool refuse to judge when it cannot build its name list --
+#      rather than reporting clean, which is the failure this project has
+#      shipped three times in other tools?
+#   3. Does a planted name actually stop a commit, through the hook, rather
+#      than through somebody remembering to run the auditor?
+#
+# The planted name is INVENTED and comes from a fixture machine built in a
+# temporary directory: proving the gate catches a leak must not require
+# committing one. Nothing here reads or writes ~/.timetattle.
+#
+#   scripts/gatecheck
+#
+# Exit: 0 all three hold, 1 one of them does not, 2 skipped (precondition).
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+PLANTED_FILE="gatecheck-planted-name.md"
+# An invented name, registered only on the fixture machine below.
+PLANTED_NAME="flonkwidget"
+
+pass() { echo "PASS: $*"; }
+fail() {
+	echo "FAIL: $*" >&2
+	FAILED=1
+}
+skip() {
+	echo "SKIP: $*" >&2
+	exit 2
+}
+FAILED=0
+
+cleanup() {
+	git rm -q --cached --ignore-unmatch "$PLANTED_FILE" >/dev/null 2>&1 || true
+	rm -f "$PLANTED_FILE"
+	[ -n "${GATE_BIN:-}" ] && rm -rf "$(dirname "$GATE_BIN")"
+}
+trap cleanup EXIT
+
+command -v go >/dev/null 2>&1 || skip "go is not on PATH"
+
+# Built rather than `go run`, because `go run` exits 1 for any non-zero program
+# exit and this check is entirely about telling exit 1 from exit 2.
+GATE_BIN="$(mktemp -d)/confidential"
+go build -buildvcs=false -o "$GATE_BIN" ./scripts/confidential
+
+# --- 1. is the hook installed on this clone? ----------------------------------
+#
+# `git rev-parse --git-path` answers for THIS checkout, which for a worktree is
+# not .git/hooks under the worktree directory -- hooks live in the common
+# directory and are shared, and this project fans work out to worktree agents
+# constantly.
+echo "==> 1. hook installation"
+HOOK_PATH="$(git rev-parse --git-path hooks/pre-commit)"
+if [ -e "$HOOK_PATH" ]; then
+	pass "a pre-commit hook is installed at $HOOK_PATH"
+else
+	fail "no pre-commit hook at $HOOK_PATH -- the gate cannot fire on this clone.
+      Install it once per clone:  ln -sf ../../scripts/git-hooks/pre-commit .git/hooks/pre-commit"
+fi
+
+# --- 2. a run that cannot build its list must not report clean ----------------
+echo "==> 2. refusal when the name list cannot be built"
+EMPTY="$(mktemp -d)"
+set +e
+NOWHERE_OUT="$(TIMETATTLE_GATE_CONFIG="$EMPTY/config.json" \
+	TIMETATTLE_GATE_REGISTRY="$EMPTY/registered-directories.json" \
+	TIMETATTLE_GATE_CLASSIFICATION="$EMPTY/publication-gate.json" \
+	"$GATE_BIN" -dir . -gate 2>&1)"
+NOWHERE_STATUS=$?
+set -e
+if [ "$NOWHERE_STATUS" -eq 2 ] && printf '%s' "$NOWHERE_OUT" | grep -q "PRECONDITION NOT MET"; then
+	pass "a gate run with no config and no registry exits 2 and says what was missing"
+else
+	fail "a gate run with no config and no registry exited $NOWHERE_STATUS; it must exit 2 and refuse to judge.
+$NOWHERE_OUT"
+fi
+if printf '%s' "$NOWHERE_OUT" | grep -qE "findings|verdict"; then
+	fail "a run that could not build its list still printed a count of findings"
+else
+	pass "it reported no count of findings, because it scanned nothing"
+fi
+rm -rf "$EMPTY"
+
+# --- 3. does a planted name stop a commit, through the hook? ------------------
+echo "==> 3. a planted name, through the hook"
+FIXTURE="$(mktemp -d)"
+mkdir -p "$FIXTURE/$PLANTED_NAME"
+cat >"$FIXTURE/config.json" <<EOF
+{"reference_projects": {"acorn": "$FIXTURE/$PLANTED_NAME"}}
+EOF
+cat >"$FIXTURE/registered-directories.json" <<'EOF'
+{"index_version": 1, "directories": []}
+EOF
+cat >"$FIXTURE/publication-gate.json" <<'EOF'
+{"gate_version": 1, "publishable_names": [], "denied_literals": []}
+EOF
+
+cat >"$PLANTED_FILE" <<EOF
+# A pasted capture, which is how every real leak here arrived
+
+    project        engaged
+    $PLANTED_NAME       4.2h
+EOF
+git add "$PLANTED_FILE"
+
+set +e
+HOOK_OUT="$(TIMETATTLE_GATE_CONFIG="$FIXTURE/config.json" \
+	TIMETATTLE_GATE_REGISTRY="$FIXTURE/registered-directories.json" \
+	TIMETATTLE_GATE_CLASSIFICATION="$FIXTURE/publication-gate.json" \
+	./scripts/git-hooks/pre-commit 2>&1)"
+HOOK_STATUS=$?
+set -e
+
+if [ "$HOOK_STATUS" -ne 0 ] && printf '%s' "$HOOK_OUT" | grep -q "confidentiality gate"; then
+	pass "the hook refused a commit carrying a name the fixture machine knows about"
+else
+	fail "the hook exited $HOOK_STATUS with a planted client name staged; it must refuse.
+$(printf '%s' "$HOOK_OUT" | head -40)"
+fi
+if printf '%s' "$HOOK_OUT" | grep -q "go vet"; then
+	fail "the hook ran the rest of its checks after a confidentiality failure; the gate must come first and stop"
+else
+	pass "it stopped at the gate rather than spending minutes on the test suite first"
+fi
+rm -rf "$FIXTURE"
+
+echo ""
+if [ "$FAILED" -ne 0 ]; then
+	echo "gatecheck: FAILED"
+	exit 1
+fi
+echo "gatecheck: the gate is installed, refuses to guess, and fires."
