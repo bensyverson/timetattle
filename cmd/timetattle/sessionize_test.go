@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"os"
@@ -263,5 +264,112 @@ func TestAnIsolatedSaveScoresSomething(t *testing.T) {
 	start, end, _ := strings.Cut(span, " ")
 	if start == end {
 		t.Fatalf("the lone save produced a sitting of no duration at %s", start)
+	}
+}
+
+// BUG (task aclnr, criterion Yxb). sessionize's own report headline sums
+// exactly the same global, disjoint sittings -by-day slices per day — the sum
+// is reconciled against this very total, see reportByPeriod — so if the
+// column is presence, the headline it reconciles against is too.
+func TestSessionizeReportNamesItsTotalPresenceNotEngaged(t *testing.T) {
+	path := seedStore(t)
+	var out bytes.Buffer
+	if err := sessionizeTo(&out, []string{"-store", path, "-dry-run"}); err != nil {
+		t.Fatalf("sessionize -dry-run: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "engaged") {
+		t.Errorf("the report still says \"engaged\", and sessionize never clusters per project so "+
+			"it cannot mean that:\n%s", got)
+	}
+	if !strings.Contains(got, "presence") {
+		t.Errorf("the report does not name its total presence:\n%s", got)
+	}
+}
+
+// Same bug, in -sweep's table: it is res.Total() at each swept gap, the exact
+// same quantity as the headline and the by-day column.
+func TestSweepTableNamesItsColumnPresenceNotEngaged(t *testing.T) {
+	path := seedStore(t)
+	var out bytes.Buffer
+	if err := sessionizeTo(&out, []string{"-store", path, "-sweep", "2m,4h"}); err != nil {
+		t.Fatalf("sessionize -sweep: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "engaged") {
+		t.Errorf("the -sweep table still says \"engaged\":\n%s", got)
+	}
+	if !strings.Contains(got, "presence") {
+		t.Errorf("the -sweep table does not name its column presence:\n%s", got)
+	}
+}
+
+// seedADayOfEvidence writes one interval well inside a single day, at 15:00
+// UTC — comfortably clear of local midnight across every zone this codebase's
+// own tests are run in (see metrics_client_test.go's identical fixture) — so
+// a bare date on -from/-to needs no reasoning about the machine's zone beyond
+// "the day it names".
+func seedADayOfEvidence(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "timetattle.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open a store to seed: %v", err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	run, err := st.BeginRun(ctx, store.RunSpec{SourceID: "biome-appusage", Input: "/tmp/seed"})
+	if err != nil {
+		t.Fatalf("begin a run: %v", err)
+	}
+	base := time.Date(2026, 7, 28, 15, 0, 0, 0, time.UTC)
+	events := []source.Event{
+		source.NewInterval(base, base.Add(30*time.Minute),
+			source.Identity{App: "com.apple.motionapp"}, "biome-appusage"),
+	}
+	if _, err := run.Write(ctx, events); err != nil {
+		t.Fatalf("write the seed events: %v", err)
+	}
+	if err := run.Finish(ctx); err != nil {
+		t.Fatalf("finish the seed run: %v", err)
+	}
+	return path
+}
+
+// BUG (task aclnr, criterion GMZ). -to took an instant, so `-to 2026-07-28`
+// meant 2026-07-28T00:00:00 local and silently dropped the whole of the day
+// it named — store.Filter bounds inclusively at both ends, so `-from D -to D`
+// selected only whatever landed exactly on midnight, which on this fixture is
+// nothing. metrics.go fixed this with parseUpperBoundary; sessionize.go still
+// called plain parseBoundary for -to. See parse.go's parseUpperBoundary doc
+// for the full argument this fix reuses rather than re-deriving.
+func TestSessionizeABareDateOnToCoversTheWholeOfThatDay(t *testing.T) {
+	path := seedADayOfEvidence(t)
+
+	if err := sessionize([]string{"-store", path, "-from", "2026-07-28", "-to", "2026-07-28", "-quiet"}); err != nil {
+		t.Fatalf("sessionize: %v", err)
+	}
+
+	if got := query[int](t, path, `SELECT COUNT(*) FROM derived_session`); got != 1 {
+		t.Errorf("derived_session holds %d rows, want 1: -to 2026-07-28 still means midnight that "+
+			"morning and dropped the day it names", got)
+	}
+}
+
+// The other half: an explicit instant is an instant, and rounding it up to
+// midnight-of-the-next-day would silently widen a window somebody was precise
+// about.
+func TestSessionizeAnExplicitInstantOnToIsStillThatInstant(t *testing.T) {
+	path := seedADayOfEvidence(t)
+
+	if err := sessionize([]string{"-store", path,
+		"-from", "2026-07-28T00:00:00Z", "-to", "2026-07-28T00:00:00Z", "-quiet"}); err != nil {
+		t.Fatalf("sessionize: %v", err)
+	}
+
+	if got := query[int](t, path, `SELECT COUNT(*) FROM derived_session`); got != 0 {
+		t.Errorf("derived_session holds %d rows, want 0: an explicit midnight instant on -to reached "+
+			"evidence at 15:00 that was never inside it", got)
 	}
 }

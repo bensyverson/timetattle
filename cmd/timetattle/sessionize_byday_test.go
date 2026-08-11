@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -244,4 +246,166 @@ func lineFor(out, key string) string {
 		}
 	}
 	return ""
+}
+
+// BUG (task aclnr, criterion Yxb): -by-day's column is the union of every
+// sitting, clustered without regard to project — sessionize never clusters
+// per project at all — which is exactly what internal/metrics and `metrics`
+// call PRESENCE: wall clock, never double-counted, the capacity denominator.
+// ENGAGED is reserved, in this codebase's own deliberate vocabulary, for the
+// per-project figure that may overlap and is the billing figure (see
+// internal/sessions/sessions.go's package doc and metrics.go's Long help
+// text). A column that says "engaged" and prints presence is the one
+// confusion the whole two-metrics design exists to prevent.
+func TestByDayNamesItsColumnPresenceNotEngaged(t *testing.T) {
+	path := seedWorkingDays(t)
+	out := runSessionize(t, "-store", path, "-timezone", "America/Chicago", "-by-day", "-dry-run")
+
+	if strings.Contains(out, "engaged") {
+		t.Errorf("the -by-day report still says \"engaged\" somewhere, and this command never "+
+			"clusters per project so it cannot mean that:\n%s", out)
+	}
+	if !strings.Contains(out, "presence by working day") {
+		t.Errorf("the -by-day report does not introduce its table as presence:\n%s", out)
+	}
+}
+
+// presenceForDay returns the duration sessionize's -by-day table reports for
+// day, and whether the day has a row at all. A day dropped by a boundary bug
+// has no row rather than a wrong one, so the caller must check ok rather than
+// treating a missing row as zero.
+func presenceForDay(t *testing.T, out, day string) (time.Duration, bool) {
+	t.Helper()
+	line := lineFor(out, day)
+	if line == "" {
+		return 0, false
+	}
+	fields := strings.Fields(line)
+	// day, length, presence, began, sittings, split[, note words...]
+	if len(fields) < 3 {
+		t.Fatalf("the -by-day row for %s does not have the columns expected: %q", day, line)
+	}
+	if fields[2] == "-" {
+		return 0, true
+	}
+	d, err := time.ParseDuration(fields[2])
+	if err != nil {
+		t.Fatalf("the -by-day presence column for %s reads %q, which is not a duration: %v", day, fields[2], err)
+	}
+	return d, true
+}
+
+// presenceByDayFromMetricsCSV reads a `metrics -by day -csv` export and
+// returns the exact presence total metrics computed for each day, keyed by
+// its label. Presence is written once per period, at level "presence", by
+// csvSeries — see series.go — and it is the same wall-clock union sessionize
+// clusters, over the same corpus.
+func presenceByDayFromMetricsCSV(t *testing.T, out string) map[string]time.Duration {
+	t.Helper()
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatalf("parse metrics -csv output: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("metrics -csv wrote no rows at all")
+	}
+	col := map[string]int{}
+	for i, name := range rows[0] {
+		col[name] = i
+	}
+	for _, want := range []string{"period", "level", "seconds"} {
+		if _, ok := col[want]; !ok {
+			t.Fatalf("metrics -csv has no %q column: %v", want, rows[0])
+		}
+	}
+	presence := map[string]time.Duration{}
+	for _, row := range rows[1:] {
+		if row[col["level"]] != "presence" {
+			continue
+		}
+		secs, err := strconv.ParseFloat(row[col["seconds"]], 64)
+		if err != nil {
+			t.Fatalf("metrics -csv presence seconds %q does not parse: %v", row[col["seconds"]], err)
+		}
+		presence[row[col["period"]]] = time.Duration(secs * float64(time.Second))
+	}
+	return presence
+}
+
+// seedTwoDaysOfEvidenceInLocal writes one interval on D and another on D+2,
+// in time.Local — deliberately never a named zone such as America/Chicago —
+// so the fixture needs no -timezone flag and sits in the SAME zone -from and
+// -to bare dates are parsed in (parseBoundary always uses time.Local; see
+// parse.go). Day D+1 holds nothing, so a boundary bug that silently drops one
+// edge of the requested span shows up as a day vanishing from one command's
+// report and not the other's, rather than as a day merely reading short.
+func seedTwoDaysOfEvidenceInLocal(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "timetattle.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open a store to seed: %v", err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	run, err := st.BeginRun(ctx, store.RunSpec{SourceID: "biome-appusage", Input: "/tmp/seed"})
+	if err != nil {
+		t.Fatalf("begin a run: %v", err)
+	}
+	// 10:00 local is comfortably clear of both the 05:00 working-day boundary
+	// and midnight, so this fixture needs no reasoning about which side of a
+	// boundary an event falls on beyond the one the test is about.
+	at := func(day, hh, mm int) time.Time {
+		return time.Date(2026, time.July, day, hh, mm, 0, 0, time.Local)
+	}
+	events := []source.Event{
+		source.NewInterval(at(6, 10, 0), at(6, 11, 0),
+			source.Identity{App: "com.apple.motionapp"}, "biome-appusage"),
+		source.NewInterval(at(8, 10, 0), at(8, 11, 30),
+			source.Identity{App: "com.apple.motionapp"}, "biome-appusage"),
+	}
+	if _, err := run.Write(ctx, events); err != nil {
+		t.Fatalf("write the seed events: %v", err)
+	}
+	if err := run.Finish(ctx); err != nil {
+		t.Fatalf("finish the seed run: %v", err)
+	}
+	return path
+}
+
+// BUG (task aclnr, criterion GMZ), THE CROSS-CHECK THAT MUST HOLD. sessionize
+// -by-day and metrics -by day cluster the same corpus into the same global
+// sittings, so their per-day presence figures must agree exactly on every day
+// both commands report. -to still meaning midnight (sessionize.go used
+// parseBoundary where metrics.go already used parseUpperBoundary) silently
+// drops the day -to NAMES from sessionize's own report while metrics keeps
+// it, which breaks that agreement — not by producing a wrong number, but by
+// producing no row at all where the other command has one.
+func TestSessionizeByDayAgreesWithMetricsByDayAcrossAToBoundary(t *testing.T) {
+	path := seedTwoDaysOfEvidenceInLocal(t)
+
+	sessionizeOut := runSessionize(t, "-store", path, "-config", noConfig(t),
+		"-from", "2026-07-06", "-to", "2026-07-08", "-by-day", "-dry-run")
+	metricsOut := runMetrics(t, "-store", path, "-config", noConfig(t), "-all",
+		"-from", "2026-07-06", "-to", "2026-07-08", "-by", "day", "-csv")
+	metricsPresence := presenceByDayFromMetricsCSV(t, metricsOut)
+
+	for _, day := range []string{"2026-07-06", "2026-07-08"} {
+		want, ok := metricsPresence[day]
+		if !ok {
+			t.Fatalf("metrics -by day has no presence row for %s at all:\n%s", day, metricsOut)
+		}
+		got, ok := presenceForDay(t, sessionizeOut, day)
+		if !ok {
+			t.Errorf("%s: sessionize -by-day has no row at all, though metrics -by day reads %v of "+
+				"presence for it; -to %q silently dropped the day it names:\n%s",
+				day, want, "2026-07-08", sessionizeOut)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s: sessionize -by-day reads %v of presence, metrics -by day reads %v; the "+
+				"two commands disagree about the same corpus", day, got, want)
+		}
+	}
 }

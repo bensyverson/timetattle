@@ -44,14 +44,14 @@ func session(start, end time.Time) sessions.Session {
 	return sessions.Session{Start: start, End: end, Events: 1, Sources: []string{"biome-appusage"}}
 }
 
-// engagedOn is the engaged time a projection put on one working day, and
+// presenceOn is the presence a projection put on one working day, and
 // whether that day appeared at all. The two are different answers and this
 // returns both, because a day that is absent from the projection is a day
 // nothing was recorded on, not a day with no work on it.
-func engagedOn(slices []sessions.DaySlice, d sessions.Day) (time.Duration, bool) {
+func presenceOn(slices []sessions.DaySlice, d sessions.Day) (time.Duration, bool) {
 	for _, s := range slices {
 		if s.Day == d {
-			return s.Engaged, true
+			return s.Presence, true
 		}
 	}
 	return 0, false
@@ -80,14 +80,14 @@ func TestLateNightSittingIsAttributedToTheDayItBeganOn(t *testing.T) {
 	if got := c.DayOf(s.End); got != saturday {
 		t.Errorf("the sitting ended on working day %v, want %v; 01:37 is still Saturday's evening", got, saturday)
 	}
-	engaged, ok := engagedOn(slices, saturday)
+	presence, ok := presenceOn(slices, saturday)
 	if !ok {
 		t.Fatalf("Saturday is absent from the projection; slices=%v", slices)
 	}
-	if want := s.Duration(); engaged != want {
-		t.Errorf("Saturday holds %v of the sitting, want the whole %v", engaged, want)
+	if want := s.Duration(); presence != want {
+		t.Errorf("Saturday holds %v of the sitting, want the whole %v", presence, want)
 	}
-	if _, ok := engagedOn(slices, day(2026, time.July, 12)); ok {
+	if _, ok := presenceOn(slices, day(2026, time.July, 12)); ok {
 		t.Errorf("Sunday appeared in the projection; the sitting ended before Sunday's working day began")
 	}
 }
@@ -105,11 +105,11 @@ func TestSittingCrossingTheBoundaryIsSplitAtIt(t *testing.T) {
 	)
 	slices := c.ByDay([]sessions.Session{s}, sessions.Window{})
 
-	before, ok := engagedOn(slices, day(2026, time.July, 19))
+	before, ok := presenceOn(slices, day(2026, time.July, 19))
 	if !ok {
 		t.Fatalf("the day before the boundary is absent; slices=%v", slices)
 	}
-	after, ok := engagedOn(slices, day(2026, time.July, 20))
+	after, ok := presenceOn(slices, day(2026, time.July, 20))
 	if !ok {
 		t.Fatalf("the day after the boundary is absent; slices=%v", slices)
 	}
@@ -328,7 +328,7 @@ func TestDayOfAlwaysLandsInsideThatDaysBounds(t *testing.T) {
 // destroys none. A sitting spanning the whole transition weekend must sum,
 // across the days it is split over, to exactly its own length — on the
 // 23-hour day and on the 25-hour one.
-func TestTransitionsCreateAndDestroyNoEngagedTime(t *testing.T) {
+func TestTransitionsCreateAndDestroyNoPresence(t *testing.T) {
 	loc := chicago(t)
 	c := calFor(loc)
 	for _, s := range []sessions.Session{
@@ -338,7 +338,7 @@ func TestTransitionsCreateAndDestroyNoEngagedTime(t *testing.T) {
 		slices := c.ByDay([]sessions.Session{s}, sessions.Window{})
 		var sum time.Duration
 		for _, d := range slices {
-			sum += d.Engaged
+			sum += d.Presence
 		}
 		if sum != s.Duration() {
 			t.Errorf("a sitting of %v summed to %v across %d working days; the difference is %v",
@@ -370,7 +370,7 @@ func TestConservationHoldsOverRandomSittings(t *testing.T) {
 		}
 		var got time.Duration
 		for _, d := range c.ByDay(ss, sessions.Window{}) {
-			got += d.Engaged
+			got += d.Presence
 		}
 		if got != want {
 			t.Fatalf("trial %d (day start %v, week start %v): %v of sittings summed to %v, a difference of %v",
@@ -382,7 +382,7 @@ func TestConservationHoldsOverRandomSittings(t *testing.T) {
 // No working day may be credited with more wall clock than elapsed inside it.
 // This is the invariant that whole-session attribution cannot offer and is the
 // reason a crossing sitting is split.
-func TestNoDayHoldsMoreEngagedTimeThanItHasHours(t *testing.T) {
+func TestNoDayHoldsMorePresenceThanItHasHours(t *testing.T) {
 	loc := chicago(t)
 	c := calFor(loc)
 	// A 49-hour sitting, longer than any day, laid across the fall-back
@@ -397,10 +397,10 @@ func TestNoDayHoldsMoreEngagedTimeThanItHasHours(t *testing.T) {
 	var sum time.Duration
 	for _, d := range slices {
 		start, end := c.Bounds(d.Day)
-		if d.Engaged > end.Sub(start) {
-			t.Errorf("%v holds %v of engaged time in a day %v long", d.Day, d.Engaged, end.Sub(start))
+		if d.Presence > end.Sub(start) {
+			t.Errorf("%v holds %v of presence in a day %v long", d.Day, d.Presence, end.Sub(start))
 		}
-		sum += d.Engaged
+		sum += d.Presence
 	}
 	if sum != s.Duration() {
 		t.Errorf("the three days hold %v between them, want the sitting's %v", sum, s.Duration())
@@ -504,13 +504,13 @@ func TestObservedDayWithNoSittingsIsNotAnUnobservedDay(t *testing.T) {
 	}
 	slices := c.ByDay(ss, observed)
 
-	middle, ok := engagedOn(slices, day(2026, time.July, 7))
+	middle, ok := presenceOn(slices, day(2026, time.July, 7))
 	if !ok {
 		t.Fatalf("the middle day is absent from the projection, so a day with no work reads the same "+
 			"as a day nobody harvested; slices=%v", slices)
 	}
 	if middle != 0 {
-		t.Errorf("the middle day holds %v of engaged time, want none", middle)
+		t.Errorf("the middle day holds %v of presence, want none", middle)
 	}
 	for _, s := range slices {
 		if !s.Observed {
@@ -518,7 +518,7 @@ func TestObservedDayWithNoSittingsIsNotAnUnobservedDay(t *testing.T) {
 		}
 	}
 	// A day outside the window was never looked at, and must not appear at all.
-	if _, ok := engagedOn(slices, day(2026, time.July, 9)); ok {
+	if _, ok := presenceOn(slices, day(2026, time.July, 9)); ok {
 		t.Errorf("2026-07-09 appeared; nothing was recorded on it and a zero there would be a claim")
 	}
 }
@@ -534,7 +534,7 @@ func TestSittingOutsideTheObservedWindowIsStillReported(t *testing.T) {
 	}
 	ss := []sessions.Session{session(local(loc, 2026, time.July, 20, 9, 0), local(loc, 2026, time.July, 20, 10, 0))}
 	slices := c.ByDay(ss, observed)
-	if got, ok := engagedOn(slices, day(2026, time.July, 20)); !ok || got != time.Hour {
+	if got, ok := presenceOn(slices, day(2026, time.July, 20)); !ok || got != time.Hour {
 		t.Errorf("the sitting on 2026-07-20 is %v (present=%v), want 1h", got, ok)
 	}
 }
