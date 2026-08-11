@@ -21,7 +21,7 @@
 // INSTANTS, and consecutive days share an endpoint exactly, so working days
 // TILE the timeline with no gap and no overlap. Every conservation property
 // downstream falls out of that tiling and not out of any arithmetic on hours:
-// summing engaged time per working day equals the ungrouped total because the
+// summing presence per working day equals the ungrouped total because the
 // days partition the instants, whether a given day is 23, 24, 25 or 24.5 hours
 // long.
 //
@@ -69,7 +69,7 @@
 // one metric whose defining property is that wall clock is never
 // double-counted (see the package doc in sessions.go), and a 30-hour sitting
 // booked entirely to a 24-hour Tuesday violates that in a way no reader could
-// detect from the total. Splitting keeps the invariant engaged(D) <= length(D)
+// detect from the total. Splitting keeps the invariant presence(D) <= length(D)
 // true by construction, and conservation holds either way.
 //
 // Because the boundary is chosen to sit in the trough, the split almost never
@@ -299,9 +299,12 @@ type DaySlice struct {
 	Day        Day
 	Start, End time.Time
 
-	// Engaged is how much sitting time elapsed inside this day. A sitting
+	// Presence is how much sitting time elapsed inside this day — the same
+	// wall-clock, never-double-counted quantity internal/metrics and `metrics`
+	// call presence, because ByDay slices global sittings (see sessions.go's
+	// package doc) and never a per-project intersection of them. A sitting
 	// crossing the boundary contributes only the part that fell here.
-	Engaged time.Duration
+	Presence time.Duration
 	// Sessions counts the sittings contributing, whole or in part; Split
 	// counts how many of those contributed only part of themselves.
 	Sessions int
@@ -330,7 +333,7 @@ type DaySlice struct {
 	FirstStart time.Time
 
 	// Observed says the day overlaps the window observations were made in. A
-	// day with Observed true and Engaged zero was looked at and held no work.
+	// day with Observed true and Presence zero was looked at and held no work.
 	// A day missing from the projection entirely is a day nothing was recorded
 	// on. Those are three answers and this project has shipped the two-answer
 	// version of them three times.
@@ -350,7 +353,7 @@ func (d *DaySlice) noteStart(at time.Time) {
 
 // ByDay splits sittings across the working days they fall in.
 //
-// Days tile the timeline, so the returned Engaged durations sum to exactly the
+// Days tile the timeline, so the returned Presence durations sum to exactly the
 // sum of the sittings' own durations, on 23- and 25-hour days alike. Sittings
 // are assumed disjoint, which Cluster guarantees.
 //
@@ -402,7 +405,7 @@ func (c Calendar) ByDay(ss []Session, observed Window) []DaySlice {
 			}
 			from, to := timespan.LaterOf(s.Start, slice.Start), timespan.EarlierOf(s.End, slice.End)
 			if to.After(from) {
-				slice.Engaged += to.Sub(from)
+				slice.Presence += to.Sub(from)
 			}
 			slice.Sessions++
 			if split {

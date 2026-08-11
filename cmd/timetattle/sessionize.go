@@ -39,7 +39,7 @@ func sessionizeCmd(stdout io.Writer) *cobra.Command {
 		Short: "Group events into sittings and store them",
 		Long: `Groups the events already in the store into sittings and rebuilds
 derived_session wholesale, inside one transaction; no source is read and no
-event is written. THE GAP THRESHOLD IS NOT A SETTLED VALUE — total engaged time
+event is written. THE GAP THRESHOLD IS NOT A SETTLED VALUE — total presence
 ranged 2.3x across the plausible range and the shipped 15m default is a
 placeholder, so run -sweep before quoting a figure. Parameters come from
 ~/.timetattle/config.json and any flag below overrides it for one run.`,
@@ -55,14 +55,14 @@ placeholder, so run -sweep before quoting a figure. Parameters come from
 	ignore := fs.String("ignore-sources", "", "comma-separated sources to read and drop")
 	exclude := fs.String("exclude", "", excludeFlagUsage)
 	from := fs.String("from", "", "earliest instant to consider, as 2026-07-11 or 2026-07-11T09:00:00Z")
-	to := fs.String("to", "", "latest instant to consider")
+	to := fs.String("to", "", "latest instant to consider; a bare date means the END of that day")
 	sweep := fs.String("sweep", "",
 		"comma-separated gaps to report side by side, writing nothing; e.g. 2m,15m,2h")
 	dryRun := fs.Bool("dry-run", false,
 		"compute and report, but leave the stored sessions alone; says whether they are stale")
 	quiet := fs.Bool("quiet", false, "print nothing on success; for scheduled runs")
-	byDay := fs.Bool("by-day", false, "report engaged time per working day")
-	byWeek := fs.Bool("by-week", false, "report engaged time per week")
+	byDay := fs.Bool("by-day", false, "report presence per working day")
+	byWeek := fs.Bool("by-week", false, "report presence per week")
 	dayStart := fs.String("day-start", "", "wall clock a working day begins at, as 05:00 (default: from the config file)")
 	weekStart := fs.String("week-start", "", "weekday a week begins on, as monday (default: from the config file)")
 	timezone := fs.String("timezone", "", "IANA zone the working day is local to, as America/Chicago")
@@ -144,7 +144,11 @@ placeholder, so run -sweep before quoting a figure. Parameters come from
 		if filter.From, err = parseBoundary(*from, "from"); err != nil {
 			return err
 		}
-		if filter.To, err = parseBoundary(*to, "to"); err != nil {
+		// A bare date on -to means the END of that day; see parseUpperBoundary for
+		// why that differs from -from and why it is not a break with the shared
+		// parser. -from wants the start of the day it names, which is what a bare
+		// date already parses to. Same rule metrics.go applies to its own -to.
+		if filter.To, err = parseUpperBoundary(*to, "to"); err != nil {
 			return err
 		}
 
@@ -289,7 +293,7 @@ func sweepGaps(list string, events []source.Event, p sessions.Params, out io.Wri
 	slices.Sort(gaps)
 
 	fmt.Fprintf(out, "lead-in %v, tail-out %v; nothing written\n\n", p.LeadIn, p.TailOut)
-	fmt.Fprintf(out, "%-10s %10s %12s %10s %10s %10s\n", "gap", "sittings", "engaged", "median", "p95", "margin")
+	fmt.Fprintf(out, "%-10s %10s %12s %10s %10s %10s\n", "gap", "sittings", "presence", "median", "p95", "margin")
 	var smallest, largest time.Duration
 	for _, g := range gaps {
 		at := p
@@ -336,7 +340,7 @@ func reportSessions(out io.Writer, path string, res sessions.Result,
 		fmt.Fprintf(out, "%s had an endpoint that was never observed, and counted as an instant\n",
 			plural(s.Unbounded, "observation"))
 	}
-	fmt.Fprintf(out, "%s, %.1fh engaged, median %v, p95 %v\n",
+	fmt.Fprintf(out, "%s, %.1fh presence, median %v, p95 %v\n",
 		plural(len(res.Sessions), "sitting"), res.Total().Hours(),
 		round(quantile(res, 0.5)), round(quantile(res, 0.95)))
 	fmt.Fprintf(out, "%.1fh of that (%.1f%%) is margin: lead-in, tail-out and bridged silence\n",
@@ -382,7 +386,7 @@ func observedWindow(events []source.Event) sessions.Window {
 	return w
 }
 
-// reportByPeriod prints engaged time per working day, or per week.
+// reportByPeriod prints presence per working day, or per week.
 //
 // It states the reconciliation rather than leaving it to be checked: the
 // per-period figures must sum to the ungrouped total exactly, on a 23-hour day
@@ -400,7 +404,7 @@ func reportByPeriod(out io.Writer, cal sessions.Calendar, res sessions.Result, o
 	if weekly {
 		unit = "week"
 	}
-	fmt.Fprintf(out, "\nengaged time by %s, days from %v in %s, weeks from %v\n",
+	fmt.Fprintf(out, "\npresence by %s, days from %v in %s, weeks from %v\n",
 		unit, cal.DayStart, zoneName(cal, slices[0].Start), strings.ToLower(cal.WeekStart.String()))
 
 	rows := slices
@@ -410,11 +414,11 @@ func reportByPeriod(out io.Writer, cal sessions.Calendar, res sessions.Result, o
 	}
 
 	fmt.Fprintf(out, "%-12s %6s %10s %8s %9s %6s\n",
-		unit, "length", "engaged", "began", "sittings", "split")
+		unit, "length", "presence", "began", "sittings", "split")
 	var sum time.Duration
 	var unobserved, partial int
 	for i, r := range rows {
-		sum += r.Engaged
+		sum += r.Presence
 		// A week the projection holds fewer than seven days of is a week the
 		// corpus only partly covers. Saying so is the difference between "52h
 		// that week" and "52h across the four days of it we have".
@@ -429,10 +433,10 @@ func reportByPeriod(out io.Writer, cal sessions.Calendar, res sessions.Result, o
 			began = r.FirstStart.In(cal.Location).Format("15:04:05")
 		}
 		switch {
-		case r.Engaged == 0 && r.Observed:
+		case r.Presence == 0 && r.Observed:
 			fmt.Fprintf(out, "%-12v %5.0fh %10s %8s %9d %6d   observed, no work\n",
 				r.Day, r.Length().Hours(), "-", began, r.Sessions, r.Split)
-		case r.Engaged == 0:
+		case r.Presence == 0:
 			unobserved++
 			fmt.Fprintf(out, "%-12v %5.0fh %10s %8s %9d %6d   nothing recorded\n",
 				r.Day, r.Length().Hours(), "-", began, r.Sessions, r.Split)
@@ -445,7 +449,7 @@ func reportByPeriod(out io.Writer, cal sessions.Calendar, res sessions.Result, o
 				note += fmt.Sprintf("   partial: %d of 7 days recorded", daysPresent[i])
 			}
 			fmt.Fprintf(out, "%-12v %5.0fh %10v %8s %9d %6d%s\n",
-				r.Day, r.Length().Hours(), round(r.Engaged), began, r.Sessions, r.Split, note)
+				r.Day, r.Length().Hours(), round(r.Presence), began, r.Sessions, r.Split, note)
 		}
 	}
 
@@ -516,7 +520,7 @@ func foldIntoWeeks(cal sessions.Calendar, days []sessions.DaySlice) ([]sessions.
 			index[week] = i
 		}
 		present[i]++
-		out[i].Engaged += d.Engaged
+		out[i].Presence += d.Presence
 		out[i].Sessions += d.Sessions
 		out[i].Split += d.Split
 		out[i].Margin += d.Margin

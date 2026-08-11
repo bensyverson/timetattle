@@ -87,10 +87,10 @@ func TestRealFixtureIsTheCorpusTheFiguresWereMeasuredOn(t *testing.T) {
 }
 
 // Conservation over the real corpus, on every working day, at every boundary
-// hour. The sum of engaged time per working day must equal the ungrouped
+// hour. The sum of presence per working day must equal the ungrouped
 // total EXACTLY — not to the second, exactly — or the boundary is inventing or
 // destroying time somewhere in the middle of real data.
-func TestRealCorpusConservesEngagedTimeAtEveryBoundaryHour(t *testing.T) {
+func TestRealCorpusConservesPresenceAtEveryBoundaryHour(t *testing.T) {
 	loc := chicago(t)
 	ss := realSessions(t)
 	want := totalOf(ss)
@@ -99,10 +99,10 @@ func TestRealCorpusConservesEngagedTimeAtEveryBoundaryHour(t *testing.T) {
 		c := sessions.Calendar{Location: loc, DayStart: sessions.Clock{Hour: hour}, WeekStart: time.Monday}
 		var got time.Duration
 		for _, d := range c.ByDay(ss, sessions.Window{}) {
-			got += d.Engaged
+			got += d.Presence
 		}
 		if got != want {
-			t.Errorf("day start %02d:00: per-day engaged time sums to %v against an ungrouped %v; difference %v",
+			t.Errorf("day start %02d:00: per-day presence sums to %v against an ungrouped %v; difference %v",
 				hour, got, want, got-want)
 		}
 	}
@@ -123,7 +123,7 @@ func TestRealCorpusConservesEngagedTimeAtEveryBoundaryHour(t *testing.T) {
 // America/Chicago changed on 2026-03-08 and changes again on 2026-11-01, and
 // the corpus runs 2026-07-05 to 2026-07-31 local. No figure here should be
 // read as if somebody had.
-func TestTranslatedRealCorpusConservesEngagedTimeAcrossBothTransitions(t *testing.T) {
+func TestTranslatedRealCorpusConservesPresenceAcrossBothTransitions(t *testing.T) {
 	loc := chicago(t)
 	ss := realSessions(t)
 
@@ -158,7 +158,7 @@ func TestTranslatedRealCorpusConservesEngagedTimeAcrossBothTransitions(t *testin
 			var got time.Duration
 			var sawTransitionDay bool
 			for _, d := range slices {
-				got += d.Engaged
+				got += d.Presence
 				start, end := c.Bounds(d.Day)
 				if d.Day == tc.day {
 					sawTransitionDay = true
@@ -166,15 +166,15 @@ func TestTranslatedRealCorpusConservesEngagedTimeAcrossBothTransitions(t *testin
 						t.Errorf("%v runs %v, want %v", d.Day, end.Sub(start), tc.hours)
 					}
 				}
-				if d.Engaged > end.Sub(start) {
-					t.Errorf("%v holds %v of engaged time in a %v day", d.Day, d.Engaged, end.Sub(start))
+				if d.Presence > end.Sub(start) {
+					t.Errorf("%v holds %v of presence in a %v day", d.Day, d.Presence, end.Sub(start))
 				}
 			}
 			if !sawTransitionDay {
 				t.Errorf("the %v transition day is absent from the projection; the shift did not land on it", tc.day)
 			}
 			if got != want {
-				t.Errorf("across the transition, per-day engaged sums to %v against %v; difference %v",
+				t.Errorf("across the transition, per-day presence sums to %v against %v; difference %v",
 					got, want, got-want)
 			}
 		})
@@ -210,8 +210,8 @@ func TestRealCorpusPutsTheLateSittingOnTheSaturday(t *testing.T) {
 	if len(slices) != 1 {
 		t.Fatalf("the sitting was spread over %d working days, want 1", len(slices))
 	}
-	if slices[0].Engaged != found.Duration() {
-		t.Errorf("Saturday holds %v of it, want all %v", slices[0].Engaged, found.Duration())
+	if slices[0].Presence != found.Duration() {
+		t.Errorf("Saturday holds %v of it, want all %v", slices[0].Presence, found.Duration())
 	}
 	if slices[0].Split != 0 {
 		t.Errorf("the sitting was marked split; it crosses no 05:00 boundary")
@@ -336,7 +336,7 @@ func TestMovingTheBoundaryToMidnightChangesRealAttributions(t *testing.T) {
 			splitAtMidnight++
 			// The time that changed day is everything after the midnight cut.
 			for _, d := range midSlices[1:] {
-				movedTime += d.Engaged
+				movedTime += d.Presence
 			}
 		}
 	}
@@ -354,17 +354,17 @@ func TestMovingTheBoundaryToMidnightChangesRealAttributions(t *testing.T) {
 	// 1h37m24s from the sitting that ran to 01:37:24 on 2026-07-12, and 47m20s
 	// from the one that ran to 00:47:20 on 2026-07-19.
 	if want := 2*time.Hour + 24*time.Minute + 44*time.Second; movedTime != want {
-		t.Errorf("the midnight boundary moved %v of engaged time to the following day, want %v",
+		t.Errorf("the midnight boundary moved %v of presence to the following day, want %v",
 			movedTime, want)
 	}
 	// Conservation survives the mutation: a different boundary regroups the
 	// same total and never a different one.
 	var atFive, atMidnight time.Duration
 	for _, d := range five.ByDay(ss, sessions.Window{}) {
-		atFive += d.Engaged
+		atFive += d.Presence
 	}
 	for _, d := range midnight.ByDay(ss, sessions.Window{}) {
-		atMidnight += d.Engaged
+		atMidnight += d.Presence
 	}
 	if atFive != atMidnight || atFive != totalOf(ss) {
 		t.Errorf("totals differ by boundary: 05:00 gives %v, midnight %v, ungrouped %v",

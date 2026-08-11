@@ -23,7 +23,7 @@ presence: knowledgec-backlit
 ignored:  knowledgec-islocked, knowledgec-mediausage
 39593 observations read: 35158 evidence, 1571 presence, 2864 ignored
 395 observations had an endpoint that was never observed, and counted as an instant
-362 sittings, 230.3h engaged, median 9m28s, p95 3h8m12s
+362 sittings, 230.3h presence, median 9m28s, p95 3h8m12s
 21.3h of that (9.2%) is margin: lead-in, tail-out and bridged silence
 observed absence: 416.3h recorded, 23.9h trimmed across 84 splits, 98 observations suppressed
 contested (read as lit and dark at once): 13.3h, trimmed from nothing
@@ -36,7 +36,7 @@ threshold requires.
 ## The threshold is not a settled number
 
 **Do not quote a total without saying what gap produced it.** Over the Claude
-transcript corpus the spike measured, total engaged time ran from 530.4h at a
+transcript corpus the spike measured, total presence ran from 530.4h at a
 two-minute gap to 1199.9h at two hours — a 2.3x spread. Reproduced through this
 package on the same corpus:
 
@@ -47,7 +47,7 @@ $ timetattle sessionize -lead-in 0 -tail-out 0 \
     -sweep 2m,5m,10m,15m,30m,45m,1h,2h
 ```
 
-| Gap | Engaged | Gap | Engaged |
+| Gap | Presence | Gap | Presence |
 | --- | --- | --- | --- |
 | 2m | 537.1h | 30m | 871.7h |
 | 5m | 657.2h | 45m | 955.2h |
@@ -179,7 +179,7 @@ work disappears.
 Measured on the filesystem observations of one creative repository, at a
 two-minute gap:
 
-| | Sittings | Engaged | Median | Scoring zero |
+| | Sittings | Presence | Median | Scoring zero |
 | --- | --- | --- | --- | --- |
 | No margins | 200 | 8.0h | 0s | **108** |
 | 5m lead-in, 5m tail-out | 95 | 32.2h | 14m15s | 0 |
@@ -357,7 +357,7 @@ defensible and is rejected for one reason: it can credit a day with more wall
 clock than elapsed inside it. Sittings are the one metric whose defining
 property is that wall clock is never double-counted, and a 30-hour sitting
 booked entirely to a 24-hour Tuesday breaks that in a way no reader could
-detect from the total. Splitting keeps `engaged(day) <= length(day)` true by
+detect from the total. Splitting keeps `presence(day) <= length(day)` true by
 construction. Conservation holds under either rule.
 
 Because the boundary sits in the trough, the split almost never fires: **zero
@@ -523,10 +523,10 @@ table is the old answer — but it now says so.
 | `-gap`, `-lead-in`, `-tail-out` | Override the configured durations. |
 | `-presence-sources`, `-ignore-sources` | Override the configured roles, comma-separated. |
 | `-exclude` | Override the configured exclusions for one run, comma-separated. Measures a proposed list without writing it. |
-| `-from`, `-to` | Bound the events considered. `2026-07-11` or `2026-07-11T09:00:00Z`. |
+| `-from`, `-to` | Bound the events considered. `2026-07-11` or `2026-07-11T09:00:00Z`. A bare date on `-to` means the END of that day, so `-from D -to D` covers the whole of day D. |
 | `-sweep` | Report several gaps side by side and write nothing. |
-| `-by-day` | Report engaged time per working day, with the conservation check. |
-| `-by-week` | Report engaged time per week. |
+| `-by-day` | Report presence per working day, with the conservation check. |
+| `-by-week` | Report presence per week. |
 | `-day-start` | Override the boundary for one run, as `05:00`. |
 | `-week-start` | Override the week start for one run, as `monday`. |
 | `-timezone` | Override the zone for one run, as `America/Chicago`. |
