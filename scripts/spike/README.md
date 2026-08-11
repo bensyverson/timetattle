@@ -16,6 +16,36 @@ They live in `scripts/` rather than being written inline and discarded because s
 | Probe | Purpose |
 | --- | --- |
 | `env` | Pre-flight check: which evidence stores exist, and which are merely unreadable. Distinguishes absence from a TCC refusal, which macOS otherwise conflates. |
+| `zoomproto` | The web dashboard's zoom timeline, as an interaction rig. Not a Go probe and not read-only — see below. |
+
+### `zoomproto` is the exception to every convention above
+
+It is HTML rather than a `main` package, it reads nothing at all, and it is not
+throwaway: it is the design artifact the semantic-zoom timeline is meant to be
+tuned in, so its findings get re-implemented rather than discarded.
+
+- **Open it**: double-click `scripts/spike/zoomproto/index.html`, or
+  `open scripts/spike/zoomproto/index.html`. No server, no build, no network —
+  a strictly offline single file, which is also why it is one file and not a
+  set of ES modules (`file://` blocks module loading outright).
+- **All data in it is synthetic and seeded.** Five invented client names, 430
+  generated days. It cannot reach the store, and nothing in it may be replaced
+  with real data — a screen capture of it is safe to publish, which is the
+  point.
+- **Check it** with three Node scripts beside it, none of which re-implement
+  anything — each slices the functions out of the HTML and runs those:
+  - `check.js` — the arithmetic. Generator shapes, the Level 0 kernel, the
+    intensity ramp, the axis schedule, and the invariants the design requires.
+    Every figure quoted in the page's comments and in task p8fuu's note comes
+    from here. Exits non-zero on failure.
+  - `smoke.js` — the pixels. Runs the whole page under a stub canvas, sweeps
+    the zoom end to end and drives every control to both extremes, asserting no
+    frame throws and no draw call gets a non-finite coordinate. A broken canvas
+    renders a blank rectangle rather than raising, so this is the only thing
+    standing between an edit and a silently empty page.
+  - `raster.js` — the geometry, as PNGs. A crude software rasteriser so the
+    layout can be looked at without a browser. Not for judging appearance; it
+    is for catching marks drawn outside their container, which it has done.
 
 ## Permissions
 
