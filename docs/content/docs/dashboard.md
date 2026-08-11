@@ -83,11 +83,24 @@ than a filled cell, with a blank column after each week for breathing room.
 A cell's color is that
 day's hours — presence when unscoped, the scoped engaged share under a
 project or client — never the per-project sum, which double-counts concurrent
-work. The ramp anchors at eight hours: darkness to green up to the anchor,
-then green through yellow and red to white beyond it, so overwork is visible
-rather than rewarded with deeper green. The anchor is a parameter; an
-engagement's budgeted hours can supply it per scope, a wiring that is filed
-but not yet made. A day is *observed* if it carries recorded
+work. The ramp anchors at a full working day: darkness to green up to the
+anchor, then green through yellow and red to white beyond it, so overwork is
+visible rather than rewarded with deeper green.
+
+The anchor defaults to eight hours, and moves when the scoped engagement
+declares an hourly budget in the config's `engagements` section (see
+[Allocation & Effective Rate](#allocation--effective-rate) below): that
+budget is pro-rated across the window's real days — the same pro-ration the
+allocation panel's own bar uses — to get a per-day figure, so a client
+contracted for two days a week has a different idea of a full day than eight
+hours. Only the engagement stated at the *same* granularity the cell itself
+draws is used: a `-project` scope reads that project's own engagement, a
+`-client` scope (with no project narrowing it further) reads the client's,
+and never the other way around — a client's budget covers its whole
+portfolio, and applying it to one project's slice would misstate both. An
+unscoped run, a scope with no engagement of its own, or an engagement stated
+as a fixed contract rather than a recurring budget all keep the eight-hour
+default. A day is *observed* if it carries recorded
 presence or a logged collection run; only a day with neither draws the dim
 unobserved hatch, and observedness is judged unscoped — under `-project`, a
 day the other project worked reads as measured idle, not as a gap. Without

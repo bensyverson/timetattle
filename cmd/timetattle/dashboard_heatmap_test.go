@@ -545,6 +545,175 @@ func TestHeatmapLegendNamesTheAnchorInForce(t *testing.T) {
 	}
 }
 
+// ─── THE RAMP ANCHOR FED FROM THE SCOPED ENGAGEMENT'S BUDGET (stVAH) ─────────
+//
+// hourlyEngagement, contractEngagement and f64 are dashboard_allocation_test.go's
+// own fixtures (30h/week at $150, and a $24,000/160h contract, both invented —
+// see that file's own confidentiality comment); reused rather than redeclared,
+// since both files build the same package's test binary.
+
+// proRatedDailyAnchor is a weekly budget's own pro-rated daily anchor over a
+// SEVEN-DAY window — every fixture below uses one, so allocationWindowBudget's
+// own pro-ration (a full week inside one budget period) collapses to exactly
+// hoursPerWeek/7.
+func proRatedDailyAnchor(hoursPerWeek float64) time.Duration {
+	return time.Duration(hoursPerWeek / 7 * float64(time.Hour))
+}
+
+// CRITERION bSl. A scope whose engagement declares an hourly-shape budget
+// ramps against that budget, pro-rated to the window's own real days —
+// allocationWindowBudget (dashboard_allocation.go), the SAME machinery the
+// Allocation & Effective Rate section's own bar uses, and NOT a second idea
+// of what pro-rating means.
+func TestHeatmapAnchorForProRatesAScopedHourlyEngagementOverTheWindowsRealDays(t *testing.T) {
+	f := newHeatmapFixture(t, 7)
+	f.cfg.Engagements.Projects = map[string]config.Engagement{"Almanac": hourlyEngagement()}
+	f.compute(t)
+
+	got := heatmapAnchorFor(f.cal, metricsScope{Project: "Almanac"}, f.period, f.data)
+	want := proRatedDailyAnchor(30)
+	if d := got - want; d < -time.Second || d > time.Second {
+		t.Errorf("heatmapAnchorFor = %v, want %v (30h/week pro-rated across the window's 7 real days)",
+			got, want)
+	}
+	if got == defaultHeatmapAnchor {
+		t.Errorf("the scoped hourly engagement's budget did not move the anchor off the %v default", got)
+	}
+}
+
+// The rendered picture, not just the number: the same worked day must draw a
+// DIFFERENT colour depending on whether the scope carries its own budget,
+// or the ramp is not actually anchoring to it.
+func TestHeatmapRampsAgainstTheScopedEngagementsBudgetInsteadOfTheDefault(t *testing.T) {
+	build := func(t *testing.T, withEngagement bool) string {
+		f := newHeatmapFixture(t, 7)
+		days := f.days()
+		f.worked(days[3], 2*time.Hour, 4*time.Hour, "Alderwick", "Almanac")
+		if withEngagement {
+			f.cfg.Engagements.Projects = map[string]config.Engagement{"Almanac": hourlyEngagement()}
+		}
+		f.compute(t)
+		return f.render(t, colorTruecolor, metricsScope{Project: "Almanac"})
+	}
+
+	withDefault := build(t, false)
+	withBudget := build(t, true)
+	if withDefault == withBudget {
+		t.Fatalf("the same 4h day rendered identically whether or not the scope carried a budgeted "+
+			"engagement; the ramp is not anchoring to it:\n%s", withBudget)
+	}
+}
+
+// The legend states the SCOPED anchor, not the default, once one is in
+// force — the same "never tell the reader the wrong thing about the
+// picture" rule TestHeatmapLegendNamesTheAnchorInForce already holds the
+// default to.
+func TestHeatmapLegendNamesTheScopedEngagementsAnchorRatherThanTheDefault(t *testing.T) {
+	f := newHeatmapFixture(t, 7)
+	f.cfg.Engagements.Projects = map[string]config.Engagement{"Almanac": hourlyEngagement()}
+	f.compute(t)
+
+	out := f.render(t, colorNone, metricsScope{Project: "Almanac"})
+	if strings.Contains(out, "8h") {
+		t.Errorf("the legend still named the %v default for a scope with its own 30h/week budget:\n%s",
+			defaultHeatmapAnchor, out)
+	}
+	want := heatmapHoursLabel(proRatedDailyAnchor(30))
+	if !strings.Contains(out, want) {
+		t.Errorf("the legend does not name the scoped anchor %q:\n%s", want, out)
+	}
+}
+
+// DESIGN DECISION: multiple engagements in scope. heatmapHours draws
+// shareIn's own figure, and under a project scope that is the PROJECT's
+// engaged total even when a client engagement is also in scope (shareIn's
+// switch checks Project before Client). The anchor must track the same
+// figure it is colouring, so it takes the project's own budget here too,
+// never the client's — using the client's would compare one project's hours
+// against a budget that covers the client's whole portfolio, which is a
+// lie by construction.
+func TestHeatmapAnchorForPrefersTheProjectsOwnEngagementOverTheClientsWhenBothAreInScope(t *testing.T) {
+	f := newHeatmapFixture(t, 7)
+	f.cfg.Engagements.Clients = map[string]config.Engagement{"Alderwick": hourlyEngagement()} // 30h/week
+	projectBudget := hourlyEngagement()
+	projectBudget.BudgetedHours = f64(14) // deliberately different from the client's 30h
+	f.cfg.Engagements.Projects = map[string]config.Engagement{"Almanac": projectBudget}
+	f.compute(t)
+
+	got := heatmapAnchorFor(f.cal, metricsScope{Client: "Alderwick", Project: "Almanac"}, f.period, f.data)
+	want := proRatedDailyAnchor(14)
+	if d := got - want; d < -time.Second || d > time.Second {
+		t.Errorf("with both a client and a project engagement in scope, heatmapAnchorFor = %v, want the "+
+			"PROJECT's own %v — shareIn's own precedence, mirrored here so the anchor never describes a "+
+			"different figure than the cells it colours", got, want)
+	}
+}
+
+// Under a CLIENT-only scope the cells draw the client's own union across its
+// projects (shareIn's Client branch), which is exactly what a client-level
+// budget describes — so that budget, and not any one project's, is what
+// anchors the ramp there.
+func TestHeatmapAnchorForUsesTheClientsBudgetUnderAClientOnlyScope(t *testing.T) {
+	f := newHeatmapFixture(t, 7)
+	f.cfg.Engagements.Clients = map[string]config.Engagement{"Alderwick": hourlyEngagement()}
+	f.compute(t)
+
+	got := heatmapAnchorFor(f.cal, metricsScope{Client: "Alderwick"}, f.period, f.data)
+	want := proRatedDailyAnchor(30)
+	if d := got - want; d < -time.Second || d > time.Second {
+		t.Errorf("heatmapAnchorFor under a client-only scope = %v, want the client's own %v", got, want)
+	}
+}
+
+// A fixed-contract engagement declares no recurring budget at all, so there
+// is nothing for the ramp to pro-rate — criterion juV's "otherwise" half,
+// for a scope that DOES carry an engagement, just not an hourly-shape one.
+func TestHeatmapAnchorForFallsBackToDefaultOnAContractEngagement(t *testing.T) {
+	f := newHeatmapFixture(t, 7)
+	f.cfg.Engagements.Projects = map[string]config.Engagement{"Almanac": contractEngagement()}
+	f.compute(t)
+
+	if got := heatmapAnchorFor(f.cal, metricsScope{Project: "Almanac"}, f.period, f.data); got != defaultHeatmapAnchor {
+		t.Errorf("a fixed-contract engagement has no recurring budget to pro-rate; heatmapAnchorFor = %v, "+
+			"want the %v default", got, defaultHeatmapAnchor)
+	}
+}
+
+// An unfiltered scope (-all, or no scope at all) draws PRESENCE — wall clock
+// across every client at once — which is nobody's budget in particular, so
+// no engagement, however it is configured, may anchor it.
+func TestHeatmapAnchorForFallsBackToDefaultUnderAnUnfilteredScope(t *testing.T) {
+	f := newHeatmapFixture(t, 7)
+	f.cfg.Engagements.Projects = map[string]config.Engagement{"Almanac": hourlyEngagement()}
+	f.compute(t)
+
+	if got := heatmapAnchorFor(f.cal, metricsScope{}, f.period, f.data); got != defaultHeatmapAnchor {
+		t.Errorf("an unfiltered scope draws presence across every client at once, which is nobody's "+
+			"budget; heatmapAnchorFor = %v, want the %v default", got, defaultHeatmapAnchor)
+	}
+}
+
+// CRITERION juV. A scope with NO engagement of its own — even where the
+// config carries one for some OTHER project entirely — keeps the 8h default
+// and renders exactly as it did before this task: this is the "otherwise"
+// wired to the actual scope, not to "whether the config has anything in it
+// at all".
+func TestHeatmapKeepsTheDefaultAnchorWhenTheScopeHasNoEngagementOfItsOwn(t *testing.T) {
+	f := newHeatmapFixture(t, 7)
+	f.cfg.Engagements.Projects = map[string]config.Engagement{"Foundry": hourlyEngagement()}
+	f.compute(t)
+
+	if got := heatmapAnchorFor(f.cal, metricsScope{Project: "Almanac"}, f.period, f.data); got != defaultHeatmapAnchor {
+		t.Errorf("a scope with no engagement of its own drew anchor %v, want the %v default",
+			got, defaultHeatmapAnchor)
+	}
+	out := f.render(t, colorNone, metricsScope{Project: "Almanac"})
+	if !strings.Contains(out, "8h") {
+		t.Errorf("a scope with no engagement of its own drew a legend without the %v default:\n%s",
+			defaultHeatmapAnchor, out)
+	}
+}
+
 // THE HARDCODED RENDERING — job xLn3T. job z47sR put four cell-rendering
 // variants (filled, square, spaced, square-spaced) behind a temporary
 // -heatmap-style flag so Ben could compare them; his screenshot pick was
