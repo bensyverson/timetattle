@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -76,8 +78,8 @@ func TestUppercaseRunIsNotACompoundBoundary(t *testing.T) {
 
 func TestPathFormsAreRewritten(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
-		{"/Users/ben/git/acme", "/Users/ben/git/kestrel"},
-		{"-Users-ben-git-acme", "-Users-ben-git-kestrel"},
+		{"/Users/you/git/acme", "/Users/you/git/kestrel"},
+		{"-Users-you-git-acme", "-Users-you-git-kestrel"},
 		{"~/git/acme/blender", "~/git/kestrel/blender"},
 		{`"ACME"`, `"KESTREL"`},
 	} {
@@ -113,6 +115,117 @@ func TestUnhandledCasingIsReportedAndNotRewritten(t *testing.T) {
 	}
 	if len(notes) != 1 {
 		t.Errorf("rewriteLine reported %v, want one unhandled-casing note", notes)
+	}
+}
+
+// --- fixed-width columns ------------------------------------------------------
+//
+// THE DEFECT THIS SECTION PINS. A rename of two names of different lengths ran
+// over a document holding a fixed-width ASCII chart with a 17-character label
+// column. Every substitution was individually correct, so the tool reported
+// "0 site(s) need a human" -- and every glyph row after the label had shifted
+// against the hour ruler above it. Column-aligned output is ordinary in this
+// repository's documents, so a rewriter that changes a field's width silently
+// corrupts a chart nobody rechecks.
+//
+// The rule: when the line is column-aligned, absorb the difference into the
+// padding of the field that changed, so every following column keeps its
+// offset. When the padding cannot absorb it, rewrite nothing on that line and
+// report the site -- the same refusal the mixed-case rule already makes.
+
+// columnStarts is where each column of a fixed-width line begins: the offset of
+// every non-space that follows a run of two or more spaces. It is what must not
+// move.
+func columnStarts(s string) []int {
+	var out []int
+	run := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' {
+			run++
+			continue
+		}
+		if run >= 2 {
+			out = append(out, i)
+		}
+		run = 0
+	}
+	return out
+}
+
+func TestALongerReplacementKeepsAColumnAlignedLinesColumns(t *testing.T) {
+	src := "flonk             ██████ 4.2h"
+	got := rewrite(t, src, "flonk=kestrelbird")
+	if !strings.Contains(got, "kestrelbird") {
+		t.Fatalf("rewriteLine(%q) = %q, want the name replaced", src, got)
+	}
+	if want, have := columnStarts(src), columnStarts(got); !slices.Equal(want, have) {
+		t.Errorf("columns moved from %v to %v:\n  before %q\n  after  %q", want, have, src, got)
+	}
+}
+
+func TestAShorterReplacementKeepsAColumnAlignedLinesColumns(t *testing.T) {
+	src := "kestrelbird       ██████ 4.2h"
+	got := rewrite(t, src, "kestrelbird=flonk")
+	if !strings.Contains(got, "flonk") {
+		t.Fatalf("rewriteLine(%q) = %q, want the name replaced", src, got)
+	}
+	if want, have := columnStarts(src), columnStarts(got); !slices.Equal(want, have) {
+		t.Errorf("columns moved from %v to %v:\n  before %q\n  after  %q", want, have, src, got)
+	}
+}
+
+// Padding that cannot absorb the difference has no defensible answer: shrinking
+// it to nothing would run two fields together. Refuse, exactly as the mixed-case
+// rule does, and say which site needs a human.
+func TestAColumnThatCannotAbsorbTheDifferenceIsLeftForAHuman(t *testing.T) {
+	src := "flonk  ██████ 4.2h"
+	out, notes := rewriteLine(src, map[string]string{"flonk": "kestrelbird"})
+	if out != src {
+		t.Errorf("rewriteLine(%q) = %q, want the line left exactly as it was", src, out)
+	}
+	if len(notes) != 1 {
+		t.Errorf("rewriteLine reported %v, want one note naming the site a human must fix", notes)
+	}
+}
+
+// The counterweight: prose is not a chart, and a rename that changes a
+// sentence's length is simply correct. Reporting every one of those would bury
+// the chart rows that genuinely need a human.
+func TestProseIsRewrittenEvenThoughItsWidthChanges(t *testing.T) {
+	src := "the flonk report is late"
+	out, notes := rewriteLine(src, map[string]string{"flonk": "kestrelbird"})
+	if out != "the kestrelbird report is late" {
+		t.Errorf("rewriteLine(%q) = %q, want the ordinary rewrite", src, out)
+	}
+	if len(notes) != 0 {
+		t.Errorf("rewriteLine reported %v, want no notes for prose", notes)
+	}
+}
+
+// A right-aligned field pads on the LEFT, so that is where the difference has to
+// be absorbed. Same rule, other side.
+func TestARightAlignedFieldAbsorbsFromItsLeadingPadding(t *testing.T) {
+	src := "hours       flonk|"
+	got := rewrite(t, src, "flonk=kes")
+	if !strings.Contains(got, "kes|") {
+		t.Fatalf("rewriteLine(%q) = %q, want the name replaced", src, got)
+	}
+	if len(got) != len(src) {
+		t.Errorf("rewriteLine(%q) = %q, width %d, want the field width preserved at %d", src, got, len(got), len(src))
+	}
+}
+
+// Two trailing spaces at the end of a Markdown line are a hard line break, not a
+// column: there is no following field whose offset could move, and eating them
+// would change how the document renders.
+func TestTrailingMarkdownBreakIsNotTreatedAsAColumn(t *testing.T) {
+	src := "the flonk report  "
+	out, notes := rewriteLine(src, map[string]string{"flonk": "kestrelbird"})
+	if out != "the kestrelbird report  " {
+		t.Errorf("rewriteLine(%q) = %q, want the trailing break kept", src, out)
+	}
+	if len(notes) != 0 {
+		t.Errorf("rewriteLine reported %v, want no notes", notes)
 	}
 }
 

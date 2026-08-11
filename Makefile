@@ -1,7 +1,7 @@
 BINARY := timetattle
 PKG    := ./cmd/timetattle
 
-.PHONY: build install agent run test fmt fix vet clean profile docs docs-build help
+.PHONY: build install agent run test fmt fix vet clean profile gate classify docs docs-build help
 
 build:
 	go build -o $(BINARY) $(PKG)
@@ -48,6 +48,36 @@ clean:
 profile:
 	./scripts/profile $(ARGS)
 
+# THE PUBLICATION GATE: the whole tree, plus every object in .git, judged
+# against a list derived from this machine's registry, config and keychain.
+#
+# This is a different question from the one the pre-commit hook asks. The hook
+# asks "does this commit ADD anything unpublishable", measured against the same
+# files at HEAD, so that a backlog of existing findings cannot block unrelated
+# work and get the hook switched off. This asks "is this repository publishable
+# AS IT STANDS", which is the only question that matters before pushing to a
+# public mirror -- and it includes the objects a working tree cannot show you,
+# because an amended-away commit is still in .git/objects long after the file
+# looks clean.
+#
+# Exit 1 means findings. Exit 2 means the list could not be built, which is NOT
+# a pass: see docs/content/docs/confidentiality.md.
+#
+# Built rather than `go run`: `go run` exits 1 for any non-zero program exit,
+# which would collapse "found something" (1) into "could not tell" (2).
+gate:
+	@bin="$$(mktemp -d)/confidential"; \
+	go build -buildvcs=false -o "$$bin" ./scripts/confidential && \
+	"$$bin" -dir . -git -gate -v; \
+	status=$$?; rm -rf "$$(dirname "$$bin")"; exit $$status
+
+# Print the classification file for a human to read and save. Every registered
+# name in it is one this machine knows about and the tree contains; saving it
+# says each is safe to publish. A client's name is not, and belongs in a
+# pseudonymize run instead.
+classify:
+	go run ./scripts/confidential -classify
+
 # Serve the documentation site locally on http://localhost:1313/.
 # Requires `hugo` (extended). `brew install hugo` if missing.
 docs:
@@ -69,5 +99,7 @@ help:
 	@echo "  vet        - go vet ./..."
 	@echo "  clean      - remove the local binary"
 	@echo "  profile    - scripts/profile against a fresh build (ARGS=\"metrics\")"
+	@echo "  gate       - the publication gate: whole tree AND every git object"
+	@echo "  classify   - print the classification file the gate reads (review before saving)"
 	@echo "  docs       - serve docs/ on localhost:1313 (requires hugo)"
 	@echo "  docs-build - build docs/ with hugo --minify"

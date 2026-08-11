@@ -3,14 +3,57 @@
 // assignments. It is a pre-publication gate, not a rewriter — it never edits
 // anything, it only reports, and with -gate it fails.
 //
-// # The names live outside the repository
+// # The names live outside the repository, and are DERIVED rather than recalled
 //
-// The symbols to hunt are supplied at run time, via -names or the
-// TIMETATTLE_CLIENT_NAMES environment variable. They are deliberately NOT
-// compiled in. A gate that hard-coded the real client names could never report
-// itself clean, and publishing the auditor would publish the very thing it
-// audits. This mirrors the rule internal/registry already argues for contract
-// values: identity may live in the repo, the sensitive particulars may not.
+// The symbols to hunt are never compiled in. A gate that hard-coded the real
+// client names could not report itself clean, and publishing the auditor would
+// publish the very thing it audits. This mirrors the rule internal/registry
+// already argues for contract values: identity may live in the repo, the
+// sensitive particulars may not.
+//
+// They are also no longer typed in. -names and -deny still work and are still
+// added to the list, but the list itself is built from this machine's registry
+// index, config and keychain — see derive.go, which carries the argument in
+// full. The short version: a tool that takes what to look for as an argument is
+// only as good as the argument, and this one reported clean for five days over
+// a tree holding fourteen registered directory names, because the list it was
+// handed was the four somebody thought of on one afternoon.
+//
+// Derived names arrive in two tiers. A name from the config is sensitive BY
+// CONSTRUCTION — it has a pseudonym already, or it is being billed — and is
+// reported as a client finding. A registered name nobody has classified is
+// reported as a CANDIDATE: not a leak, an unanswered question, which stays open
+// until a human records the answer in ~/.timetattle/publication-gate.json.
+//
+// # What runs it
+//
+// Nothing did, for the first week of its life, and three client-name leaks
+// landed in published documents in one three-day gap between hand runs. Two
+// triggers now exist, and they ask DIFFERENT questions:
+//
+//	scripts/git-hooks/pre-commit   -staged: does this commit ADD anything
+//	                               unpublishable, measured against the same
+//	                               files at HEAD?
+//	make gate                      -git: is the repository publishable AS IT
+//	                               STANDS, working tree and every object in
+//	                               .git, including unreachable ones?
+//
+// Why a hook and not CI is argued in the hook itself, and the argument is not
+// the usual one: the names deliberately live outside the repository, so the
+// only machine that can run this check is the one holding ~/.timetattle. See
+// docs/content/docs/confidentiality.md.
+//
+// # Three exits, because there are three outcomes
+//
+//	0  it ran and found nothing
+//	1  -gate, and it found something
+//	2  it could not build its list, so it has judged NOTHING
+//
+// The third is the whole point. A gate that silently passes when it cannot find
+// its names is worse than no gate, because it reports clean; three commits in
+// this repository have already gone out on a skip that named a conclusion
+// instead of a precondition. A -gate run that cannot build its list does not
+// scan, prints no count of findings, and exits 2.
 //
 // # Why this is not a grep
 //
@@ -22,10 +65,17 @@
 // word boundary inside either — so the usual statement of that hazard overstates
 // it. What survives is the genuine standalone English use, which a machine
 // cannot distinguish from a client reference and a human must adjudicate. Once
-// adjudicated, -skip path:line clears that one site explicitly at run time —
-// the same shape scripts/pseudonymize already uses for the identical problem
-// — rather than the tool silently guessing or a real leak on a neighbouring
-// line going unreported because the whole file got waved through.
+// adjudicated, -skip path:line:anchor clears that one site explicitly at run
+// time — the same shape scripts/pseudonymize already uses for the identical
+// problem — rather than the tool silently guessing or a real leak on a
+// neighbouring line going unreported because the whole file got waved through.
+//
+// The anchor is what stops that exemption rotting. A bare path:line slides onto
+// a DIFFERENT line the instant something is inserted above it, and a slid
+// exemption does not stop working: it silently clears a line nobody reviewed,
+// which is indistinguishable from a pass. So a site carries a digest of the
+// line that was reviewed, and a mismatch clears nothing and reports itself.
+// -gate refuses an unanchored skip outright.
 //
 // It also UNDER-reports, which is the more dangerous direction: a word boundary
 // cannot see realFoo, fooHours or TestFoo, all of which are client references
@@ -57,9 +107,11 @@
 //
 // # Usage
 //
-//	go run ./scripts/confidential -dir . -names a,b,c
-//	go run ./scripts/confidential -dir . -names a,b,c -git       # every object, incl. unreachable
-//	go run ./scripts/confidential -dir . -names a,b,c -git -gate # non-zero exit if anything is found
+//	go run ./scripts/confidential -dir .              # the tree, list derived
+//	go run ./scripts/confidential -staged             # what this commit records
+//	go run ./scripts/confidential -classify           # the classification file to review and save
+//	make gate                                         # the publication gate: tree + every git object
+//	go run ./scripts/confidential -dir . -names a,b,c # extra names, added to the derived list
 //
 // The -git mode reads every object the store holds, reachable or not, which is
 // the only way to see an amended-away commit that is still sitting in
@@ -70,6 +122,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -86,10 +141,19 @@ import (
 
 // Finding kinds.
 const (
-	KindClient   = "client"
-	KindRate     = "rate"
-	KindSecret   = "secret"
+	KindClient = "client"
+	KindRate   = "rate"
+	KindSecret = "secret"
+	// KindIdentity is a developer identifier: a team ID, a certificate common
+	// name, a real home-directory path.
 	KindIdentity = "identity"
+	// KindCandidate is a REGISTERED name nobody has classified. It is not a
+	// leak; it is an unanswered question, and the gate says so in those words.
+	KindCandidate = "candidate"
+	// KindSkip is a -skip site whose anchor no longer matches the line there.
+	// The exemption was not applied and the site is reported: a rotted skip
+	// must fail closed, loudly.
+	KindSkip = "skip"
 )
 
 // Scanner carries the sensitive particulars, which are supplied at run time and
@@ -99,8 +163,16 @@ const (
 // cleared, such as a genuine English use of a short client name; see -skip.
 type Scanner struct {
 	Names []string
-	Deny  []string
-	Skip  map[Site]bool
+	// Candidates are registered names whose sensitivity nobody has ruled on;
+	// see derive.go for why they are a separate tier from Names.
+	Candidates []string
+	Deny       []string
+	Skip       map[Site]bool
+	// Anchor is the digest of the line each skipped site was reviewed ON. A
+	// site with an anchor is cleared only while that anchor still matches, so
+	// a skip that has rotted -- because a line was inserted above it -- exempts
+	// nothing instead of silently exempting its new neighbour.
+	Anchor map[Site]string
 }
 
 // Site identifies one line in one file, the unit -skip clears.
@@ -188,6 +260,12 @@ type Finding struct {
 	Kind  string
 	Match string
 	Text  string
+	// Anchor is a digest of the line this finding sits on. It identifies the
+	// finding across a file's revisions without carrying its content, which is
+	// what lets the staged scan tell a leak that MOVED from one that was ADDED,
+	// and what a -skip site is anchored to. Never the text itself: a digest can
+	// be printed and pasted, and the text of a finding is the leak.
+	Anchor string
 }
 
 // splitIdent breaks an identifier into camelCase and underscore components, so
@@ -223,6 +301,10 @@ func scanText(path, content string, sc Scanner) []Finding {
 	var out []Finding
 	for n, line := range strings.Split(content, "\n") {
 		lineNo := n + 1
+		anchor := lineAnchor(line)
+		at := func(kind, match, text string) Finding {
+			return Finding{Path: path, Line: lineNo, Kind: kind, Match: match, Text: text, Anchor: anchor}
+		}
 		// This tool's own test fixtures need to be rate-, secret- and
 		// identity-shaped on purpose; see the doc comment on selfFixturePath.
 		if path == selfFixturePath && strings.Contains(line, fixtureMarker) {
@@ -233,17 +315,37 @@ func scanText(path, content string, sc Scanner) []Finding {
 		// cannot tell it apart from a real client reference, so a person has
 		// to. -skip records that decision explicitly at run time rather than
 		// baking a silent exception into the tool.
+		//
+		// An ANCHORED site is cleared only while the line it was reviewed on is
+		// still the line at that number. A path:line list rots the instant
+		// something is inserted above it, and a rotted skip does not merely
+		// stop working -- it silently exempts a DIFFERENT line, which is a hole
+		// in the gate that reads exactly like a pass. So a mismatch clears
+		// nothing and is itself reported, carrying the anchor that would clear
+		// the site as it stands now.
 		if sc.Skip[Site{path, lineNo}] {
-			continue
+			want, anchored := sc.Anchor[Site{path, lineNo}]
+			if !anchored || want == anchor {
+				continue
+			}
+			out = append(out, at(KindSkip,
+				"stale -skip site; the reviewed line is gone, the anchor here is now "+anchor, "<redacted>"))
 		}
-		if len(sc.Names) > 0 {
+		if len(sc.Names) > 0 || len(sc.Candidates) > 0 {
 			// Deescape only for identifier extraction: a backslash-letter escape
 			// such as \b is not an identifier character, so \bflonk\b must yield
 			// the token "flonk", not "bflonk". Every other check below still runs
 			// against the original line.
 			for _, ident := range identRe.FindAllString(symbolscan.Deescape(line), -1) {
 				if matchesName(ident, sc.Names) {
-					out = append(out, Finding{path, lineNo, KindClient, ident, strings.TrimSpace(line)})
+					out = append(out, at(KindClient, ident, strings.TrimSpace(line)))
+					continue
+				}
+				// A registered name nobody has classified. Reported as an open
+				// question rather than as a leak, and in its own kind, so the
+				// two are never added together in a summary.
+				if matchesName(ident, sc.Candidates) {
+					out = append(out, at(KindCandidate, ident, strings.TrimSpace(line)))
 				}
 			}
 		}
@@ -251,15 +353,15 @@ func scanText(path, content string, sc Scanner) []Finding {
 		// nor the surrounding line is echoed, or the report becomes the leak.
 		for _, d := range sc.Deny {
 			if d != "" && strings.Contains(line, d) {
-				out = append(out, Finding{path, lineNo, KindIdentity, "<denied literal>", "<redacted>"})
+				out = append(out, at(KindIdentity, "<denied literal>", "<redacted>"))
 			}
 		}
 		if m := certRe.FindStringSubmatch(line); m != nil && !placeholderRe.MatchString(m[1]) {
-			out = append(out, Finding{path, lineNo, KindIdentity, "Developer ID common name", "<redacted>"})
+			out = append(out, at(KindIdentity, "Developer ID common name", "<redacted>"))
 		}
 		for _, m := range homePathRe.FindAllStringSubmatch(line, -1) {
 			if !homePlaceholders[strings.ToLower(m[1])] {
-				out = append(out, Finding{path, lineNo, KindIdentity, "home-directory path", "<redacted>"})
+				out = append(out, at(KindIdentity, "home-directory path", "<redacted>"))
 			}
 		}
 		for _, re := range rateRes {
@@ -267,7 +369,7 @@ func scanText(path, content string, sc Scanner) []Finding {
 				if bareDigitDollarRe.MatchString(m) {
 					continue
 				}
-				out = append(out, Finding{path, lineNo, KindRate, m, strings.TrimSpace(line)})
+				out = append(out, at(KindRate, m, strings.TrimSpace(line)))
 			}
 		}
 		for _, m := range secretRe.FindAllString(line, -1) {
@@ -276,10 +378,23 @@ func scanText(path, content string, sc Scanner) []Finding {
 				name = before
 			}
 			// never echo the value, not even into our own report
-			out = append(out, Finding{path, lineNo, KindSecret, name, "<redacted assignment>"})
+			out = append(out, at(KindSecret, name, "<redacted assignment>"))
 		}
 	}
 	return out
+}
+
+// lineAnchor identifies a line by its content without carrying it: the first 16
+// hex digits of the SHA-256 of the line with surrounding whitespace removed.
+//
+// Trimmed, so re-indenting a line neither rots a -skip anchor nor makes the
+// staged scan call a moved line new. A digest rather than the text, because
+// both of its users get printed: a -skip site is typed into commands and pasted
+// into project/ documents, and a finding's own report must never echo what it
+// found.
+func lineAnchor(line string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(line)))
+	return hex.EncodeToString(sum[:8])
 }
 
 func splitList(s string) []string {
@@ -292,22 +407,67 @@ func splitList(s string) []string {
 	return out
 }
 
-// parseSkipSites turns "path:line" entries into a Site set. A malformed entry
-// -- no colon, or a non-numeric line -- is dropped rather than aborting the
-// gate; mirrors scripts/pseudonymize's parseSkips.
+// parseSkipSites turns "path:line" and "path:line:anchor" entries into a Site
+// set. A malformed entry -- no colon, or a non-numeric line -- is dropped
+// rather than aborting the gate; mirrors scripts/pseudonymize's parseSkips.
 func parseSkipSites(entries []string) map[Site]bool {
 	out := map[Site]bool{}
 	for _, e := range entries {
-		p, l, ok := strings.Cut(e, ":")
-		if !ok {
-			continue
+		if site, _, ok := parseSkipEntry(e); ok {
+			out[site] = true
 		}
-		n, err := strconv.Atoi(l)
-		if err != nil {
-			continue
-		}
-		out[Site{p, n}] = true
 	}
+	return out
+}
+
+// parseSkipAnchors reads the third field of the entries that carry one: the
+// digest of the line a human actually reviewed. Sites without one are absent
+// from the map rather than present with an empty string, so "not anchored" and
+// "anchored to nothing" cannot be confused; see unanchoredSkips.
+func parseSkipAnchors(entries []string) map[Site]string {
+	out := map[Site]string{}
+	for _, e := range entries {
+		if site, anchor, ok := parseSkipEntry(e); ok && anchor != "" {
+			out[site] = anchor
+		}
+	}
+	return out
+}
+
+func parseSkipEntry(e string) (Site, string, bool) {
+	parts := strings.SplitN(e, ":", 3)
+	if len(parts) < 2 {
+		return Site{}, "", false
+	}
+	n, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return Site{}, "", false
+	}
+	anchor := ""
+	if len(parts) == 3 {
+		anchor = strings.TrimSpace(parts[2])
+	}
+	return Site{parts[0], n}, anchor, true
+}
+
+// unanchoredSkips lists the sites cleared without saying WHICH line was
+// reviewed. They still work for an exploratory run, where a human is reading
+// every line of the output anyway. A -gate run refuses them: its whole output
+// is an exit code, and an exemption that has silently slid onto a different
+// line is invisible in one.
+func unanchoredSkips(sites map[Site]bool, anchors map[Site]string) []Site {
+	var out []Site
+	for s := range sites {
+		if _, ok := anchors[s]; !ok {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Line < out[j].Line
+	})
 	return out
 }
 
@@ -523,37 +683,121 @@ func scanGitObjects(root string, sc Scanner) ([]Finding, int, error) {
 	return out, n, nil
 }
 
+// Exit codes. They are three because there are three outcomes, and a gate that
+// collapsed the last two would answer "is this publishable" with "I could not
+// tell" while looking exactly like "yes".
+const (
+	exitClean       = 0
+	exitFindings    = 1
+	exitCannotJudge = 2
+)
+
 func main() {
 	dir := flag.String("dir", ".", "repository root to audit")
 	nameList := flag.String("names", os.Getenv("TIMETATTLE_CLIENT_NAMES"),
-		"comma-separated client symbols to hunt (or set TIMETATTLE_CLIENT_NAMES)")
+		"comma-separated client symbols to hunt, ADDED to the derived list (or set TIMETATTLE_CLIENT_NAMES)")
 	denyList := flag.String("deny", os.Getenv("TIMETATTLE_DENY_LITERALS"),
-		"comma-separated literal values to flag anywhere, such as a developer team ID (or set TIMETATTLE_DENY_LITERALS)")
-	kind := flag.String("kind", "", "report only this kind: client, rate, secret or identity")
+		"comma-separated literal values to flag anywhere, added to the derived list (or set TIMETATTLE_DENY_LITERALS)")
+	kind := flag.String("kind", "", "report only this kind: client, candidate, rate, secret, identity or skip")
 	gitMode := flag.Bool("git", false, "also scan every git object, including unreachable ones")
+	staged := flag.Bool("staged", false, "audit the content this commit would record, against the same files at HEAD")
 	verbose := flag.Bool("v", false, "list every finding, not just the summary")
-	gate := flag.Bool("gate", false, "exit non-zero if anything is found")
+	gate := flag.Bool("gate", false, "exit non-zero if anything is found, and refuse to run at all if the list cannot be built")
+	classify := flag.Bool("classify", false, "print a classification file naming every unclassified registered name now in the tree, and exit")
+	deriveNames := flag.Bool("derive", true, "build the list from this machine's registry, config and keychain")
+	configPath := flag.String("config", envOr("TIMETATTLE_GATE_CONFIG", defaultUserFile("config.json")),
+		"the config to derive reference-project and engagement names from (or set TIMETATTLE_GATE_CONFIG)")
+	registryPath := flag.String("registry", envOr("TIMETATTLE_GATE_REGISTRY", defaultUserFile("registered-directories.json")),
+		"the registry index to derive registered names from (or set TIMETATTLE_GATE_REGISTRY)")
+	gatePath := flag.String("classification", envOr("TIMETATTLE_GATE_CLASSIFICATION", defaultUserFile("publication-gate.json")),
+		"the file recording which registered names a human has ruled publishable (or set TIMETATTLE_GATE_CLASSIFICATION)")
 	skipList := flag.String("skip", "",
-		"comma-separated path:line sites a human has reviewed and cleared, such as a genuine English use of a short client name")
+		"comma-separated path:line:anchor sites a human has reviewed and cleared; -gate requires the anchor")
 	flag.Parse()
 
-	sc := Scanner{Names: splitList(*nameList), Deny: splitList(*denyList), Skip: parseSkipSites(splitList(*skipList))}
-	if len(sc.Names) == 0 {
-		fmt.Fprintln(os.Stderr, "note: no -names given, so no client symbols are reported")
+	sc := Scanner{
+		Names:  splitList(*nameList),
+		Deny:   nil,
+		Skip:   parseSkipSites(splitList(*skipList)),
+		Anchor: parseSkipAnchors(splitList(*skipList)),
 	}
-	if len(sc.Deny) == 0 {
-		fmt.Fprintln(os.Stderr, "note: no -deny given, so known literals such as a team ID are not reported")
+	// Hand-supplied literals are vetted exactly like derived ones. The false
+	// finding this gate produced against scripts/sign.sh came from a
+	// placeholder typed into this very flag.
+	for _, lit := range splitList(*denyList) {
+		accepted, err := acceptDenyLiteral(lit)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "note:", err)
+			continue
+		}
+		sc.Deny = append(sc.Deny, accepted)
 	}
 
-	findings, files := scanTree(*dir, sc)
-	fmt.Printf("working tree: %d text files scanned, %d findings\n", files, len(findings))
-	report(findings, *kind, *verbose)
+	var d derived
+	if *deriveNames {
+		d = derive(derivePaths{Config: *configPath, Registry: *registryPath, Gate: *gatePath})
+		sc.Names = append(sc.Names, d.Names...)
+		sc.Candidates = d.Candidates
+		sc.Deny = append(sc.Deny, d.Deny...)
+	}
+	printList(d, sc, *deriveNames)
+
+	// THE PRECONDITION, AND WHY IT COMES BEFORE THE SCAN. Three commits in this
+	// repository have gone out on a skip that named a conclusion instead of a
+	// precondition, and a gate is the worst possible place to repeat that: its
+	// output is an exit code, and "I hunted an empty list" is indistinguishable
+	// from "there is nothing here" once it has been reduced to one. So a -gate
+	// run that cannot build its list does not scan, does not print a count of
+	// findings, and does not exit 0.
+	if *gate {
+		if reasons := cannotJudge(d, sc, *deriveNames, *skipList); len(reasons) > 0 {
+			fmt.Println("\nPRECONDITION NOT MET -- this run cannot judge whether the tree is publishable.")
+			for _, r := range reasons {
+				fmt.Println("  " + r)
+			}
+			fmt.Println("\nNothing was scanned and nothing is being reported clean.")
+			os.Exit(exitCannotJudge)
+		}
+	}
+
+	if *classify {
+		printClassification(*dir, sc)
+		return
+	}
+
+	var findings []Finding
+	if *staged {
+		res, err := scanStaged(*dir, sc)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(exitCannotJudge)
+		}
+		fmt.Printf("\nstaged for this commit: %d text file(s) of %d path(s), %d finding(s) added, %d carried from HEAD\n",
+			res.Files, len(res.Paths), len(res.Added), len(res.Carried))
+		// Carried findings are printed, always. They are not this commit's
+		// doing and they are not nothing: a run that mentioned only additions
+		// would read as a clean tree.
+		if len(res.Carried) > 0 {
+			fmt.Println("  carried (already at HEAD, not introduced here):")
+			report(res.Carried, *kind, *verbose)
+		}
+		if len(res.Added) > 0 {
+			fmt.Println("  added by this commit:")
+			report(res.Added, *kind, *verbose)
+		}
+		findings = res.Added
+	} else {
+		f, files := scanTree(*dir, sc)
+		fmt.Printf("\nworking tree: %d text files scanned, %d findings\n", files, len(f))
+		report(f, *kind, *verbose)
+		findings = f
+	}
 
 	if *gitMode {
 		gf, n, err := scanGitObjects(*dir, sc)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(2)
+			os.Exit(exitCannotJudge)
 		}
 		fmt.Printf("\ngit objects: %d text objects scanned, %d findings\n", n, len(gf))
 		report(gf, *kind, *verbose)
@@ -561,8 +805,129 @@ func main() {
 	}
 
 	if *gate && len(findings) > 0 {
-		os.Exit(1)
+		fmt.Printf("\nverdict: %d finding(s), against %s\n", len(findings), listSummary(sc))
+		os.Exit(exitFindings)
 	}
+	fmt.Printf("\nverdict: nothing found, against %s\n", listSummary(sc))
+}
+
+// defaultUserFile is ~/.timetattle/<name>, following store.DefaultPath and
+// registry.DefaultIndexPath. A home directory that cannot be resolved yields
+// an empty path, which the derivation then reports as an unreadable source
+// rather than as an empty list.
+func defaultUserFile(name string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".timetattle", name)
+}
+
+// envOr lets each derivation source be redirected, which is how the gate itself
+// is tested end to end: pointing it at a fixture registry is the only way to
+// prove the hook fires on a planted name without committing a real one. It is
+// not a security boundary and does not pretend to be — anyone who can set an
+// environment variable can already pass --no-verify. It is an accident
+// detector, and the accident it detects is a pasted capture.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// listSummary says what the verdict rests on. CLAUDE.md's rule for a tool that
+// takes what to look for as an argument: derive the list from something that
+// cannot go stale, or state in the output which list produced the verdict.
+// This does both.
+func listSummary(sc Scanner) string {
+	return fmt.Sprintf("%d name(s), %d unclassified registered name(s) and %d denied literal(s)",
+		len(sc.Names), len(sc.Candidates), len(sc.Deny))
+}
+
+// printList prints the provenance of every part of the list, before anything is
+// scanned, whether or not the run is a gate.
+func printList(d derived, sc Scanner, didDerive bool) {
+	fmt.Printf("list: %s\n", listSummary(sc))
+	if !didDerive {
+		fmt.Println("  -derive=false: nothing was read from this machine; the list is exactly what was passed in")
+		return
+	}
+	for _, s := range d.Sources {
+		fmt.Println("  " + s.String())
+	}
+	for _, r := range d.Refused {
+		fmt.Println("  " + r)
+	}
+}
+
+// cannotJudge lists every reason this run has no standing to report on the
+// tree. Each entry names what was OBSERVED to be missing, never what that
+// implies.
+func cannotJudge(d derived, sc Scanner, didDerive bool, skipList string) []string {
+	var out []string
+	for _, s := range d.Unavailable() {
+		out = append(out, s.String())
+	}
+	if len(sc.Names) == 0 && len(sc.Candidates) == 0 {
+		if didDerive {
+			out = append(out, "the derived list is empty: no name to hunt was found anywhere on this machine")
+		} else {
+			out = append(out, "-derive=false and -names is empty, so there is no client symbol to hunt")
+		}
+	}
+	if len(sc.Deny) == 0 {
+		out = append(out, "no denied literal could be derived or was supplied, so a team ID or certificate name would not be reported")
+	}
+	for _, s := range unanchoredSkips(sc.Skip, sc.Anchor) {
+		out = append(out, fmt.Sprintf(
+			"-skip %s:%d carries no anchor: a bare path:line exemption slides onto a different line the moment one is inserted above it",
+			s.Path, s.Line))
+	}
+	if entries := splitList(skipList); len(entries) > 0 && len(sc.Skip) != len(entries) {
+		out = append(out, fmt.Sprintf("-skip was given %d entr(ies) and %d parsed; a mistyped exemption clears nothing and must not pass unnoticed",
+			len(entries), len(sc.Skip)))
+	}
+	return out
+}
+
+// printClassification emits the classification file a human has to rule on:
+// every registered name that is actually in the tree and has not been
+// classified yet. It never decides anything -- a name that belongs to a client
+// must be pseudonymised, not listed here -- which is why it prints to stdout
+// for a person to read before saving.
+func printClassification(dir string, sc Scanner) {
+	findings, _ := scanTree(dir, sc)
+	seen := map[string]bool{}
+	var names []string
+	for _, f := range findings {
+		if f.Kind != KindCandidate {
+			continue
+		}
+		for _, c := range sc.Candidates {
+			if strings.EqualFold(c, f.Match) && !seen[strings.ToLower(c)] {
+				seen[strings.ToLower(c)] = true
+				names = append(names, c)
+			}
+		}
+	}
+	sort.Slice(names, func(i, j int) bool { return strings.ToLower(names[i]) < strings.ToLower(names[j]) })
+
+	fmt.Fprintln(os.Stderr, "\nREAD THIS LIST BEFORE SAVING IT. Every name below is registered on this")
+	fmt.Fprintln(os.Stderr, "machine AND present in the tracked tree. Listing one here says it is safe to")
+	fmt.Fprintln(os.Stderr, "publish. A name that identifies a client is NOT safe to publish and does not")
+	fmt.Fprintln(os.Stderr, "belong in this file: run scripts/pseudonymize over it instead.")
+
+	out, err := json.MarshalIndent(gateFile{
+		Version:          gateFileVersion,
+		PublishableNames: names,
+		DeniedLiterals:   []string{},
+	}, "", "  ")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(exitCannotJudge)
+	}
+	fmt.Println(string(out))
 }
 
 func report(fs []Finding, only string, verbose bool) {

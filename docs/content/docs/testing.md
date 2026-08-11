@@ -57,11 +57,23 @@ The full argument is in `project/private/2026-08-03-segb-tombstones.md`.
 | Depends on the machine's timezone or home directory | no | yes |
 | Suitable for CI, or for a pre-commit hook | yes | no |
 
+(The hook's confidentiality-gate step is the exception to that last row: it
+reads `~/.timetattle` deliberately, and there is nowhere else it could run.)
+
 The pre-commit hook (`scripts/git-hooks/pre-commit`) runs the first one. That is
 the right choice — a hook that failed because a laptop had not been harvested
 recently would be turned off within a week — but it means a commit that passes
 every hook has not been checked against real data. Run the second one yourself
 before merging anything that changes how evidence is read.
+
+The hook's *first* step is not a test run at all: it is the confidentiality
+gate, which reads `~/.timetattle` and is therefore machine-coupled on purpose.
+It is the one check here that a fresh clone genuinely cannot perform, and it
+says so rather than passing — see
+[The publication gate](confidentiality.md). It runs before the tests because it
+is the only failure in the hook that cannot be repaired by amending afterwards:
+once a client name is in a commit object it is in the history, which is why the
+gate has a mode that reads unreachable objects at all.
 
 ## Why a corpus check exists at all
 

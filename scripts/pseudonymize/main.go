@@ -37,6 +37,25 @@
 // no defensible target, so it is reported and left alone for a human. Guessing
 // silently is how a rename pass corrupts something nobody rechecks.
 //
+// # Fixed-width columns
+//
+// Two names of different lengths are the ordinary case, and a correct
+// substitution therefore changes a line's width. In prose that is simply right.
+// In a fixed-width ASCII chart it is a silent corruption: a rename over a
+// document holding a 17-character label column shifted every glyph row against
+// the hour ruler above it, and the tool reported "0 site(s) need a human"
+// having broken two charts. Column-aligned output is ordinary in this
+// repository's documents.
+//
+// So when a line is column-aligned — two or more spaces with content on both
+// sides — the difference is absorbed into the padding of the field that
+// changed, and every following column keeps its offset. When that padding
+// cannot absorb it without running two fields together, the line is left
+// EXACTLY as it was and the site is reported, the same refusal the mixed-case
+// rule makes. Trailing spaces at the end of a line are a Markdown hard break
+// rather than padding: nothing follows them that could move, so they are never
+// eaten.
+//
 // # Usage
 //
 //	go run ./scripts/pseudonymize -map old=new,other=new2            # dry run
@@ -132,7 +151,7 @@ func main() {
 	}
 	sort.Strings(notes)
 	for _, s := range notes {
-		fmt.Fprintln(os.Stderr, "unhandled casing, left alone:", s)
+		fmt.Fprintln(os.Stderr, "left alone, needs a human:", s)
 	}
 	verb := "would rewrite"
 	if *apply {
@@ -249,8 +268,9 @@ func applyCase(matched, replacement string) (string, bool) {
 	}
 }
 
-// rewriteLine returns the rewritten line and a note for every site whose casing
-// it refused to guess at.
+// rewriteLine returns the rewritten line and a note for every site it refused
+// to guess at — a casing with no defensible target, or a width change on a
+// column-aligned line that its padding cannot absorb.
 func rewriteLine(s string, m map[string]string) (string, []string) {
 	names := make([]string, 0, len(m))
 	for k := range m {
@@ -261,6 +281,7 @@ func rewriteLine(s string, m map[string]string) (string, []string) {
 
 	var out strings.Builder
 	var notes []string
+	var reps []substitution
 	for i := 0; i < len(s); {
 		hit := false
 		for _, n := range names {
@@ -272,7 +293,9 @@ func rewriteLine(s string, m map[string]string) (string, []string) {
 			if !ok {
 				notes = append(notes, fmt.Sprintf("%q has no unambiguous target casing", matched))
 			}
+			start := out.Len()
 			out.WriteString(rep)
+			reps = append(reps, substitution{start: start, end: out.Len(), delta: len(rep) - len(matched)})
 			i += len(n)
 			hit = true
 			break
@@ -282,7 +305,116 @@ func rewriteLine(s string, m map[string]string) (string, []string) {
 			i++
 		}
 	}
-	return out.String(), notes
+
+	rewritten := out.String()
+	if !isColumnAligned(s) || len(rewritten) == len(s) {
+		return rewritten, notes
+	}
+	repaired, ok := repairColumns(rewritten, reps)
+	if !ok {
+		// Nothing about this line is safe to write: rewriting it would shift
+		// every column after the field, and padding it back would run two
+		// fields together. Report the site and leave the line exactly as it
+		// was, the same refusal the mixed-case rule makes.
+		return s, append(notes, "changes the width of a column-aligned line, and its padding cannot absorb the difference")
+	}
+	return repaired, notes
+}
+
+// substitution records where one replacement landed in the rewritten line and
+// how much longer (or shorter) it made it. Positions are into the OUTPUT, which
+// is what repairColumns has to edit.
+type substitution struct {
+	start, end, delta int
+}
+
+// isColumnAligned reports whether s uses runs of spaces to place fields at
+// fixed offsets: two or more spaces with non-space content on both sides. It is
+// deliberately not "contains two spaces" — trailing spaces at the end of a
+// Markdown line are a hard line break with no following field, so nothing after
+// them can move and they must not be eaten.
+func isColumnAligned(s string) bool {
+	run := 0
+	seenContent := false
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' {
+			run++
+			continue
+		}
+		if run >= 2 && seenContent {
+			return true
+		}
+		seenContent = true
+		run = 0
+	}
+	return false
+}
+
+// repairColumns absorbs each substitution's width change into the padding of
+// the field it sits in, so every column after it keeps the offset it had. It
+// reports false when some substitution's field cannot absorb the difference —
+// there is no honest answer there, and guessing is what corrupted two charts.
+//
+// Substitutions are repaired right to left: an edit at one offset moves
+// everything after it, and everything after it has already been dealt with.
+func repairColumns(out string, reps []substitution) (string, bool) {
+	for i := len(reps) - 1; i >= 0; i-- {
+		r := reps[i]
+		if r.delta == 0 {
+			continue
+		}
+		// A left-padded (right-aligned) field pads before the value, a
+		// left-aligned one after it. Try the trailing gap first: that is the
+		// ordinary label column.
+		if repaired, ok := absorbTrailing(out, r); ok {
+			out = repaired
+			continue
+		}
+		if repaired, ok := absorbLeading(out, r); ok {
+			out = repaired
+			continue
+		}
+		return out, false
+	}
+	return out, true
+}
+
+// absorbTrailing takes the difference out of the run of spaces immediately
+// after the replacement. It requires a following field — a gap that runs to the
+// end of the line pads nothing — and at least one space left over, or two
+// fields would run together.
+func absorbTrailing(out string, r substitution) (string, bool) {
+	j := r.end
+	for j < len(out) && out[j] == ' ' {
+		j++
+	}
+	gap := j - r.end
+	if gap < 2 || j == len(out) {
+		return out, false
+	}
+	want := gap - r.delta
+	if want < 1 {
+		return out, false
+	}
+	return out[:r.end] + strings.Repeat(" ", want) + out[j:], true
+}
+
+// absorbLeading is absorbTrailing against the padding before the replacement,
+// which is where a right-aligned field keeps it.
+func absorbLeading(out string, r substitution) (string, bool) {
+	p := r.start
+	for p > 0 && out[p-1] == ' ' {
+		p--
+	}
+	gap := r.start - p
+	if gap < 2 || p == 0 {
+		return out, false
+	}
+	want := gap - r.delta
+	if want < 1 {
+		return out, false
+	}
+	return out[:p] + strings.Repeat(" ", want) + out[r.start:], true
 }
 
 // countMatches counts component-boundary occurrences, including the ones whose
