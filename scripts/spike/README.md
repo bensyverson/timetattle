@@ -32,10 +32,20 @@ tuned in, so its findings get re-implemented rather than discarded.
   generated days. It cannot reach the store, and nothing in it may be replaced
   with real data — a screen capture of it is safe to publish, which is the
   point.
-- **Check it** with `node scripts/spike/zoomproto/check.js`. That runs the
-  page's own generator, kernel and colour ramp headlessly and asserts the
-  properties the design requires; it slices the functions out of the HTML
-  rather than re-implementing them.
+- **Check it** with three Node scripts beside it, none of which re-implement
+  anything — each slices the functions out of the HTML and runs those:
+  - `check.js` — the arithmetic. Generator shapes, the Level 0 kernel, the
+    intensity ramp, the axis schedule, and the invariants the design requires.
+    Every figure quoted in the page's comments and in task p8fuu's note comes
+    from here. Exits non-zero on failure.
+  - `smoke.js` — the pixels. Runs the whole page under a stub canvas, sweeps
+    the zoom end to end and drives every control to both extremes, asserting no
+    frame throws and no draw call gets a non-finite coordinate. A broken canvas
+    renders a blank rectangle rather than raising, so this is the only thing
+    standing between an edit and a silently empty page.
+  - `raster.js` — the geometry, as PNGs. A crude software rasteriser so the
+    layout can be looked at without a browser. Not for judging appearance; it
+    is for catching marks drawn outside their container, which it has done.
 
 ## Permissions
 
