@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/source"
 )
 
@@ -214,5 +215,43 @@ func TestABucketsClientIsTheUnionOfItsProjectsAndNeverTheirSum(t *testing.T) {
 		if c.Engaged.Total == 0 {
 			t.Errorf("bucket %d credits the client nothing, and both its projects were active", i)
 		}
+	}
+}
+
+// A SLICE MUST NOT LOSE A REASON THE REPORT KEEPS. The whole-span report gives
+// presence a person said belonged to nobody its own bucket, distinct from
+// silence the gap threshold bridged; a series that folded the two would report
+// a person's own accounting as clock nothing was recorded in — the exact
+// collapse this project has shipped in three separate tools, arriving through
+// the re-slice rather than through a source.
+func TestASeriesKeepsAssertedUnattributedApartFromBridgedSilence(t *testing.T) {
+	report := corrected(t, oneSitting("acorn"),
+		[]metrics.Attribution{said(10, 0, 10, 30, "")})
+
+	series, err := report.Series(edges(1))
+	if err != nil {
+		t.Fatalf("Series: %v", err)
+	}
+	var asserted, bridged, unattributed time.Duration
+	for _, b := range series {
+		asserted += b.Asserted
+		bridged += b.Bridged
+		unattributed += b.Unattributed.Total
+	}
+	if asserted != report.Unattributed.Asserted {
+		t.Errorf("the buckets carry %v asserted against %v in the report", asserted,
+			report.Unattributed.Asserted)
+	}
+	if asserted == 0 {
+		t.Fatal("the fixture asserted nothing; the test measures nothing")
+	}
+	if bridged != report.Unattributed.Bridged {
+		t.Errorf("the buckets carry %v of bridged silence against %v in the report; a person's "+
+			"assertion has been folded into clock nobody recorded", bridged,
+			report.Unattributed.Bridged)
+	}
+	if got := asserted + bridged; got > unattributed {
+		t.Errorf("the reasons come to %v of %v unattributed; one stretch is counted twice",
+			got, unattributed)
 	}
 }

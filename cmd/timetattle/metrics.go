@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bensyverson/timetattle/internal/adjustments"
 	"github.com/bensyverson/timetattle/internal/clientmap"
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
@@ -65,6 +66,8 @@ never double-counted, and is the capacity denominator. Parameters come from
 	dayStart := fs.String("day-start", "", "wall clock a working day begins at, as 05:00 (default: from the config file)")
 	weekStart := fs.String("week-start", "", "weekday a week begins on, as monday (default: from the config file)")
 	timezone := fs.String("timezone", "", "IANA zone the working day is local to, as America/Chicago")
+	uncorrected := fs.Bool("uncorrected", false,
+		"report the machine's answer alone, ignoring every attribution correction in the store")
 	cmd.RunE = func(*cobra.Command, []string) error {
 		set := flagsSet(fs)
 
@@ -214,7 +217,38 @@ never double-counted, and is the capacity denominator. Parameters come from
 			}
 		}
 
-		report, err := metrics.Compute(events, p)
+		// THE HUMAN CORRECTION LAYER, read here rather than merely stored.
+		//
+		// The store has held 'attributed' and 'unattributed' assertions since
+		// migration 0008 and `timetattle review` has been able to produce one
+		// from the block walk for as long; until this call existed nothing read
+		// either, so a person who reattributed a span saw their correction
+		// recorded faithfully, survive re-derivation exactly as promised, and
+		// change no figure they could see. Silence is indistinguishable from
+		// agreement, which is why the report now states the population below
+		// even when it is empty.
+		//
+		// ONLY THE ATTRIBUTION HALF IS APPLIED. Engaged and not-engaged
+		// assertions travel in the same log and move the capacity denominator;
+		// internal/fit measures the clustering against exactly that difference,
+		// so absorbing them here would shrink the model's own error signal for
+		// reasons having nothing to do with the model. See metrics.Corrected.
+		//
+		// The window is the EVENT window, and the store's test is overlap
+		// rather than containment: a correction beginning before it and running
+		// into it describes time inside it. One recorded wholly outside cannot
+		// touch an instant inside, because an assertion is keyed to wall clock
+		// and nothing else.
+		var said []metrics.Attribution
+		if !*uncorrected {
+			recorded, err := st.Adjustments(context.Background(), filter.From, filter.To)
+			if err != nil {
+				return err
+			}
+			said = adjustments.Fold(nil, recorded).Attributions()
+		}
+
+		report, err := metrics.Corrected(events, p, said)
 		if err != nil {
 			return err
 		}
@@ -251,7 +285,8 @@ never double-counted, and is the capacity denominator. Parameters come from
 		// backstop. columnsOf returns 0 for a pipe, which leaves both alone.
 		cols := columnsOf(stdout)
 		out := clipTo(stdout, cols)
-		reported := reportMetrics(out, *storePath, report, cols, excludes, drop, scope, cm.Collisions())
+		reported := reportMetrics(out, *storePath, report, cols, excludes, drop, scope,
+			cm.Collisions(), *uncorrected)
 		if set["by"] && reported {
 			reportSeries(out, report, cal, unit, rows, log, scope, cols)
 		}
@@ -336,7 +371,7 @@ func (s metricsScope) describe() string {
 // sentence that exists to refuse exactly that reading.
 func reportMetrics(out io.Writer, path string, r metrics.Report, cols int,
 	excludes sessions.Excludes, drop sessions.Drop, scope metricsScope,
-	contested []clientmap.Collision) bool {
+	contested []clientmap.Collision, uncorrected bool) bool {
 	fmt.Fprintf(out, "%s\n", path)
 	fmt.Fprintf(out, "gap %v, lead-in %v, tail-out %v\n", r.Params.Gap, r.Params.LeadIn, r.Params.TailOut)
 	fmt.Fprintf(out, "presence: %s\n", listOrNone(r.Params.PresenceSources))
@@ -363,6 +398,7 @@ func reportMetrics(out io.Writer, path string, r metrics.Report, cols int,
 	metricsClients(out, r, cols, scope)
 	metricsProjects(out, r, cols, scope)
 	metricsUnattributed(out, r, cols)
+	metricsCorrections(out, r, cols, uncorrected)
 
 	fmt.Fprintf(out, "\n%s read: %d evidence, %d presence, %d ignored\n",
 		plural(r.Stats.Evidence+r.Stats.Presence+r.Stats.Ignored, "observation"),
@@ -538,7 +574,7 @@ func metricsProjects(out io.Writer, r metrics.Report, cols int, scope metricsSco
 	}
 
 	var absolute, allocated, corroborated, observed time.Duration
-	var attested, weak, unaccounted time.Duration
+	var attested, weak, unaccounted, asserted time.Duration
 	rows := make([][]string, 0, len(shown)+1)
 	for _, p := range shown {
 		absolute += p.Engaged.Total
@@ -548,6 +584,7 @@ func metricsProjects(out io.Writer, r metrics.Report, cols int, scope metricsSco
 		attested += p.Attested
 		weak += p.Weak
 		unaccounted += p.Unaccounted
+		asserted += p.Asserted
 		share := 0.0
 		if r.Presence.Total > 0 {
 			share = 100 * p.Allocated.Seconds() / r.Presence.Total.Seconds()
@@ -604,8 +641,19 @@ func metricsProjects(out io.Writer, r metrics.Report, cols int, scope metricsSco
 	// project keeps losing: clock nothing accounts for is not weak evidence,
 	// it is no evidence, and folding it into either neighbour is the bug. So all
 	// three are printed, and the sentence they are printed in is one line.
+	// The unaccounted remainder has TWO sources once anybody has corrected a
+	// report, and they are opposite kinds of ignorance: silence nothing was
+	// recorded in, and a stretch somebody looked at and told us whose it was.
+	// One sentence naming both is what stops a person's word being read as
+	// bridged silence — the same collapse the three figures above already
+	// avoid, arriving through the correction layer instead of through a source.
+	remainder := "%s unaccounted (bridged silence)"
+	if asserted > 0 {
+		remainder = "%s unaccounted, of which " + metricsHours(asserted) +
+			" is a person's assertion and the rest bridged silence"
+	}
 	wrap(out, "  ", fmt.Sprintf("of %s absolute: %s attested, %s weak (a file's modification "+
-		"time only), %s unaccounted (bridged silence)", metricsHours(absolute),
+		"time only), "+remainder, metricsHours(absolute),
 		metricsHours(attested), metricsHours(weak), metricsHours(unaccounted)), cols)
 
 	// The warning the brief for this command exists for. An engaged total that
@@ -668,9 +716,77 @@ func metricsUnattributed(out io.Writer, r metrics.Report, cols int) {
 	metricsWhy(out, cols, metricsHours(u.Unlocatable), fmt.Sprintf(
 		"a source carrying no path at all, across %s. knowledgeC and Biome; registering can "+
 			"never reach these.", plural(u.UnlocatableEvents, "observation")))
+	// The fourth reason, printed only once somebody has recorded one. It is the
+	// only one of the four that is not a failure to attribute: the other three
+	// say the machine could not place the hour, and this says a person placed
+	// it — with nobody. An always-printed 0.0h would read as a bucket something
+	// was expected to fall into.
+	if u.Asserted > 0 {
+		metricsWhy(out, cols, metricsHours(u.Asserted),
+			"a person having looked and said it belonged to no project. That is an observation, "+
+				"not a gap in the registry, and no amount of registering will change it.")
+	}
 	metricsWhy(out, cols, metricsHours(u.Bridged),
 		"silence the gap threshold bridged. Nothing was recorded here, which is not the same "+
 			"as nothing having happened.")
+}
+
+// metricsCorrections says what the human correction layer did to the figures
+// above, INCLUDING when it did nothing.
+//
+// It prints on every report, and the empty case is the whole reason. A reader
+// who has recorded a correction and sees no section cannot tell whether it was
+// applied and agreed, applied and landed on clock no sitting covers, or never
+// read at all — and this command spent its whole life until now in the third
+// state without saying so. A clean report is indistinguishable from a correct
+// one unless the report names the population it checked.
+func metricsCorrections(out io.Writer, r metrics.Report, cols int, uncorrected bool) {
+	c := r.Corrections
+	fmt.Fprint(out, "\n")
+	if uncorrected {
+		wrap(out, "", "CORRECTIONS were not read: -uncorrected reports the machine's answer alone. "+
+			"Drop the flag to lay any recorded attribution corrections over it.", cols)
+		return
+	}
+	if !c.Any() {
+		wrap(out, "", "CORRECTIONS: none recorded over this span, so every figure above is the "+
+			"machine's own answer. `timetattle review` records one against a block; "+
+			"`timetattle adjust -assert attributed` records one directly.", cols)
+		return
+	}
+
+	fmt.Fprintf(out, "CORRECTIONS %s applied\n", plural(c.Assertions, "attribution assertion"))
+	if c.Attributed > 0 {
+		metricsWhy(out, cols, metricsHours(c.Attributed),
+			"moved to a project somebody named. Those hours are that project's on a person's "+
+				"word and nothing else's, and they are counted in its asserted column.")
+	}
+	if c.Unattributed > 0 {
+		metricsWhy(out, cols, metricsHours(c.Unattributed),
+			"moved to NO project, by somebody who looked. It is in unattributed presence above, "+
+				"under its own reason rather than under an unregistered directory.")
+	}
+	if c.Agreed > 0 {
+		metricsWhy(out, cols, metricsHours(c.Agreed),
+			"agreed with what the machine had already said, and moved nothing. That is not the "+
+				"same as nobody having looked.")
+	}
+	// THE ONE A READER WILL OTHERWISE MISREAD AS THE TOOL IGNORING THEM. An
+	// attribution assertion says whose an hour was, never that there was one,
+	// so one laid across a stretch the clustering does not reach moves nothing
+	// whatever — and the fix is a different assertion, which is worth saying
+	// here rather than leaving somebody to re-record the same correction.
+	if c.Outside > 0 {
+		metricsWhy(out, cols, metricsHours(c.Outside),
+			"fell outside every sitting and moved nothing. An attribution says whose an hour "+
+				"was, never that there was one; `timetattle adjust -assert engaged` is what "+
+				"makes the hour exist.")
+	}
+	if c.Moved() == 0 {
+		fmt.Fprint(out, "\n")
+		wrap(out, "  ", "NOTHING ABOVE MOVED. Every assertion either agreed with the machine or "+
+			"reached clock no sitting covers.", cols)
+	}
 }
 
 // metricsWhy prints one reason presence went unattributed: the hours in a

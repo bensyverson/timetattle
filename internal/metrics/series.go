@@ -108,10 +108,15 @@ type Period struct {
 	// figure, kept out of Unattributed for the reason Report.Clientless gives.
 	Clientless time.Duration
 	// Unattributed is presence no project could be attributed, and
-	// Unregistered, Unlocatable and Bridged partition its Total. See Reason.
+	// Unregistered, Unlocatable, Asserted and Bridged partition its Total. See
+	// Reason. Asserted is the one a slice would otherwise lose: it is a
+	// person's own accounting rather than a failure to attribute, and folding
+	// it into bridged silence would report what somebody established as clock
+	// nothing was ever recorded in.
 	Unattributed Span
 	Unregistered time.Duration
 	Unlocatable  time.Duration
+	Asserted     time.Duration
 	Bridged      time.Duration
 }
 
@@ -239,6 +244,8 @@ func addSegment(b *Period, projects, clients map[string]*Share, seg Segment, d t
 		b.Unregistered += d
 	case ReasonUnlocatable:
 		b.Unlocatable += d
+	case ReasonAsserted:
+		b.Asserted += d
 	default:
 		b.Bridged += d
 	}

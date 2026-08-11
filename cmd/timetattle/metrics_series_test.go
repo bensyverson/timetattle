@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"path/filepath"
@@ -439,4 +440,76 @@ func parseSeconds(t *testing.T, text string) time.Duration {
 		t.Fatalf("the CSV carries %q where a number of seconds belongs: %v", text, err)
 	}
 	return time.Duration(f * float64(time.Second))
+}
+
+// A RE-SLICE MUST NOT LOSE A REASON THE REPORT KEEPS, and the export least of
+// all: a program adding the unattributed rows up has no way to notice that a
+// person's own accounting was quietly filed as clock nobody recorded.
+//
+// The asserted row is written on every period whether or not anything was
+// corrected. A row that appeared only sometimes would make the export's schema
+// a property of the data, and a program reading it would break the first time
+// somebody reviewed a day.
+func TestTheCSVCarriesAssertedUnattributedAsAReasonOfItsOwn(t *testing.T) {
+	path := seedThreeWorkingDays(t)
+
+	clean := runSeries(t, path, "-by", "day", "-csv")
+	if names := csvReasonNames(t, clean); !slices.Contains(names, "asserted") {
+		t.Fatalf("an export over a store nobody has corrected omits the asserted reason "+
+			"altogether, so the schema depends on the data: %v", names)
+	}
+
+	// Half an hour of 2026-07-20, said by a person to have belonged to nobody.
+	if err := adjustTo(&bytes.Buffer{}, []string{"-store", path,
+		"-from", "2026-07-20T10:00:00Z", "-to", "2026-07-20T10:30:00Z",
+		"-assert", "unattributed", "-origin", "a-person"}); err != nil {
+		t.Fatalf("adjust -assert unattributed: %v", err)
+	}
+
+	out := runSeries(t, path, "-by", "day", "-csv")
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatalf("the CSV does not parse: %v\n%s", err, out)
+	}
+	head := rows[0]
+	var asserted, bridged time.Duration
+	for _, row := range rows[1:] {
+		if cell(head, row, "level") != "unattributed" {
+			continue
+		}
+		switch cell(head, row, "name") {
+		case "asserted":
+			asserted += parseSeconds(t, cell(head, row, "seconds"))
+		case "bridged":
+			bridged += parseSeconds(t, cell(head, row, "seconds"))
+		}
+	}
+	if asserted == 0 {
+		t.Errorf("the export carries no asserted time at all after half an hour was said to "+
+			"belong to nobody:\n%s", out)
+	}
+	if bridged != 0 {
+		t.Errorf("%v was exported as bridged silence; a person's assertion has been folded into "+
+			"clock nothing was recorded in", bridged)
+	}
+}
+
+// csvReasonNames is every unattributed reason the export writes, in order.
+func csvReasonNames(t *testing.T, out string) []string {
+	t.Helper()
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatalf("the CSV does not parse: %v\n%s", err, out)
+	}
+	head := rows[0]
+	var names []string
+	for _, row := range rows[1:] {
+		if cell(head, row, "level") != "unattributed" {
+			continue
+		}
+		if name := cell(head, row, "name"); !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return names
 }
