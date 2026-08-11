@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/sessions"
 )
@@ -111,13 +112,18 @@ import (
 //
 // IT IS A DEFAULT AND NOT A CONSTANT OF THE PROBLEM. Eight hours is the
 // convention, not a measurement of anybody's day, and the ramp takes its
-// anchor as a parameter precisely so that a per-project allocation can supply
-// a different one — a client contracted for two days a week has a different
-// idea of a full day than this. No allocation configuration exists in this
-// codebase yet (metrics.Share.Allocated is a concurrency division across
-// active clients, not an hour budget; see internal/metrics' own doc comment on
-// the type), so nothing can supply one today and every render uses this. When
-// that configuration lands, it passes an anchor here and nothing else changes.
+// anchor as a parameter precisely so that a scoped engagement's own budget
+// can supply a different one — a client contracted for two days a week has a
+// different idea of a full day than this. heatmapAnchorFor (below) is what
+// supplies one now, reusing the Allocation & Effective Rate section's own
+// pro-ration (allocationWindowBudget, dashboard_allocation.go) rather than a
+// second idea of what a budget means. This default is still what every
+// render falls back to: when the scope's own engagement is a fixed contract
+// rather than a recurring budget, when more than one engagement could apply
+// and neither is uniquely the scope's own (heatmapEngagementFor's own doc
+// comment), or — the overwhelming majority of runs, exactly as
+// dashboard_allocation.go's allocationUnconfigured describes — when nothing
+// is configured for the scope at all.
 const defaultHeatmapAnchor = 8 * time.Hour
 
 // The grid's fixed geometry. heatmapGutter is the width of the weekday label
@@ -436,9 +442,9 @@ func heatmapHours(p metrics.Period, scope metricsScope) time.Duration {
 // white at three — so that with the shipped eight-hour anchor a 24-hour day is
 // white and everything past it stays there. Both ends clamp.
 //
-// anchor is a parameter and not a package constant so that a per-project
-// allocation can move it; see defaultHeatmapAnchor for why nothing can supply
-// one yet.
+// anchor is a parameter and not a package constant so that a scoped
+// engagement's own budget can move it; see heatmapAnchorFor for what supplies
+// one today and defaultHeatmapAnchor for the fallback.
 func heatmapRamp(worked, anchor time.Duration) RGB {
 	if anchor <= 0 {
 		anchor = defaultHeatmapAnchor
@@ -530,7 +536,101 @@ func renderActivityHeatmap(_ context.Context, out io.Writer, scope metricsScope,
 	if err != nil {
 		return err
 	}
-	return writeHeatmap(out, cc, g, defaultHeatmapAnchor)
+	return writeHeatmap(out, cc, g, heatmapAnchorFor(cal, scope, period, data))
+}
+
+// heatmapAnchorFor derives the ramp's anchor from the scoped engagement's own
+// pro-rated daily budget, reusing exactly the machinery the Allocation &
+// Effective Rate section (dashboard_allocation.go) already built for its own
+// budget bar rather than a second idea of what pro-rating means:
+// allocationWindowBudget pro-rates a recurring hourly budget across the
+// window, and observedDays' own total (dashboard_stats.go) is the same
+// real-calendar-day count every other per-day average on this dashboard
+// divides by — "the period's real days" the task that added this function
+// asked for, in exactly those words.
+//
+// It falls back to defaultHeatmapAnchor whenever no single engagement can be
+// attributed to what the heatmap's cells actually measure — see
+// heatmapEngagementFor's own doc comment for the multiple-engagement and
+// unscoped cases this deliberately refuses to guess at — or when the
+// engagement in scope declares a fixed contract rather than a recurring
+// budget: a contract has no per-period shape to pro-rate, so "beyond a full
+// day" has nothing of its own to be measured against.
+func heatmapAnchorFor(cal sessions.Calendar, scope metricsScope, period dashboardPeriod,
+	data *dashboardData) time.Duration {
+	e, ok := heatmapEngagementFor(scope, data)
+	if !ok || e.Shape() != config.EngagementHourly {
+		return defaultHeatmapAnchor
+	}
+	budget := allocationWindowBudget(cal, period, e)
+	_, days := observedDays(cal, period, data)
+	if budget <= 0 || days <= 0 {
+		return defaultHeatmapAnchor
+	}
+	return time.Duration(budget / float64(days) * float64(time.Hour))
+}
+
+// heatmapEngagementFor is the one configured engagement, if any, whose own
+// hours are EXACTLY what the heatmap's cells draw under this scope.
+//
+// # Why this mirrors shareIn instead of reading scopedEngagements
+//
+// heatmapHours (above) draws shareIn's own figure: one project's engaged
+// total when scope.Project is set, one client's UNION across its projects
+// when only scope.Client is, and presence — nobody's budget — otherwise.
+// scopedEngagements (dashboard_allocation.go) answers a different question,
+// "every engagement this scope's row list should print", and can legitimately
+// return several at once: a client scope prints the client's own engagement
+// AND every one of that client's projects that carries its own. Handing the
+// ramp one of several possible budgets — or summing them — would be a
+// confident, wrong number the moment a client's projects do not all share one
+// budget, which is exactly the kind of collapse this dashboard's other
+// sections spend their own doc comments refusing. So this looks up exactly
+// the one entry stated at the SAME granularity shareIn already committed to:
+//
+//   - scope.Project set (shareIn's Project branch always wins when both
+//     Client and Project are set — see shareIn's own switch) looks up that
+//     project's own engagement, never the client's, even when the client
+//     also carries one: the client's budget covers the client's whole
+//     portfolio, and applying it to one project's slice of it would be a lie
+//     in either direction.
+//   - scope.Client set with no Project looks up the client's own engagement,
+//     which is the only shape a budget can take that matches a UNION across
+//     that client's projects.
+//   - Neither set (-all, or an unscoped run) returns false: presence spans
+//     every client at once, and no single engagement's budget describes it.
+//
+// # The other open question — a period that does not cover the whole window
+//
+// The brief that created this function asked what happens when an
+// engagement's period does not cover the whole heatmap window, and the
+// answer chosen is that a day outside any budgeted period falls back to the
+// default anchor rather than asserting a budget for a day it was never
+// stated to cover. That case CANNOT ARISE TODAY: an hourly entry carries no
+// start date at all — config.Engagement's validateHourly refuses one,
+// Started is contract-only — so a configured weekly or monthly budget is, by
+// construction, in force for the engagement's entire life, and the single
+// anchor this function returns already covers every day of any window. If a
+// future config change lets an hourly engagement state when it began (an
+// open question dashboard_allocation.go's own pushback for mDu9N already
+// raises for a different reason), this function would need to turn into a
+// PER-DAY anchor rather than one figure for the whole grid, and heatmapCellOf
+// would need to carry it — see heatmapGridOf and writeHeatmap, both of which
+// take a single anchor today. Building that now, with no config field to
+// drive it, would be exactly the untested guess this task's own "never lies"
+// instruction warns against.
+func heatmapEngagementFor(scope metricsScope, data *dashboardData) (config.Engagement, bool) {
+	if data == nil || data.Config == nil {
+		return config.Engagement{}, false
+	}
+	switch {
+	case scope.Project != "":
+		return data.Config.Engagements.Project(scope.Project)
+	case scope.Client != "":
+		return data.Config.Engagements.Client(scope.Client)
+	default:
+		return config.Engagement{}, false
+	}
 }
 
 // writeHeatmap draws a built grid. It is separate from the render function
