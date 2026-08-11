@@ -1,0 +1,1701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Timetattle · zoom timeline mechanics</title>
+<!--
+  ZOOM TIMELINE — INTERACTION MECHANICS PROTOTYPE
+  ==============================================
+
+  What this is: the feel-tuning rig for the web dashboard's centre pane, per the
+  design recorded on task p8fuu (2026-08-07 / 2026-08-09). It exists to settle
+  the numbers that were explicitly NOT decided on paper — the zoom position at
+  which each layer arrives, how wide the axis crossfade is, how the Level 0
+  kernel eases. Every one of those is a live control in the panel on the right.
+
+  What this is NOT: an aesthetic. It is deliberately restrained grayscale with a
+  single accent (reserved for the overwork register), because the image round is
+  blocked on a separate decision. Judge the mechanics here, not the looks.
+
+  Everything is synthetic, seeded, and fake. No real client, no real store.
+
+  THE SEVEN DESIGN COMMITMENTS AND WHERE THEY LIVE IN THIS FILE
+  ------------------------------------------------------------
+  1. Zoom position IS the animation timeline. Nothing animates on a clock; there
+     is no time-based tween anywhere in this file. Search for `ramp(` — every
+     ramp is a pure function of `view.z`. Pausing mid-transition is free: stop
+     moving the wheel. (§3 ZOOM + RAMPS)
+  2. Additive protocol. Layers accumulate as z rises and dissolve back as it
+     falls; no element class has a fade-OUT window. Structurally enforced by
+     `ramp()` being monotone in z and by every layer owning exactly one window.
+     (§3, §6 RENDER)
+  3. Durable anchor. The intensity band is drawn first, unconditionally, at
+     alpha 1, for every lane, at every z. It has no window and no opacity term —
+     it cannot be animated away, only compressed to a ribbon. (§6 drawBand)
+  4. Time axis is the sanctioned exception: scales crossfade, they do not
+     accumulate. Narrow window, tunable. (§3 axisAlphas, §6 drawAxis)
+  5. Absence of a mark is never absence of data. Unobserved is a hatch at every
+     altitude — on day cells, inside aggregated bins (proportionally), and
+     inside the day as within-day gaps. Observed-idle is the flat ground.
+     (§5 COLOUR + §6 drawDetail)
+  6. Source disagreement is a property of blocks: the contested extent renders
+     hollow with a stipple, the agreed core renders solid. (§6 drawBlocks)
+  7. Zoom-implies-scope: at Level 3 the focused lane takes vertical room from
+     the others. Held loosely, tuned hardest. (§6 laneLayout)
+
+  Open it by double-clicking the file. One file on purpose: ES modules are
+  blocked over file:// by CORS, so a split into modules would not open at all.
+
+  The half of this file that is arithmetic rather than pixels — the generator,
+  the Level 0 kernel, the intensity ramp, the axis schedule — is checked by
+  `node scripts/spike/zoomproto/check.js`, which slices §1–§5 straight out of
+  this file and runs THESE functions rather than a copy of them. Every figure
+  quoted in the comments below comes from it; re-run it after any edit.
+-->
+<style>
+  :root {
+    --ink:        #d7dbdf;
+    --ink-dim:    #8b949e;
+    --ink-faint:  #5b636c;
+    --ground:     #0e1115;
+    --panel:      #14181d;
+    --line:       #232a31;
+    --accent:     #d2703a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow: hidden;
+  }
+  .app { display: flex; height: 100%; }
+  .main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+  .panel {
+    flex: 0 0 336px; background: var(--panel); border-left: 1px solid var(--line);
+    overflow-y: auto; padding: 10px 12px 40px;
+  }
+  .panel.hidden { display: none; }
+
+  .topbar {
+    display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap;
+    padding: 7px 12px; border-bottom: 1px solid var(--line); color: var(--ink-dim);
+  }
+  .topbar b { color: var(--ink); font-weight: 600; }
+  .topbar .t { color: var(--ink); }
+
+  .stage { position: relative; flex: 1 1 auto; min-height: 0; }
+  canvas#view { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+  #tip {
+    position: absolute; pointer-events: none; display: none;
+    background: #1b2027; border: 1px solid var(--line); padding: 6px 8px;
+    max-width: 320px; white-space: pre-wrap; color: var(--ink);
+    box-shadow: 0 6px 18px rgba(0,0,0,.5);
+  }
+
+  .scrub { padding: 6px 12px 2px; border-top: 1px solid var(--line); }
+  .scrub input[type=range] { width: 100%; margin: 0; accent-color: #7f8b96; }
+  canvas#schedule { display: block; width: 100%; height: 92px; }
+
+  .legend {
+    display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+    padding: 6px 12px; border-top: 1px solid var(--line); color: var(--ink-dim);
+  }
+  .legend span { display: flex; gap: 5px; align-items: center; }
+  .legend canvas { width: 22px; height: 12px; display: block; }
+
+  .status {
+    padding: 5px 12px; border-top: 1px solid var(--line);
+    color: var(--ink-dim); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-height: 24px;
+  }
+
+  h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--ink-dim); margin: 16px 0 6px; border-bottom: 1px solid var(--line);
+    padding-bottom: 4px;
+  }
+  h2:first-child { margin-top: 0; }
+  .row { margin: 7px 0; }
+  .row label { display: flex; justify-content: space-between; gap: 8px; color: var(--ink-dim); }
+  .row label .v { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .row input[type=range] { width: 100%; margin: 2px 0 0; accent-color: #7f8b96; }
+  .row .hint { color: var(--ink-faint); font-size: 11px; }
+
+  .layer { border: 1px solid var(--line); padding: 6px 7px; margin: 7px 0; }
+  .layer .name { color: var(--ink); }
+  .layer .grab { display: flex; gap: 6px; margin-top: 5px; }
+  button {
+    font: inherit; color: var(--ink-dim); background: #1b2027;
+    border: 1px solid var(--line); padding: 2px 7px; cursor: pointer;
+  }
+  button:hover { color: var(--ink); border-color: #38424c; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  textarea {
+    width: 100%; height: 120px; background: #0d1116; color: var(--ink-dim);
+    border: 1px solid var(--line); font: 11px/1.4 ui-monospace, Menlo, monospace;
+    margin-top: 8px; resize: vertical;
+  }
+  select { font: inherit; background: #1b2027; color: var(--ink); border: 1px solid var(--line); }
+  .chk { display: flex; gap: 7px; align-items: center; color: var(--ink-dim); }
+  .alphabar { height: 4px; background: #1b2027; margin-top: 3px; }
+  .alphabar i { display: block; height: 100%; background: #7f8b96; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="main">
+    <div class="topbar">
+      <span><b>zoom</b> <span class="t" id="rd-z">0.0000</span></span>
+      <span><b>span</b> <span class="t" id="rd-span">—</span></span>
+      <span><b>kernel</b> <span class="t" id="rd-bin">—</span></span>
+      <span><b>axis</b> <span class="t" id="rd-axis">—</span></span>
+      <span><b>window</b> <span class="t" id="rd-range">—</span></span>
+      <span><b>focus</b> <span class="t" id="rd-focus">—</span></span>
+      <span id="rd-help" style="color:var(--ink-faint)">wheel/pinch = zoom at cursor · drag = pan (+vertical = zoom) · click a lane = focus · 0–3 = level presets · p = panel</span>
+    </div>
+    <div class="stage" id="stage">
+      <canvas id="view"></canvas>
+      <div id="tip"></div>
+    </div>
+    <div class="scrub">
+      <input type="range" id="zslider" min="0" max="1000" value="0" step="1">
+      <canvas id="schedule"></canvas>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="status" id="status">—</div>
+  </div>
+  <aside class="panel" id="panel"></aside>
+</div>
+
+<script>
+"use strict";
+/* ==========================================================================
+   §1  TUNING — the LOD schedule, as data
+   --------------------------------------------------------------------------
+   This object is the deliverable. Everything that the design notes said would
+   be "feel-tuned in the HTML prototype, not decided on paper" is a field here,
+   is a live control in the panel, and can be read back out with "Copy JSON".
+   The values below are the defaults this prototype shipped with — a first
+   guess placed by span (see LAYER_NOTES), not a measured answer.
+   ========================================================================== */
+
+/* Each layer has ONE window: the z at which it begins arriving and the z at
+   which it is fully present. There is no fade-out window anywhere, by
+   construction — that is the additive protocol made structural. */
+const LAYERS = [
+  { key: 'kernel',  label: 'L0 anchor kernel · week→day bins' },
+  { key: 'blocks',  label: 'L2 blocks inside the day' },
+  { key: 'ticks',   label: 'L2 source ticks on blocks' },
+  { key: 'markers', label: 'L3 markers · ticks mature' },
+  { key: 'tails',   label: 'L3 lead-in / lead-out tails' },
+  { key: 'focus',   label: 'L3 lane focus · zoom implies scope' },
+];
+
+const LAYER_NOTES = {
+  kernel:  'z 0 → 0.18 is span 430d → 72d. Bins reach one day well before day cells are individually readable.',
+  blocks:  'z 0.31 → 0.50 is span 20d → 3d. The notes say "~1–3 days in frame" for fully-in; 0.50 is exactly 3d.',
+  ticks:   'Deliberately lags blocks: a block should establish itself before it grows evidence.',
+  markers: 'z 0.66 → 0.82 is span 0.9d → 0.2d (≈5h). Inside a day, per the notes.',
+  tails:   'Lags markers: the tail explains a marker, so the marker should exist first.',
+  focus:   'The loosest hypothesis in the design. This is the control to abuse first.',
+};
+
+const DEFAULTS = {
+  layers: {
+    kernel:  { zIn: 0.00, zFull: 0.18 },
+    blocks:  { zIn: 0.31, zFull: 0.50 },
+    ticks:   { zIn: 0.45, zFull: 0.62 },
+    markers: { zIn: 0.66, zFull: 0.82 },
+    tails:   { zIn: 0.72, zFull: 0.90 },
+    focus:   { zIn: 0.78, zFull: 0.95 },
+  },
+
+  /* AXIS — the sanctioned exception to additivity. Boundaries are stated as the
+     span (in days) at which one scale hands over to the next, because that is
+     the quantity a human can reason about ("months take over once a year no
+     longer fits"). They are converted to z internally. */
+  axisYearsToMonths: 270,
+  axisMonthsToDays: 25,
+  axisDaysToHours: 1.5,
+  axisFade: 0.10,      // crossfade width as a fraction of the shorter adjacent segment
+  axisFadeMinZ: 0.012, // ...but never narrower than this in absolute z (see NOTE in drawAxis)
+
+  /* LEVEL 0 KERNEL */
+  kernelStat: 'max',      // max | power | sum | mean  (mean is the forbidden one, kept to show the washout)
+  kernelPower: 4,         // exponent of the power mean; 1 IS the mean, large IS the max
+  kernelMaxBinDays: 7,
+
+  /* INTENSITY RAMP */
+  anchorHours: 8,
+  overworkTopHours: 14,
+  rampGamma: 0.80,
+
+  /* ABSENCE */
+  hatchPitch: 5,
+  hatchContrast: 0.62,
+
+  /* GEOMETRY / FEEL */
+  edgeSmooth: 0.35,
+  detailWash: 0.35,
+  markerRowPx: 14,
+  ribbonMinPx: 22,
+  laneMinPx: 26,
+  blockRadius: 2,
+  showContested: true,
+  wheelSensitivity: 1.0,
+  dragZoomSensitivity: 1.0,
+};
+
+function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
+let T = deepCopy(DEFAULTS);
+
+/* ==========================================================================
+   §2  SYNTHETIC DATA — seeded, fake, and shaped like the real thing
+   --------------------------------------------------------------------------
+   Fixed seed so a tuned value found on Tuesday is found again on Wednesday.
+   Client names are invented; nothing here touches the store.
+
+   Two properties are held deliberately, because feel-tuning against data that
+   lacks them would tune the wrong thing:
+
+   (a) THE BAND IS THE SUM OF THE BLOCKS. A day's hours are DERIVED from the
+       blocks placed in it, not drawn independently. So zooming from Level 1
+       into Level 2 can never show a day whose colour disagrees with its own
+       contents — the summary is the aggregate of the detail, which is the
+       whole claim the additive protocol makes.
+   (b) OBSERVEDNESS IS MACHINE-WIDE, NOT PER-LANE. Whether collection was
+       running is a fact about the machine; which client was worked is a fact
+       about attribution. So the hatch spans all lanes at once, exactly as the
+       CLI heatmap asks observedness unscoped.
+   ========================================================================== */
+
+const N_DAYS = 430;
+const START_DATE = new Date(2025, 5, 8);  // 8 June 2025, local
+const DAY_BOUNDARY_H = 5;                 // the working day runs 05:00 → 05:00
+
+const LANES = [
+  { id: 'nb', name: 'Northwind Bakehouse',  windows: [[0, 152], [238, 430]], base: 5.2 },
+  { id: 'pi', name: 'Pelagic Instruments',  windows: [[44, 302]],            base: 3.4 },
+  { id: 'cf', name: 'Corvid Type Foundry',  windows: [[118, 430]],           base: 2.7 },
+  { id: 'qs', name: 'Sable & Finch',       windows: [[0, 96], [330, 402]],  base: 4.0 },
+  { id: 'in', name: 'Internal tooling',     windows: [[0, 430]],             base: 1.4 },
+];
+
+const SOURCES = [
+  { key: 'screen',      label: 'screen-on',   kind: 'duration', ink: '#4d545c' },
+  { key: 'focus',       label: 'app focus',   kind: 'duration', ink: '#6f7982' },
+  { key: 'transcripts', label: 'transcripts', kind: 'event',    ink: '#9ea7b0' },
+  { key: 'git',         label: 'git',         kind: 'event',    ink: '#ccd3d9' },
+];
+
+/* The whole-machine unobserved spans: collection genuinely off. Two multi-day
+   holes plus scattered singles. The 6h23m within-day hole on day 274 is a nod
+   to the sleepcheck finding — a gap big enough to hide a working day. */
+const UNOBSERVED_SPANS = [[41, 49], [188, 191], [297, 304], [372, 374]];
+const CONTESTED_DAYS = [210, 217];   // the region where sources disagree about extent
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seedOf(a, b) { return ((a + 1) * 73856093) ^ ((b + 1) * 19349663); }
+function gauss(r) { return (r() + r() + r() + r() - 2) * 0.9; }
+
+const DAY = 86400000, HOUR = 3600000, MIN = 60000;
+
+/* dayT[d] is the real local timestamp of day d's 05:00 boundary. Built with
+   Date arithmetic rather than d*86400000 so DST days stay 23 or 25 hours long
+   and axis labels do not drift by an hour halfway through the corpus. */
+const dayT = new Float64Array(N_DAYS + 1);
+for (let d = 0; d <= N_DAYS; d++) {
+  const dt = new Date(START_DATE.getFullYear(), START_DATE.getMonth(), START_DATE.getDate() + d, DAY_BOUNDARY_H);
+  dayT[d] = dt.getTime();
+}
+const DOMAIN_T0 = dayT[0], DOMAIN_T1 = dayT[N_DAYS], DOMAIN_SPAN = DOMAIN_T1 - DOMAIN_T0;
+
+const observed = new Uint8Array(N_DAYS).fill(1);
+const gaps = [];       // gaps[d] = [{t0,t1}] — within-day spans where nothing was recorded
+const hours = [];      // hours[l] = Float64Array(N_DAYS) — DERIVED from blocks
+const blocks = [];     // blocks[l] = [block] sorted by t0
+const blockAtDay = []; // blockAtDay[l][d] = index of first block on or after day d
+
+function buildData() {
+  const r = mulberry32(0x7A11E);
+
+  for (const [a, b] of UNOBSERVED_SPANS) for (let d = a; d < b && d < N_DAYS; d++) observed[d] = 0;
+  for (let d = 0; d < N_DAYS; d++) if (observed[d] && r() < 0.022) observed[d] = 0;
+
+  for (let d = 0; d < N_DAYS; d++) {
+    const g = [];
+    if (observed[d]) {
+      if (d === 274) {
+        g.push({ t0: dayT[d] + 6.2 * HOUR, t1: dayT[d] + 12.58 * HOUR }); // 6h23m
+      } else if (r() < 0.18) {
+        const s = 2 + r() * 12, len = (20 + r() * 120) * MIN;
+        g.push({ t0: dayT[d] + s * HOUR, t1: dayT[d] + s * HOUR + len });
+      }
+    }
+    gaps.push(g);
+  }
+
+  LANES.forEach((lane, li) => {
+    const lr = mulberry32(seedOf(li, 991));
+    const inWindow = (d) => lane.windows.some(([a, b]) => d >= a && d < b);
+
+    const burst = new Uint8Array(N_DAYS);
+    for (let k = 0; k < 11; k++) {
+      const d0 = Math.floor(lr() * N_DAYS), len = 2 + Math.floor(lr() * 2);
+      if (!inWindow(d0)) continue;
+      for (let d = d0; d < Math.min(d0 + len, N_DAYS); d++) burst[d] = 1;
+    }
+
+    const h = new Float64Array(N_DAYS);
+    const bs = [];
+    for (let d = 0; d < N_DAYS; d++) {
+      if (!observed[d]) continue;                      // no rows: no hours, no blocks, hatch
+      const dr = mulberry32(seedOf(li * 1013, d));
+      const dow = new Date(dayT[d]).getDay();
+      let target;
+      if (!inWindow(d)) {
+        target = dr() < 0.05 ? 0.5 + dr() * 1.5 : 0;   // occasional stray, mostly observed zero
+      } else if (burst[d]) {
+        target = 10 + dr() * 4;
+      } else {
+        const weekend = (dow === 0 || dow === 6);
+        target = Math.max(0, lane.base * (weekend ? 0.3 : 1) + gauss(dr) * 1.5);
+        if (dr() < 0.10) target = 0;                   // observed, and genuinely idle
+      }
+      const placed = placeBlocks(li, d, target, dr);
+      for (const b of placed) { bs.push(b); h[d] += (b.t1 - b.t0) / HOUR; }
+    }
+    hours.push(h);
+    bs.sort((x, y) => x.t0 - y.t0);
+    blocks.push(bs);
+
+    /* idx[d] is the first block starting on or after day d — the cull index,
+       so a frame never scans blocks it cannot possibly show. */
+    const idx = new Int32Array(N_DAYS + 1);
+    let j = 0;
+    for (let d = 0; d <= N_DAYS; d++) {
+      while (j < bs.length && bs[j].t0 < (d < N_DAYS ? dayT[d] : Infinity)) j++;
+      idx[d] = j;
+    }
+    blockAtDay.push(idx);
+  });
+}
+
+/* The plausible shape of a day, in hours after the 05:00 boundary. An ordinary
+   day is 09:00–12:30, 13:00–18:00, 20:00–23:30 with loose gaps between blocks;
+   a heavy day starts at 07:00, runs to 01:00, and packs its blocks tight.
+   TWO SHAPES, NOT ONE SCALED: with a single window set and a single idle
+   distribution the generator could not reach 14 hours at all — the first
+   version of this file topped out at 9.97h and shipped an overwork register
+   with nothing in it. Feel-tuning the >8h ramp against data that never
+   exceeds 8h would have tuned nothing. */
+const WORK_WINDOWS = [[4, 7.5], [8, 13], [15, 18.5]];
+const DENSE_WINDOWS = [[2, 7.5], [8, 13.5], [14.5, 20.5]];
+
+function placeBlocks(li, d, targetHours, r) {
+  if (targetHours <= 0.15) return [];
+  const dense = targetHours > 8;
+  const free = subtractGaps(dense ? DENSE_WINDOWS : WORK_WINDOWS, gaps[d].map(g => [(g.t0 - dayT[d]) / HOUR, (g.t1 - dayT[d]) / HOUR]));
+  const out = [];
+  let remaining = targetHours;
+  const contestedRegion = d >= CONTESTED_DAYS[0] && d < CONTESTED_DAYS[1];
+
+  for (const [wa, wb] of free) {
+    if (remaining <= 0.15) break;
+    let cursor = wa + r() * (dense ? 0.2 : 0.5);
+    while (remaining > 0.15 && cursor < wb - 0.25) {
+      const len = Math.min(remaining, (dense ? 1.2 : 0.6) + r() * (dense ? 3.4 : 2.6), wb - cursor);
+      if (len < 0.25) break;
+      const t0 = dayT[d] + cursor * HOUR;
+      const t1 = t0 + len * HOUR;
+      const br = mulberry32(seedOf(li * 7919 + d, out.length * 31 + 7));
+      const disagree = contestedRegion ? br() < 0.8 : br() < 0.04;
+      out.push({
+        lane: li, day: d, t0, t1,
+        seed: seedOf(li * 104729 + d, out.length),
+        tailIn: (2 + br() * 18) * MIN,
+        tailOut: (2 + br() * 22) * MIN,
+        srcs: {
+          screen: true,
+          focus: br() < 0.9,
+          transcripts: br() < 0.78,
+          git: br() < 0.35,
+        },
+        contestedIn: disagree && br() < 0.7 ? (8 + br() * 34) * MIN : 0,
+        contestedOut: disagree ? (8 + br() * 38) * MIN : 0,
+        disputedBy: disagree ? (br() < 0.5 ? 'screen-on' : 'app focus') : null,
+      });
+      remaining -= len;
+      cursor += len + (dense ? 0.08 + r() * 0.3 : 0.2 + r() * 1.3);
+    }
+  }
+  return out;
+}
+
+function subtractGaps(windows, holes) {
+  let cur = windows.map(w => w.slice());
+  for (const [ha, hb] of holes) {
+    const next = [];
+    for (const [a, b] of cur) {
+      if (hb <= a || ha >= b) { next.push([a, b]); continue; }
+      if (ha > a) next.push([a, Math.min(ha, b)]);
+      if (hb < b) next.push([Math.max(hb, a), b]);
+    }
+    cur = next;
+  }
+  return cur.filter(([a, b]) => b - a > 0.3);
+}
+
+/* Ticks are generated LAZILY from the block's own seed and cached, so 4–5k
+   blocks do not have to carry ~250k tick records in memory before anybody has
+   zoomed in far enough to see one. Determinism comes from the seed, not from
+   having stored the result. */
+const tickCache = new Map();
+function ticksOf(b) {
+  let t = tickCache.get(b.seed);
+  if (t) return t;
+  const r = mulberry32(b.seed);
+  const dur = b.t1 - b.t0, durH = dur / HOUR;
+  const focus = [];
+  const nf = 3 + Math.floor(durH * 5 * (0.5 + r()));
+  let c = b.t0;
+  for (let i = 0; i < nf && c < b.t1; i++) {
+    const len = (1 + r() * 14) * MIN;
+    focus.push({ t0: c, t1: Math.min(c + len, b.t1) });
+    c += len + r() * 4 * MIN;
+  }
+  const transcripts = [];
+  if (b.srcs.transcripts) {
+    const nt = 3 + Math.floor(durH * 9 * r());
+    for (let i = 0; i < nt; i++) transcripts.push(b.t0 + r() * dur);
+    transcripts.sort((x, y) => x - y);
+  }
+  const git = [];
+  if (b.srcs.git) {
+    const ng = 1 + Math.floor(r() * 4);
+    for (let i = 0; i < ng; i++) git.push(b.t0 + r() * dur);
+    git.sort((x, y) => x - y);
+  }
+  t = {
+    screen: [{ t0: b.t0 - b.tailIn, t1: b.t1 + b.tailOut }],
+    focus: b.srcs.focus ? focus : [],
+    transcripts, git,
+  };
+  tickCache.set(b.seed, t);
+  return t;
+}
+
+buildData();
+
+/* ==========================================================================
+   §3  ZOOM AND RAMPS — the one clock this prototype has is the user's hand
+   --------------------------------------------------------------------------
+   span(z) is exponential, so a constant wheel velocity feels like a constant
+   rate of zoom. z ∈ [0,1] maps the whole corpus (430d) to 30 minutes.
+   ========================================================================== */
+
+const SPAN_MAX = DOMAIN_SPAN;
+const SPAN_MIN = 30 * MIN;
+const LOG_RANGE = Math.log(SPAN_MAX / SPAN_MIN);
+
+const spanOf = (z) => SPAN_MAX * Math.exp(-LOG_RANGE * clamp(z, 0, 1));
+const zOfSpan = (s) => clamp(Math.log(SPAN_MAX / s) / LOG_RANGE, 0, 1);
+const zOfDays = (d) => zOfSpan(d * DAY);
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+
+/* The S-curve the design asked for: cubic ease-in-out, so an element neither
+   pops nor creeps. Used for opacity AND for a slight scale, so a layer feels
+   resident in the space rather than switched on. */
+function easeInOutCubic(t) {
+  t = clamp(t, 0, 1);
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+function ramp(z, a, b) {
+  if (b <= a) return z >= b ? 1 : 0;
+  return easeInOutCubic((z - a) / (b - a));
+}
+
+const view = { z: 0, t0: DOMAIN_T0, span: SPAN_MAX };
+let focusLane = 0;
+let ramps = {};
+
+function recomputeRamps() {
+  ramps = {};
+  for (const l of LAYERS) {
+    const w = T.layers[l.key];
+    ramps[l.key] = ramp(view.z, w.zIn, w.zFull);
+  }
+}
+
+/* --- the axis: the ONE crossfade in the design --------------------------- */
+const AXIS_SCALES = ['years', 'months', 'days', 'hours'];
+
+function axisAlphas() {
+  const b = [zOfDays(T.axisYearsToMonths), zOfDays(T.axisMonthsToDays), zOfDays(T.axisDaysToHours)];
+  const edges = [0, b[0], b[1], b[2], 1];
+  const out = [1, 0, 0, 0];
+  const w = [];
+  for (let i = 0; i < 3; i++) {
+    const segL = edges[i + 1] - edges[i], segR = edges[i + 2] - edges[i + 1];
+    /* Fraction-of-segment alone is not enough, and this is a place the design
+       as written did not survive contact: with 14 months of corpus the
+       years→months segment is only z≈0.047 wide, so 10% of it is 0.005 of
+       zoom — one wheel notch, i.e. a pop, i.e. exactly what the crossfade
+       exists to avoid. The floor below keeps a narrow segment's crossfade
+       perceptible. Set axisFadeMinZ to 0 to see the pop the design's rule
+       produces on a short corpus. */
+    w.push(Math.max(T.axisFadeMinZ, T.axisFade * Math.min(segL, segR)));
+  }
+  for (let i = 0; i < 4; i++) {
+    const inA = i === 0 ? 1 : ramp(view.z, b[i - 1] - w[i - 1] / 2, b[i - 1] + w[i - 1] / 2);
+    const outA = i === 3 ? 0 : ramp(view.z, b[i] - w[i] / 2, b[i] + w[i] / 2);
+    out[i] = clamp(inA - outA, 0, 1);
+  }
+  return out;
+}
+
+function setZoom(z, anchorX) {
+  z = clamp(z, 0, 1);
+  const px = anchorX == null ? plot.x + plot.w / 2 : anchorX;
+  const tAnchor = timeAt(px);
+  view.z = z;
+  view.span = spanOf(z);
+  view.t0 = tAnchor - ((px - plot.x) / plot.w) * view.span;
+  clampView();
+}
+function clampView() {
+  if (view.span >= DOMAIN_SPAN) { view.span = DOMAIN_SPAN; view.t0 = DOMAIN_T0; return; }
+  view.t0 = clamp(view.t0, DOMAIN_T0, DOMAIN_T1 - view.span);
+}
+const timeAt = (px) => view.t0 + ((px - plot.x) / plot.w) * view.span;
+const xOf = (t) => plot.x + ((t - view.t0) / view.span) * plot.w;
+
+/* ==========================================================================
+   §4  LEVEL 0 KERNEL — one layer, one easing kernel width, no crossfade
+   --------------------------------------------------------------------------
+   The design note's amendment 1: the anchor band owns its aggregation kernel
+   rather than crossfading a week layer against a day layer. So there is
+   exactly one band, and one width that eases from kernelMaxBinDays to 1.
+
+   IT IS A SLIDING KERNEL, NOT A BIN, AND THAT CHANGE WAS FORCED BY MEASUREMENT.
+   The first implementation used fractional bins — bin k covering days
+   [k·w, (k+1)·w) — which is the obvious reading of "bin width easing week→day".
+   It pops, and the pop is structural rather than a bug: as w eases, the bin
+   BOUNDARIES sweep across the data, so EVERY bin's day-set changes at once and
+   every bin's value jumps. check.js still contains that implementation, purely
+   so the difference is a measurement: sweeping z in steps of 0.002 across the
+   easing window and sampling 900 columns, hard bins move the picture by a mean
+   1.13h per step against the sliding kernel's 0.15h — 7.5× as much, at a zoom
+   step a trackpad emits several of per frame. (The worst SINGLE column is
+   13.26h either way; that is a burst's plateau edge sweeping past a column,
+   which is correct motion in both. What differs is how much of the band moves
+   with it.) Softening a day's weight as it crosses a bin boundary only trades
+   the pop for the dilution the burst-preserving rule exists to forbid.
+
+   A sliding kernel has neither problem. Each COLUMN of the band shows the
+   statistic over the window of width w centred on that column's own instant,
+   so there are no boundaries to sweep: as w grows, a burst's plateau widens
+   continuously (a grayscale dilation), at its true height, from both edges.
+   At w = 1 day the kernel degenerates exactly to day cells — a column shows
+   the day it is inside, and nothing else — so Level 1 is the same layer at a
+   different width, which is the purity the design asked for.
+
+   Runs of equal columns are merged before drawing (bandRuns), so the cost is
+   the same as bins would have been and the picture still reads as cells.
+   ========================================================================== */
+
+function kernelWidthDays() {
+  return Math.max(1, Math.pow(T.kernelMaxBinDays, 1 - ramps.kernel));
+}
+
+const dayIndexAt = (t) => {
+  let lo = 0, hi = N_DAYS;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (dayT[m + 1] <= t) lo = m + 1; else hi = m; }
+  return clamp(lo, 0, N_DAYS - 1);
+};
+
+const dayCoordAt = (t) => {
+  const i = dayIndexAt(t);
+  return i + (t - dayT[i]) / (dayT[i + 1] - dayT[i]);
+};
+
+/* The statistic over the window of `width` days centred on day-coordinate dc.
+   A day is in the window when its CENTRE is, which is what makes width 1 mean
+   exactly one day rather than one-and-a-bit. */
+function kernelAt(li, dc, width) {
+  const H = hours[li];
+  const half = width / 2;
+  let lo = Math.ceil(dc - half - 0.5), hi = Math.floor(dc + half - 0.5);
+  if (hi < lo) hi = lo;
+  lo = Math.max(0, lo); hi = Math.min(N_DAYS - 1, hi);
+  if (hi < lo) return null;
+  const p = T.kernelStat === 'power' ? Math.max(1, T.kernelPower) : 1;
+  let acc = 0, obsN = 0, unobsN = 0;
+  for (let d = lo; d <= hi; d++) {
+    if (!observed[d]) { unobsN++; continue; }
+    obsN++;
+    if (T.kernelStat === 'max') { if (H[d] > acc) acc = H[d]; }
+    else if (T.kernelStat === 'power') acc += Math.pow(H[d], p);
+    else acc += H[d];
+  }
+  const n = obsN + unobsN;
+  let value = acc;
+  if (T.kernelStat === 'power') value = obsN > 0 ? Math.pow(acc / obsN, 1 / p) : 0;
+  else if (T.kernelStat !== 'max') value = obsN > 0 ? acc / obsN : 0;  // see NOTE
+  return { hours: value, unobs: n > 0 ? unobsN / n : 0 };
+  /* NOTE, and it is a finding rather than a shortcut. In a band that encodes
+     by COLOUR ALONE there is no way to render a sum. A week's sum reaches ~50h
+     against an 8h anchor, which pins the ramp to its top for every week in the
+     corpus; the only way to bring it back on scale is to divide by the number
+     of days, and that is arithmetically the mean. So of the design note's two
+     sanctioned statistics, only `max` is burst-preserving IN THIS RENDERING.
+     `sum` becomes a genuinely different picture only once the band has a
+     second visual channel to put it in — height, most obviously. Flip the
+     selector to `mean` to watch the washout the design forbids. At week width
+     on lane 0, `max` puts 19.0% of the band at 10h or more and peaks at 13.9h;
+     `mean` puts 0.0% of it there and peaks at 9.3h. Not "harder to see" —
+     GONE. That is the whole argument for Level 0, and check.js asserts it.
+
+     THE COST OF MAX, WHICH THE DESIGN NOTE DOES NOT MENTION AND SHOULD: a
+     sliding max DILATES. Every column within half a kernel of a 14h day reads
+     14h, so at week width one overwork day paints a week of overwork, and the
+     year-altitude band runs hot — 19.0% of lane 0 sits at or above the 8h
+     anchor. This is not an artefact of the sliding form; a hard weekly bin
+     does exactly the same thing, one bin at a time. It is what "assign the
+     week its maximum" means. The `power` statistic is a dial between the two
+     poles the design named (p = 1 is the mean, large p approaches the max),
+     and the measured table is worth having in front of you, because it says
+     the dial does not do what one first expects:
+
+         mean      peak  9.28h ·  0.9% of the band at 8h+
+         power p=2 peak  9.61h ·  6.3%
+         power p=4 peak 10.01h · 14.8%
+         power p=6 peak 10.85h · 17.8%
+         max       peak 13.91h · 19.0%
+
+     Lowering p barely cools the band (14.8% against 19.0% at p=4) while
+     losing most of the burst's HEIGHT (10.0h against 13.9h) — it gives up the
+     thing Level 0 exists for and keeps the thing that was bothering you. The
+     lever that actually cools the band is the kernel WIDTH: narrow the widest
+     kernel and the dilation narrows with it, at no cost to peak height. Try
+     kernelMaxBinDays before touching the statistic. */
+}
+
+/* ==========================================================================
+   §5  COLOUR — grayscale to the anchor, one accent past it, hatch for absence
+   --------------------------------------------------------------------------
+   Design invariant 5 is a colour problem before it is a rendering problem, so
+   the three states are separated on DIFFERENT CHANNELS rather than at
+   different points on one ramp:
+
+     observed zero   — flat near-black ground, no texture, zero saturation
+     unobserved      — slate diagonal hatch: a TEXTURE, never a value
+     overwork (>8h)  — saturated accent, lightness held well above the ground
+
+   That last clamp is deliberate. "Pushes further into darkness" past the
+   anchor is the brief, but if the overwork end of the ramp is allowed to
+   approach the ground then a 14-hour day and an idle day converge, which is
+   the invariant failing quietly at the far end. So overwork darkens only as
+   far as L≈0.42 and pays for the rest of its emphasis in saturation.
+   ========================================================================== */
+
+const colourCache = new Map();
+function intensityColour(h) {
+  const key = Math.round(h * 20);
+  let c = colourCache.get(key);
+  if (c) return c;
+  const a = T.anchorHours, top = Math.max(a + 0.5, T.overworkTopHours);
+  let L, S;
+  if (h <= 0) { L = 0.075; S = 0; }
+  else if (h <= a) { L = 0.11 + 0.72 * Math.pow(h / a, T.rampGamma); S = 0; }
+  else {
+    const t = clamp((h - a) / (top - a), 0, 1);
+    L = 0.83 - 0.41 * t;
+    S = 0.80 * Math.pow(t, 0.75);
+  }
+  c = `hsl(20 ${(S * 100).toFixed(1)}% ${(L * 100).toFixed(1)}%)`;
+  colourCache.set(key, c);
+  return c;
+}
+function clearColourCache() { colourCache.clear(); }
+
+const GROUND = '#12161a';
+const HATCH_GROUND = '#181d25';
+const HATCH_INK = '#69737f';
+
+let hatchPattern = null, hatchKey = '';
+function hatch(ctx) {
+  const key = T.hatchPitch + '/' + T.hatchContrast;
+  if (hatchPattern && hatchKey === key) return hatchPattern;
+  const p = Math.max(2, Math.round(T.hatchPitch));
+  const c = document.createElement('canvas');
+  c.width = c.height = p * 2;
+  const g = c.getContext('2d');
+  g.fillStyle = HATCH_GROUND; g.fillRect(0, 0, p * 2, p * 2);
+  g.strokeStyle = HATCH_INK;
+  g.globalAlpha = clamp(T.hatchContrast, 0, 1);
+  g.lineWidth = 1;
+  for (let i = -1; i <= 2; i++) {
+    g.beginPath();
+    g.moveTo(i * p * 2 - p, p * 2 + p);
+    g.lineTo(i * p * 2 + p * 2 + p, -p);
+    g.stroke();
+  }
+  hatchPattern = ctx.createPattern(c, 'repeat');
+  hatchKey = key;
+  return hatchPattern;
+}
+function clearHatch() { hatchPattern = null; }
+
+/* ==========================================================================
+   §6  RENDER
+   --------------------------------------------------------------------------
+   Canvas, not DOM, and the argument is short: at z=0 the scene is 430 days ×
+   5 lanes, and at Level 3 a single lane can hold several hundred markers. As
+   DOM that is thousands of nodes whose opacity AND geometry change on every
+   wheel event — style recalc and layout on each frame, for elements that are
+   1–3px wide and can never be hit-tested usefully anyway. On canvas the frame
+   is a few thousand fills, the cull is a binary search, and the ramps are just
+   numbers multiplied into the draw. Nothing here needs the accessibility tree;
+   the real dashboard will need it for its controls, not for 400 day cells.
+   ========================================================================== */
+
+const stage = document.getElementById('stage');
+const cv = document.getElementById('view');
+const ctx = cv.getContext('2d');
+const schedCv = document.getElementById('schedule');
+const schedCtx = schedCv.getContext('2d');
+
+const GUTTER = 138, PAD_R = 16, AXIS_H = 34, TOP_PAD = 10, LANE_GAP = 8;
+let plot = { x: GUTTER, y: AXIS_H, w: 100, h: 100 };
+let dpr = 1;
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  const r = stage.getBoundingClientRect();
+  cv.width = Math.max(1, Math.round(r.width * dpr));
+  cv.height = Math.max(1, Math.round(r.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  plot = { x: GUTTER, y: AXIS_H, w: Math.max(10, r.width - GUTTER - PAD_R), h: Math.max(10, r.height - AXIS_H - TOP_PAD) };
+
+  const sr = schedCv.getBoundingClientRect();
+  schedCv.width = Math.max(1, Math.round(sr.width * dpr));
+  schedCv.height = Math.max(1, Math.round(sr.height * dpr));
+  schedCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  clampView();
+  requestDraw();
+}
+
+let dirty = false;
+function requestDraw() {
+  if (dirty) return;
+  dirty = true;
+  requestAnimationFrame(() => { dirty = false; draw(); });
+}
+
+function laneLayout() {
+  const n = LANES.length;
+  const avail = plot.h - LANE_GAP * (n - 1);
+  const f = ramps.focus;
+  const minH = Math.min(T.laneMinPx, avail / n);
+  const even = avail / n;
+  const bigH = avail - minH * (n - 1);
+  const out = [];
+  let y = plot.y + TOP_PAD * 0;
+  for (let i = 0; i < n; i++) {
+    const h = i === focusLane ? lerp(even, bigH, f) : lerp(even, minH, f);
+    out.push({ i, y, h });
+    y += h + LANE_GAP;
+  }
+  return out;
+}
+
+function draw() {
+  recomputeRamps();
+  const w = cv.width / dpr, h = cv.height / dpr;
+  ctx.fillStyle = GROUND;
+  ctx.fillRect(0, 0, w, h);
+
+  const lanes = laneLayout();
+  drawAxisGrid(lanes);
+  for (const L of lanes) drawLane(L);
+  drawAxis();
+  drawLaneLabels(lanes);
+  drawCursor();
+  drawSchedule();
+  updateReadouts();
+}
+
+/* --- the durable anchor -------------------------------------------------- */
+/* Note what is NOT here: no alpha term, no window, no condition on z. The band
+   is drawn for every lane on every frame at full opacity. Design commitment 3
+   is enforced by there being nowhere to write the code that would break it. */
+function drawBand(li, x0, x1, y, hgt) {
+  const cells = bandRuns(li, x0, x1);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y, x1 - x0, hgt); ctx.clip();
+  for (const c of cells) {
+    if (c.empty) continue;
+    ctx.fillStyle = c.c;
+    ctx.fillRect(c.x0, y, c.x1 - c.x0 + 0.5, hgt);
+  }
+  /* Slightly smoothed day edges: a seam gradient between neighbouring cells,
+     so the band reads as a continuous intensity rather than a bar chart of
+     tiles. Width is a fraction of the pitch, capped, so it never smears at
+     high zoom where a "day" is 900px wide. */
+  if (T.edgeSmooth > 0.01 && cells.length > 1) {
+    for (let i = 0; i < cells.length - 1; i++) {
+      const a = cells[i], b = cells[i + 1];
+      if (a.empty || b.empty) continue;
+      const pitch = Math.min(a.x1 - a.x0, b.x1 - b.x0);
+      const sw = Math.min(T.edgeSmooth * pitch, 14);
+      if (sw < 0.6) continue;
+      const g = ctx.createLinearGradient(a.x1 - sw / 2, 0, a.x1 + sw / 2, 0);
+      g.addColorStop(0, a.c); g.addColorStop(1, b.c);
+      ctx.fillStyle = g;
+      ctx.fillRect(a.x1 - sw / 2, y, sw, hgt);
+    }
+  }
+  /* Unobserved does not survive aggregation as a colour — it survives as
+     TEXTURE, at a strength proportional to how much of the kernel window was
+     never recorded. A week-wide window holding two unrecorded days is
+     two-sevenths hatched, and tightens to a solid hatch on exactly those days
+     as the window narrows to one. This is the part of invariant 5 that
+     aggregation is most likely to lose: a mean or a max over a week has
+     nowhere to put "and two of these days are not a measurement". */
+  for (const c of cells) {
+    if (c.empty || c.unobs <= 0.001) continue;
+    ctx.globalAlpha = clamp(c.unobs, 0, 1);
+    ctx.fillStyle = hatch(ctx);
+    ctx.fillRect(c.x0, y, c.x1 - c.x0 + 0.5, hgt);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.055)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x0 + 0.5, y + 0.5, x1 - x0 - 1, hgt - 1);
+}
+
+/* Sample the kernel once per pixel column, then merge adjacent columns that
+   agree to within the quantisation. At width 1 a run is exactly one day, so
+   the band draws day cells; at width 7 a run is the stretch over which the
+   week's maximum does not change, so it draws something bin-shaped without
+   ever having chosen a bin phase. Runs are what the seam gradient and the
+   hatch overlay are applied to, so both survive the whole easing unchanged. */
+function bandRuns(li, x0, x1) {
+  const width = kernelWidthDays();
+  const runs = [];
+  let cur = null;
+  for (let x = Math.floor(x0); x <= Math.ceil(x1); x++) {
+    const t = timeAt(x + 0.5);
+    const v = (t < DOMAIN_T0 || t >= DOMAIN_T1) ? null : kernelAt(li, dayCoordAt(t), width);
+    const key = v ? ((v.hours * 40) | 0) + ':' + ((v.unobs * 40) | 0) : 'x';
+    if (cur && cur.key === key) { cur.x1 = x + 1; continue; }
+    cur = { key, x0: x, x1: x + 1, hours: v ? v.hours : 0, unobs: v ? v.unobs : 0, c: v ? intensityColour(v.hours) : GROUND, empty: !v };
+    runs.push(cur);
+  }
+  return runs;
+}
+
+
+function drawLane(L) {
+  const x0 = plot.x, x1 = plot.x + plot.w;
+  const ribbonTarget = Math.min(T.ribbonMinPx, L.h * 0.55);
+  const ribbonH = L.h - (L.h - ribbonTarget) * ramps.blocks;
+  const detailY = L.y + ribbonH, detailH = L.h - ribbonH;
+
+  drawBand(L.i, x0, x1, L.y, ribbonH);
+  if (detailH > 3 && ramps.blocks > 0.002) drawDetail(L.i, detailY, detailH);
+}
+
+/* --- Level 2 / 3: inside the day ---------------------------------------- */
+function drawDetail(li, y, h) {
+  const a = ramps.blocks;
+  const x0 = plot.x, x1 = plot.x + plot.w;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y, x1 - x0, h); ctx.clip();
+
+  /* The within-day equivalent of the heatmap's fourth cell state. Inside a
+     day, "no block" has to say WHICH kind of nothing it is:
+        observed idle      → the day's own intensity colour, dimmed (flat)
+        nothing recorded   → hatch, whether that is the whole day or a gap
+     A day that is entirely unobserved therefore has no colour at all here,
+     matching its cell in the band above it. */
+  const d0 = dayIndexAt(view.t0), d1 = dayIndexAt(view.t0 + view.span);
+  for (let d = Math.max(0, d0 - 1); d <= Math.min(N_DAYS - 1, d1 + 1); d++) {
+    const bx0 = xOf(dayT[d]), bx1 = xOf(dayT[d + 1]);
+    if (bx1 < x0 || bx0 > x1) continue;
+    if (!observed[d]) {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = hatch(ctx);
+      ctx.fillRect(bx0, y, bx1 - bx0, h);
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    ctx.globalAlpha = a * T.detailWash;
+    ctx.fillStyle = intensityColour(hours[li][d]);
+    ctx.fillRect(bx0, y, bx1 - bx0, h);
+    ctx.globalAlpha = 1;
+    for (const g of gaps[d]) {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = hatch(ctx);
+      ctx.fillRect(xOf(g.t0), y, Math.max(1, xOf(g.t1) - xOf(g.t0)), h);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /* The blocks themselves, plus everything that arrives inside them. */
+  const list = blocks[li], idx = blockAtDay[li];
+  let i = idx[Math.max(0, d0 - 1)];
+  const tEnd = view.t0 + view.span;
+  const scale = lerp(0.80, 1, a);
+  const bh = h * 0.74 * scale;
+  const by = y + (h - bh) / 2;
+
+  for (; i < list.length; i++) {
+    const b = list[i];
+    if (b.t0 > tEnd) break;
+    if (b.t1 < view.t0 - DAY) continue;
+    drawBlock(b, by, bh, a, li);
+  }
+  ctx.restore();
+}
+
+function drawBlock(b, by, bh, a, li) {
+  const bx0 = xOf(b.t0), bx1 = xOf(b.t1);
+  const w = Math.max(1, bx1 - bx0);
+  const cIn = T.showContested ? b.contestedIn : 0, cOut = T.showContested ? b.contestedOut : 0;
+  const coreX0 = xOf(b.t0 + cIn), coreX1 = xOf(b.t1 - cOut);
+
+  /* Lead-in / lead-out tails: the evidence that led to the block's edges being
+     placed where they are. Level 3 only — the block is a conclusion until you
+     are close enough to see what it was concluded from. */
+  if (ramps.tails > 0.002) {
+    const ta = ramps.tails * 0.5;
+    const th = bh * lerp(0.3, 0.55, ramps.tails);
+    const ty = by + (bh - th) / 2;
+    ctx.globalAlpha = ta;
+    let g = ctx.createLinearGradient(xOf(b.t0 - b.tailIn), 0, bx0, 0);
+    g.addColorStop(0, 'rgba(215,219,223,0)'); g.addColorStop(1, 'rgba(215,219,223,0.5)');
+    ctx.fillStyle = g; ctx.fillRect(xOf(b.t0 - b.tailIn), ty, bx0 - xOf(b.t0 - b.tailIn), th);
+    g = ctx.createLinearGradient(bx1, 0, xOf(b.t1 + b.tailOut), 0);
+    g.addColorStop(0, 'rgba(215,219,223,0.5)'); g.addColorStop(1, 'rgba(215,219,223,0)');
+    ctx.fillStyle = g; ctx.fillRect(bx1, ty, xOf(b.t1 + b.tailOut) - bx1, th);
+    ctx.globalAlpha = 1;
+  }
+
+  /* The agreed core is solid. The contested extent is hollow with a stipple —
+     it reads as "this edge is claimed, not established". Minimal on purpose:
+     disagreement gets a home in the visual grammar without inventing a colour
+     for it, which keeps the decision open. */
+  ctx.globalAlpha = a;
+  roundRect(ctx, coreX0, by, Math.max(1, coreX1 - coreX0), bh, Math.min(T.blockRadius, bh / 2));
+  ctx.fillStyle = `rgba(226,231,236,${0.13 + 0.14 * a})`;
+  ctx.fill();
+  ctx.strokeStyle = `rgba(226,231,236,${0.30 + 0.22 * a})`;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  if ((cIn > 0 || cOut > 0) && w > 2) {
+    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = `rgba(226,231,236,${0.22 + 0.2 * a})`;
+    if (cIn > 0) strokeRectPath(ctx, bx0, by, coreX0 - bx0, bh);
+    if (cOut > 0) strokeRectPath(ctx, coreX1, by, bx1 - coreX1, bh);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(210,112,58,0.20)';
+    if (cIn > 0) ctx.fillRect(bx0, by, Math.max(1, coreX0 - bx0), bh);
+    if (cOut > 0) ctx.fillRect(coreX1, by, Math.max(1, bx1 - coreX1), bh);
+  }
+  ctx.globalAlpha = 1;
+
+  if (ramps.ticks > 0.002 && w > 2) drawTicks(b, by, bh, li);
+}
+
+/* One primitive, two appearances. A tick does not get replaced by a marker at
+   Level 3 — it GROWS into one: same object, geometry interpolated by the
+   markers ramp from a hairline pinned to the block's floor into a sized mark
+   in its own source row. That is the additive protocol at its smallest scale,
+   and it is the reason nothing flickers at the hand-over. */
+function drawTicks(b, by, bh, li) {
+  const tk = ticksOf(b);
+  const m = ramps.markers, tickA = ramps.ticks;
+  const rows = SOURCES.length;
+  /* ROW PITCH AND MARK SIZE ARE SEPARATE, and getting that wrong was the first
+     thing lane focus exposed. Rows divide the block evenly, so a focused lane's
+     extra height goes into SPACING; the mark itself is capped, so it never
+     inflates into a slab. The pitch is then structured by a baseline rule per
+     source — without it, a 400px-tall block with four small marks in it reads
+     as an empty box rather than as an evidence chart, which is what a focused
+     lane's vertical budget was won for. */
+  const rowH = bh / rows;
+  const yHair0 = by + bh - 1;
+  const yHairH = bh * 0.42;
+
+  for (let s = 0; s < rows; s++) {
+    const src = SOURCES[s];
+    const data = tk[src.key];
+    if (!data || data.length === 0) continue;
+    const yRow = by + (s + 0.5) * rowH;
+    const markH = lerp(yHairH, Math.max(2, Math.min(rowH * 0.62, T.markerRowPx)), m);
+    const yc = lerp(yHair0 - yHairH / 2, yRow, m);
+
+    if (m > 0.02 && rowH > 6) {
+      ctx.globalAlpha = m * 0.22;
+      ctx.fillStyle = src.ink;
+      ctx.fillRect(xOf(b.t0), Math.round(yc), Math.max(1, xOf(b.t1) - xOf(b.t0)), 1);
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.globalAlpha = tickA * lerp(0.55, 1, m);
+    ctx.fillStyle = src.ink;
+    if (src.kind === 'duration') {
+      for (const iv of data) {
+        const a0 = xOf(iv.t0), a1 = xOf(iv.t1);
+        const wpx = Math.max(lerp(0.8, 1.5, m), a1 - a0);
+        ctx.fillRect(a0, yc - markH / 2, wpx, markH);
+      }
+    } else {
+      for (const t of data) {
+        const a0 = xOf(t);
+        ctx.fillRect(a0 - lerp(0.4, 1.4, m), yc - markH / 2, lerp(0.9, 2.8, m), markH);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  /* Source names appear only when the focused lane actually has room for them —
+     the vertical budget IS the reason lane focus exists. */
+  if (m > 0.55 && li === focusLane && rowH > 9) {
+    ctx.globalAlpha = (m - 0.55) / 0.45 * 0.75;
+    ctx.font = '9px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'right';
+    for (let s = 0; s < rows; s++) {
+      ctx.fillStyle = SOURCES[s].ink;
+      ctx.fillText(SOURCES[s].label, plot.x - 6, by + (s + 0.5) * rowH + 3);
+    }
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+  }
+}
+
+function roundRect(c, x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+function strokeRectPath(c, x, y, w, h) {
+  c.beginPath(); c.rect(x + 0.5, y + 0.5, Math.max(1, w - 1), h - 1); c.stroke();
+}
+
+function axisTicks(scale) {
+  const t0 = view.t0, t1 = view.t0 + view.span, out = [];
+  const d = new Date(t0);
+  if (scale === 'years') {
+    for (let y = d.getFullYear() - 1; y <= new Date(t1).getFullYear() + 1; y++) {
+      const a = new Date(y, 0, 1).getTime(), b = new Date(y + 1, 0, 1).getTime();
+      if (b < t0 || a > t1) continue;
+      out.push({ a, b, label: String(y) });
+    }
+  } else if (scale === 'months') {
+    let c = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+    while (c.getTime() < t1 + 40 * DAY) {
+      const a = c.getTime(), n = new Date(c.getFullYear(), c.getMonth() + 1, 1), b = n.getTime();
+      if (b >= t0 && a <= t1) out.push({ a, b, label: c.toLocaleString(undefined, { month: 'short' }) + (c.getMonth() === 0 ? " '" + String(c.getFullYear()).slice(2) : '') });
+      c = n;
+    }
+  } else if (scale === 'days') {
+    const i0 = Math.max(0, dayIndexAt(t0) - 1), i1 = Math.min(N_DAYS - 1, dayIndexAt(t1) + 1);
+    const wide = plot.w / ((t1 - t0) / DAY) > 58;
+    for (let i = i0; i <= i1; i++) {
+      const dt = new Date(dayT[i]);
+      out.push({
+        a: dayT[i], b: dayT[i + 1],
+        label: wide ? dt.toLocaleString(undefined, { weekday: 'short' }) + ' ' + dt.getDate() : String(dt.getDate()),
+      });
+    }
+  } else {
+    const pxPerHour = plot.w / ((t1 - t0) / HOUR);
+    const step = [1, 2, 3, 6, 12].find(s => s * pxPerHour > 62) || 12;
+    let c = new Date(t0); c.setMinutes(0, 0, 0);
+    c = new Date(c.getFullYear(), c.getMonth(), c.getDate(), Math.floor(c.getHours() / step) * step);
+    while (c.getTime() < t1 + step * HOUR) {
+      const a = c.getTime(), n = new Date(a + step * HOUR), b = n.getTime();
+      out.push({ a, b, label: String(c.getHours()).padStart(2, '0') + ':00' });
+      c = n;
+    }
+  }
+  return out;
+}
+
+function drawAxisGrid(lanes) {
+  const alphas = axisAlphas();
+  const yTop = plot.y, yBot = lanes.length ? lanes[lanes.length - 1].y + lanes[lanes.length - 1].h : plot.y + plot.h;
+  for (let i = 0; i < 4; i++) {
+    if (alphas[i] < 0.01) continue;
+    ctx.globalAlpha = alphas[i] * 0.16;
+    ctx.strokeStyle = '#8b949e';
+    ctx.lineWidth = 1;
+    for (const t of axisTicks(AXIS_SCALES[i])) {
+      const x = Math.round(xOf(t.a)) + 0.5;
+      if (x < plot.x || x > plot.x + plot.w) continue;
+      ctx.beginPath(); ctx.moveTo(x, yTop); ctx.lineTo(x, yBot); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawAxis() {
+  const alphas = axisAlphas();
+  ctx.save();
+  ctx.beginPath(); ctx.rect(plot.x, 0, plot.w, AXIS_H); ctx.clip();
+  ctx.font = '11px ui-monospace, Menlo, monospace';
+  ctx.textAlign = 'left';
+  for (let i = 0; i < 4; i++) {
+    const a = alphas[i];
+    if (a < 0.01) continue;
+    /* Slight scale on the way in, same as every other layer: labels breathe
+       rather than blink. */
+    const y = lerp(AXIS_H - 16, AXIS_H - 12, a);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#aab3bc';
+    for (const t of axisTicks(AXIS_SCALES[i])) {
+      const x0 = Math.max(xOf(t.a), plot.x), x1 = Math.min(xOf(t.b), plot.x + plot.w);
+      if (x1 - x0 < 14) continue;
+      ctx.fillText(t.label, x0 + 4, y);
+      ctx.globalAlpha = a * 0.4;
+      ctx.fillRect(Math.round(xOf(t.a)), AXIS_H - 8, 1, 6);
+      ctx.globalAlpha = a;
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawLaneLabels(lanes) {
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, plot.y - 4, GUTTER - 6, plot.h + 8); ctx.clip();
+  ctx.font = '11px ui-monospace, Menlo, monospace';
+  for (const L of lanes) {
+    const lane = LANES[L.i];
+    const isFocus = L.i === focusLane && ramps.focus > 0.02;
+    ctx.fillStyle = isFocus ? '#d7dbdf' : '#7c858e';
+    ctx.textAlign = 'left';
+    const name = lane.name;
+    ctx.fillText(name.length > 17 ? name.slice(0, 16) + '…' : name, 8, L.y + 11);
+    if (L.h > 26) {
+      let sum = 0, obs = 0;
+      const d0 = dayIndexAt(view.t0), d1 = dayIndexAt(view.t0 + view.span);
+      for (let d = d0; d <= d1; d++) { sum += hours[L.i][d]; if (!observed[d]) obs++; }
+      ctx.fillStyle = '#4f5862';
+      ctx.fillText(sum.toFixed(1) + 'h in view' + (obs ? ' · ' + obs + 'd unobs' : ''), 8, L.y + 24);
+    }
+    if (isFocus) {
+      ctx.strokeStyle = 'rgba(210,112,58,0.55)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(2, L.y); ctx.lineTo(2, L.y + L.h); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+let cursor = { x: -1, y: -1, inside: false };
+function drawCursor() {
+  if (!cursor.inside) return;
+  ctx.strokeStyle = 'rgba(215,219,223,0.28)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(Math.round(cursor.x) + 0.5, plot.y - 6);
+  ctx.lineTo(Math.round(cursor.x) + 0.5, plot.y + plot.h);
+  ctx.stroke();
+}
+
+/* --- the LOD schedule, drawn live --------------------------------------- */
+/* This strip IS the design artifact the notes asked for: the table of element
+   classes and their windows, except that it is the running values and it moves
+   when you move a slider. Read a tuned schedule off it. */
+function drawSchedule() {
+  const w = schedCv.width / dpr, h = schedCv.height / dpr;
+  schedCtx.clearRect(0, 0, w, h);
+  schedCtx.fillStyle = '#0d1116';
+  schedCtx.fillRect(0, 0, w, h);
+  const left = 132, right = w - 8, pw = right - left;
+  const rowH = (h - 18) / (LAYERS.length + 1);
+  schedCtx.font = '10px ui-monospace, Menlo, monospace';
+
+  // axis scales, as a top row of crossfading segments
+  const alphas = axisAlphas();
+  schedCtx.textAlign = 'right';
+  schedCtx.fillStyle = '#5b636c';
+  schedCtx.fillText('axis scale', left - 8, 12);
+  schedCtx.textAlign = 'left';
+  for (let i = 0; i < 4; i++) {
+    const zA = i === 0 ? 0 : [zOfDays(T.axisYearsToMonths), zOfDays(T.axisMonthsToDays), zOfDays(T.axisDaysToHours)][i - 1];
+    const zB = i === 3 ? 1 : [zOfDays(T.axisYearsToMonths), zOfDays(T.axisMonthsToDays), zOfDays(T.axisDaysToHours)][i];
+    schedCtx.globalAlpha = 0.25 + 0.6 * alphas[i];
+    schedCtx.fillStyle = i % 2 ? '#39424c' : '#4a545f';
+    schedCtx.fillRect(left + zA * pw, 4, Math.max(1, (zB - zA) * pw), 9);
+    schedCtx.globalAlpha = 1;
+    if ((zB - zA) * pw > 34) {
+      schedCtx.fillStyle = '#8b949e';
+      schedCtx.fillText(AXIS_SCALES[i], left + zA * pw + 3, 12);
+    }
+  }
+
+  LAYERS.forEach((l, i) => {
+    const y = 18 + i * rowH;
+    const win = T.layers[l.key];
+    schedCtx.textAlign = 'right';
+    schedCtx.fillStyle = ramps[l.key] > 0.02 ? '#aab3bc' : '#4f5862';
+    schedCtx.fillText(l.key, left - 8, y + rowH * 0.72);
+    schedCtx.textAlign = 'left';
+    schedCtx.strokeStyle = '#1e242b';
+    schedCtx.beginPath(); schedCtx.moveTo(left, y + rowH - 2.5); schedCtx.lineTo(right, y + rowH - 2.5); schedCtx.stroke();
+    // the actual S-curve, sampled
+    schedCtx.strokeStyle = '#7f8b96';
+    schedCtx.lineWidth = 1.5;
+    schedCtx.beginPath();
+    for (let px = 0; px <= pw; px += 2) {
+      const z = px / pw;
+      const v = ramp(z, win.zIn, win.zFull);
+      const yy = y + rowH - 2.5 - v * (rowH - 6);
+      if (px === 0) schedCtx.moveTo(left + px, yy); else schedCtx.lineTo(left + px, yy);
+    }
+    schedCtx.stroke();
+  });
+
+  // current zoom position
+  const cx = left + view.z * pw;
+  schedCtx.strokeStyle = '#d2703a';
+  schedCtx.lineWidth = 1;
+  schedCtx.beginPath(); schedCtx.moveTo(cx, 2); schedCtx.lineTo(cx, h - 2); schedCtx.stroke();
+  schedCtx.fillStyle = '#d2703a';
+  schedCtx.fillText(view.z.toFixed(3), Math.min(cx + 4, right - 32), h - 4);
+}
+
+/* ==========================================================================
+   §7  INTERACTION
+   ========================================================================== */
+
+const zslider = document.getElementById('zslider');
+const tip = document.getElementById('tip');
+
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const r = cv.getBoundingClientRect();
+  const x = e.clientX - r.left;
+  // ctrlKey is how macOS reports a trackpad pinch
+  const unit = e.ctrlKey ? 0.010 : 0.0016;
+  if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    view.t0 += (e.deltaX / plot.w) * view.span;
+    clampView(); requestDraw(); return;
+  }
+  setZoom(view.z - e.deltaY * unit * T.wheelSensitivity, x);
+  syncSlider();
+  requestDraw();
+}, { passive: false });
+
+let drag = null;
+cv.addEventListener('pointerdown', (e) => {
+  cv.setPointerCapture(e.pointerId);
+  const r = cv.getBoundingClientRect();
+  drag = { x: e.clientX, y: e.clientY, startX: e.clientX - r.left, moved: 0 };
+});
+cv.addEventListener('pointermove', (e) => {
+  const r = cv.getBoundingClientRect();
+  cursor = { x: e.clientX - r.left, y: e.clientY - r.top, inside: true };
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.x = e.clientX; drag.y = e.clientY;
+    drag.moved += Math.abs(dx) + Math.abs(dy);
+    view.t0 -= (dx / plot.w) * view.span;
+    clampView();
+    if (Math.abs(dy) > 0) {
+      setZoom(view.z + dy * 0.0016 * T.dragZoomSensitivity, drag.startX);
+      syncSlider();
+    }
+  }
+  updateHover();
+  requestDraw();
+});
+cv.addEventListener('pointerup', (e) => {
+  if (drag && drag.moved < 4) {
+    const r = cv.getBoundingClientRect();
+    const y = e.clientY - r.top;
+    const lanes = laneLayout();
+    for (const L of lanes) if (y >= L.y && y <= L.y + L.h) focusLane = L.i;
+  }
+  drag = null;
+  requestDraw();
+});
+cv.addEventListener('pointerleave', () => { cursor.inside = false; tip.style.display = 'none'; requestDraw(); });
+
+zslider.addEventListener('input', () => { setZoom(+zslider.value / 1000, null); requestDraw(); });
+function syncSlider() { zslider.value = String(Math.round(view.z * 1000)); }
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  const step = e.shiftKey ? 0.002 : 0.02;
+  if (e.key === '=' || e.key === '+') { setZoom(view.z + step, null); syncSlider(); requestDraw(); }
+  else if (e.key === '-' || e.key === '_') { setZoom(view.z - step, null); syncSlider(); requestDraw(); }
+  else if (e.key === 'ArrowRight') { view.t0 += view.span * 0.12; clampView(); requestDraw(); }
+  else if (e.key === 'ArrowLeft') { view.t0 -= view.span * 0.12; clampView(); requestDraw(); }
+  else if (e.key === 'p') { document.getElementById('panel').classList.toggle('hidden'); setTimeout(resize, 0); }
+  else if ('0123'.includes(e.key)) { jumpToLevel(+e.key); }
+});
+
+/* Level presets are DERIVED from the current tuning, not hardcoded: pressing 2
+   goes to wherever "blocks fully in" currently is. So after moving a slider you
+   can jump straight back to the nominal position for that level and ask whether
+   the level now reads the way its name claims. */
+function jumpToLevel(n) {
+  const z = n === 0 ? 0.0
+    : n === 1 ? T.layers.kernel.zFull
+    : n === 2 ? T.layers.blocks.zFull
+    : T.layers.markers.zFull;
+  setZoom(z, null); syncSlider(); requestDraw();
+}
+
+function blockAt(px, py) {
+  if (ramps.blocks < 0.05) return null;
+  const lanes = laneLayout();
+  const t = timeAt(px);
+  for (const L of lanes) {
+    if (py < L.y || py > L.y + L.h) continue;
+    const list = blocks[L.i];
+    const d = dayIndexAt(t);
+    let i = blockAtDay[L.i][Math.max(0, d - 1)];
+    for (; i < list.length && i >= 0; i++) {
+      const b = list[i];
+      if (b.t0 > t + 2 * HOUR) break;
+      if (t >= b.t0 && t <= b.t1) return { b, lane: L };
+    }
+    return { b: null, lane: L, day: d };
+  }
+  return null;
+}
+
+const fmtDur = (ms) => {
+  const m = Math.round(ms / MIN);
+  return (m >= 60 ? Math.floor(m / 60) + 'h' : '') + String(m % 60) + 'm';
+};
+const fmtClock = (t) => new Date(t).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit' });
+const fmtDate = (t) => new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+
+function updateHover() {
+  const hit = blockAt(cursor.x, cursor.y);
+  const status = document.getElementById('status');
+  if (!hit) { tip.style.display = 'none'; status.textContent = '—'; return; }
+  const laneName = LANES[hit.lane.i].name;
+  if (!hit.b) {
+    const d = hit.day;
+    const t = timeAt(cursor.x);
+    const inGap = observed[d] && gaps[d].some(g => t >= g.t0 && t <= g.t1);
+    const what = !observed[d] ? 'NOTHING RECORDED — whole day unobserved'
+      : inGap ? 'NOTHING RECORDED — within-day gap'
+      : hours[hit.lane.i][d] > 0 ? 'observed, idle for this client (work elsewhere in the day)'
+      : 'observed, and no work recorded for this client';
+    tip.style.display = 'none';
+    status.textContent = `${laneName} · ${fmtDate(dayT[d])} · ${hours[hit.lane.i][d].toFixed(2)}h · ${what}`;
+    return;
+  }
+  const b = hit.b;
+  const srcs = SOURCES.filter(s => b.srcs[s.key]).map(s => s.label).join(', ');
+  const contested = (b.contestedIn || b.contestedOut)
+    ? `\ncontested extent: ${fmtDur(b.contestedIn)} in / ${fmtDur(b.contestedOut)} out (only ${b.disputedBy} asserts it)`
+    : '';
+  const text = `${laneName}\n${fmtDate(b.t0)}  ${fmtClock(b.t0)}–${fmtClock(b.t1)}  (${fmtDur(b.t1 - b.t0)})\nsources: ${srcs}\ntails: ${fmtDur(b.tailIn)} lead-in, ${fmtDur(b.tailOut)} lead-out${contested}`;
+  tip.textContent = text;
+  tip.style.display = 'block';
+  const r = stage.getBoundingClientRect();
+  tip.style.left = Math.min(cursor.x + 14, r.width - 330) + 'px';
+  tip.style.top = Math.min(cursor.y + 14, r.height - 90) + 'px';
+  status.textContent = text.replace(/\n/g, '   ·   ');
+}
+
+/* ==========================================================================
+   §8  THE TUNING PANEL — the point of the prototype
+   ========================================================================== */
+
+const CONTROLS = [
+  { group: 'Time axis (the one crossfade)', items: [
+    { k: 'axisYearsToMonths', label: 'years → months at span (days)', min: 60, max: 430, step: 5 },
+    { k: 'axisMonthsToDays', label: 'months → days at span (days)', min: 3, max: 120, step: 1 },
+    { k: 'axisDaysToHours', label: 'days → hours at span (days)', min: 0.2, max: 10, step: 0.1 },
+    { k: 'axisFade', label: 'crossfade width (fraction of segment)', min: 0.01, max: 0.6, step: 0.01 },
+    { k: 'axisFadeMinZ', label: 'crossfade floor (absolute z)', min: 0, max: 0.06, step: 0.001 },
+  ]},
+  { group: 'Level 0 kernel', items: [
+    { k: 'kernelStat', label: 'week statistic', kind: 'select', options: ['max', 'power', 'sum', 'mean'] },
+    { k: 'kernelPower', label: 'power-mean exponent (1 = mean, ∞ = max)', min: 1, max: 12, step: 0.5 },
+    { k: 'kernelMaxBinDays', label: 'widest kernel (days) — the week statistic', min: 1, max: 21, step: 1 },
+  ]},
+  { group: 'Intensity ramp', items: [
+    { k: 'anchorHours', label: 'anchor — a full day (hours)', min: 2, max: 12, step: 0.5 },
+    { k: 'overworkTopHours', label: 'top of the overwork register (hours)', min: 9, max: 20, step: 0.5 },
+    { k: 'rampGamma', label: 'ramp gamma below the anchor', min: 0.4, max: 1.6, step: 0.05 },
+  ]},
+  { group: 'Absence (invariant 5)', items: [
+    { k: 'hatchPitch', label: 'hatch pitch (px)', min: 2, max: 14, step: 1 },
+    { k: 'hatchContrast', label: 'hatch contrast', min: 0.1, max: 1, step: 0.02 },
+  ]},
+  { group: 'Geometry & feel', items: [
+    { k: 'edgeSmooth', label: 'day-edge smoothing', min: 0, max: 1, step: 0.02 },
+    { k: 'detailWash', label: 'day colour behind the blocks', min: 0, max: 1, step: 0.02 },
+    { k: 'markerRowPx', label: 'L3 marker size cap (px)', min: 2, max: 48, step: 1 },
+    { k: 'ribbonMinPx', label: 'anchor ribbon floor (px)', min: 8, max: 60, step: 1 },
+    { k: 'laneMinPx', label: 'unfocused lane floor (px)', min: 12, max: 80, step: 1 },
+    { k: 'blockRadius', label: 'block corner radius (px)', min: 0, max: 6, step: 0.5 },
+    { k: 'showContested', label: 'render source disagreement', kind: 'check' },
+    { k: 'wheelSensitivity', label: 'wheel zoom sensitivity', min: 0.2, max: 3, step: 0.05 },
+    { k: 'dragZoomSensitivity', label: 'vertical-drag zoom sensitivity', min: 0, max: 3, step: 0.05 },
+  ]},
+];
+
+const panel = document.getElementById('panel');
+const alphaBars = {};
+
+function buildPanel() {
+  panel.innerHTML = '';
+  const h = (t) => { const e = document.createElement('h2'); e.textContent = t; panel.appendChild(e); };
+
+  h('Layer windows (the LOD schedule)');
+  const note = document.createElement('div');
+  note.className = 'hint';
+  note.style.color = 'var(--ink-faint)';
+  note.textContent = 'Every ramp is a function of zoom position. "grab" sets the window edge to wherever you are now — zoom until it feels right, then grab.';
+  panel.appendChild(note);
+
+  for (const l of LAYERS) {
+    const box = document.createElement('div');
+    box.className = 'layer';
+    box.innerHTML = `<div class="name">${l.label}</div><div class="hint">${LAYER_NOTES[l.key]}</div>`;
+    const mk = (edge, text) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `<label>${text}<span class="v" id="v-${l.key}-${edge}"></span></label>`;
+      const r = document.createElement('input');
+      r.type = 'range'; r.min = '0'; r.max = '1'; r.step = '0.005';
+      r.value = String(T.layers[l.key][edge]);
+      r.addEventListener('input', () => {
+        T.layers[l.key][edge] = +r.value;
+        if (T.layers[l.key].zIn > T.layers[l.key].zFull) {
+          if (edge === 'zIn') T.layers[l.key].zFull = T.layers[l.key].zIn;
+          else T.layers[l.key].zIn = T.layers[l.key].zFull;
+        }
+        onTuningChanged();
+      });
+      row.appendChild(r);
+      box.appendChild(row);
+      return r;
+    };
+    const rIn = mk('zIn', 'arrives at z');
+    const rFull = mk('zFull', 'fully in at z');
+    const grab = document.createElement('div');
+    grab.className = 'grab';
+    const bIn = document.createElement('button'); bIn.textContent = 'grab → arrives';
+    const bFull = document.createElement('button'); bFull.textContent = 'grab → fully in';
+    bIn.onclick = () => { T.layers[l.key].zIn = Math.min(view.z, T.layers[l.key].zFull); onTuningChanged(); };
+    bFull.onclick = () => { T.layers[l.key].zFull = Math.max(view.z, T.layers[l.key].zIn); onTuningChanged(); };
+    grab.append(bIn, bFull);
+    box.appendChild(grab);
+    const bar = document.createElement('div');
+    bar.className = 'alphabar';
+    bar.innerHTML = '<i style="width:0%"></i>';
+    box.appendChild(bar);
+    alphaBars[l.key] = bar.firstChild;
+    box._sliders = { zIn: rIn, zFull: rFull };
+    panel.appendChild(box);
+    layerBoxes[l.key] = box;
+  }
+
+  for (const g of CONTROLS) {
+    h(g.group);
+    for (const it of g.items) panel.appendChild(makeControl(it));
+  }
+
+  h('Read the tuning off');
+  const btns = document.createElement('div');
+  btns.className = 'btns';
+  const bDump = document.createElement('button'); bDump.textContent = 'Copy JSON';
+  const bApply = document.createElement('button'); bApply.textContent = 'Apply JSON';
+  const bReset = document.createElement('button'); bReset.textContent = 'Reset to defaults';
+  btns.append(bDump, bApply, bReset);
+  panel.appendChild(btns);
+  const ta = document.createElement('textarea');
+  ta.id = 'dump';
+  panel.appendChild(ta);
+  bDump.onclick = () => {
+    ta.value = JSON.stringify({ zoomPosition: +view.z.toFixed(4), spanDays: +(view.span / DAY).toFixed(3), tuning: T }, null, 2);
+    ta.select();
+    try { navigator.clipboard && navigator.clipboard.writeText(ta.value); } catch (e) { /* file:// may refuse; the textarea is already selected */ }
+  };
+  bApply.onclick = () => {
+    try {
+      const o = JSON.parse(ta.value);
+      T = Object.assign(deepCopy(DEFAULTS), o.tuning || o);
+      buildPanel(); onTuningChanged();
+    } catch (e) { ta.value = 'could not parse: ' + e.message; }
+  };
+  bReset.onclick = () => { T = deepCopy(DEFAULTS); buildPanel(); onTuningChanged(); };
+
+  syncPanelValues();
+}
+const layerBoxes = {};
+
+function makeControl(it) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  if (it.kind === 'check') {
+    const l = document.createElement('label');
+    l.className = 'chk';
+    const c = document.createElement('input'); c.type = 'checkbox'; c.checked = !!T[it.k];
+    c.addEventListener('change', () => { T[it.k] = c.checked; onTuningChanged(); });
+    l.append(c, document.createTextNode(it.label));
+    row.appendChild(l);
+    return row;
+  }
+  if (it.kind === 'select') {
+    const l = document.createElement('label');
+    l.textContent = it.label;
+    const s = document.createElement('select');
+    for (const o of it.options) {
+      const op = document.createElement('option');
+      op.value = o; op.textContent = o + (o === 'mean' ? ' (forbidden — shows the washout)' : o === 'power' ? ' (dial between mean and max)' : '');
+      s.appendChild(op);
+    }
+    s.value = T[it.k];
+    s.addEventListener('change', () => { T[it.k] = s.value; onTuningChanged(); });
+    row.append(l, s);
+    return row;
+  }
+  row.innerHTML = `<label>${it.label}<span class="v" id="v-${it.k}"></span></label>`;
+  const r = document.createElement('input');
+  r.type = 'range'; r.min = String(it.min); r.max = String(it.max); r.step = String(it.step);
+  r.value = String(T[it.k]);
+  r.addEventListener('input', () => { T[it.k] = +r.value; onTuningChanged(); });
+  row.appendChild(r);
+  row._range = r; row._key = it.k;
+  return row;
+}
+
+function syncPanelValues() {
+  for (const l of LAYERS) {
+    for (const edge of ['zIn', 'zFull']) {
+      const v = document.getElementById(`v-${l.key}-${edge}`);
+      if (v) v.textContent = T.layers[l.key][edge].toFixed(3) + '  (' + spanLabel(spanOf(T.layers[l.key][edge])) + ')';
+      const box = layerBoxes[l.key];
+      if (box && box._sliders) box._sliders[edge].value = String(T.layers[l.key][edge]);
+    }
+  }
+  for (const g of CONTROLS) for (const it of g.items) {
+    const v = document.getElementById('v-' + it.k);
+    if (v) v.textContent = typeof T[it.k] === 'number' ? String(+T[it.k].toFixed(3)) : String(T[it.k]);
+  }
+}
+
+function onTuningChanged() {
+  clearColourCache(); clearHatch();
+  syncPanelValues();
+  saveTuning();
+  requestDraw();
+}
+
+function saveTuning() {
+  try { localStorage.setItem('timetattle.zoomproto.tuning', JSON.stringify(T)); } catch (e) { /* file:// may refuse storage */ }
+}
+function loadTuning() {
+  try {
+    const s = localStorage.getItem('timetattle.zoomproto.tuning');
+    if (!s) return;
+    const o = JSON.parse(s);
+    T = Object.assign(deepCopy(DEFAULTS), o);
+    T.layers = Object.assign(deepCopy(DEFAULTS.layers), o.layers || {});
+  } catch (e) { T = deepCopy(DEFAULTS); }
+}
+
+/* --- readouts and legend ------------------------------------------------- */
+function spanLabel(ms) {
+  const d = ms / DAY;
+  if (d >= 60) return (d / 30.44).toFixed(1) + ' mo';
+  if (d >= 2) return d.toFixed(1) + ' d';
+  if (d >= 1 / 24) return (ms / HOUR).toFixed(1) + ' h';
+  return Math.round(ms / MIN) + ' m';
+}
+
+function updateReadouts() {
+  document.getElementById('rd-z').textContent = view.z.toFixed(4);
+  document.getElementById('rd-span').textContent = spanLabel(view.span) + ' (' + (view.span / DAY).toFixed(2) + 'd)';
+  document.getElementById('rd-bin').textContent = kernelWidthDays().toFixed(2) + 'd wide';
+  const a = axisAlphas();
+  document.getElementById('rd-axis').textContent = AXIS_SCALES.map((s, i) => a[i] > 0.01 ? s + ' ' + a[i].toFixed(2) : null).filter(Boolean).join(' + ') || '—';
+  document.getElementById('rd-range').textContent = fmtDate(view.t0) + ' → ' + fmtDate(view.t0 + view.span);
+  document.getElementById('rd-focus').textContent = LANES[focusLane].name + ' (' + ramps.focus.toFixed(2) + ')';
+  for (const l of LAYERS) if (alphaBars[l.key]) alphaBars[l.key].style.width = (ramps[l.key] * 100).toFixed(1) + '%';
+}
+
+function buildLegend() {
+  const el = document.getElementById('legend');
+  el.innerHTML = '';
+  const swatch = (paint, label) => {
+    const s = document.createElement('span');
+    const c = document.createElement('canvas');
+    c.width = 44; c.height = 24;
+    const g = c.getContext('2d');
+    g.scale(2, 2);
+    paint(g);
+    s.append(c, document.createTextNode(label));
+    el.appendChild(s);
+  };
+  swatch(g => { g.fillStyle = hatch(g); g.fillRect(0, 0, 22, 12); }, 'unobserved — nothing recorded');
+  swatch(g => { g.fillStyle = intensityColour(0); g.fillRect(0, 0, 22, 12); }, 'observed, zero');
+  for (const h of [2, 4, 8, 11, 14]) {
+    swatch(g => { g.fillStyle = intensityColour(h); g.fillRect(0, 0, 22, 12); }, h + 'h' + (h === T.anchorHours ? ' (anchor)' : h > T.anchorHours ? '' : ''));
+  }
+  swatch(g => {
+    g.fillStyle = 'rgba(226,231,236,0.22)'; g.fillRect(1, 2, 13, 8);
+    g.strokeStyle = 'rgba(226,231,236,0.5)'; g.strokeRect(1.5, 2.5, 12, 7);
+    g.setLineDash([2, 2]); g.strokeRect(14.5, 2.5, 6, 7);
+    g.fillStyle = 'rgba(210,112,58,0.20)'; g.fillRect(14, 2, 7, 8);
+  }, 'block: agreed core / contested extent');
+}
+
+/* ==========================================================================
+   §9  BOOT
+   ========================================================================== */
+loadTuning();
+buildPanel();
+recomputeRamps();
+new ResizeObserver(() => resize()).observe(stage);
+window.addEventListener('resize', resize);
+resize();
+buildLegend();
+setZoom(0, null);
+syncSlider();
+requestDraw();
+
+/* Rebuild the legend whenever the ramp or hatch changes, so the legend is
+   always painted by the same functions as the timeline — a legend that drifts
+   from its picture is worse than none. */
+const _onTuningChanged = onTuningChanged;
+onTuningChanged = function () { _onTuningChanged(); buildLegend(); };
+</script>
+</body>
+</html>

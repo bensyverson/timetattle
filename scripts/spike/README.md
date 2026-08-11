@@ -16,6 +16,26 @@ They live in `scripts/` rather than being written inline and discarded because s
 | Probe | Purpose |
 | --- | --- |
 | `env` | Pre-flight check: which evidence stores exist, and which are merely unreadable. Distinguishes absence from a TCC refusal, which macOS otherwise conflates. |
+| `zoomproto` | The web dashboard's zoom timeline, as an interaction rig. Not a Go probe and not read-only — see below. |
+
+### `zoomproto` is the exception to every convention above
+
+It is HTML rather than a `main` package, it reads nothing at all, and it is not
+throwaway: it is the design artifact the semantic-zoom timeline is meant to be
+tuned in, so its findings get re-implemented rather than discarded.
+
+- **Open it**: double-click `scripts/spike/zoomproto/index.html`, or
+  `open scripts/spike/zoomproto/index.html`. No server, no build, no network —
+  a strictly offline single file, which is also why it is one file and not a
+  set of ES modules (`file://` blocks module loading outright).
+- **All data in it is synthetic and seeded.** Five invented client names, 430
+  generated days. It cannot reach the store, and nothing in it may be replaced
+  with real data — a screen capture of it is safe to publish, which is the
+  point.
+- **Check it** with `node scripts/spike/zoomproto/check.js`. That runs the
+  page's own generator, kernel and colour ramp headlessly and asserts the
+  properties the design requires; it slices the functions out of the HTML
+  rather than re-implementing them.
 
 ## Permissions
 
