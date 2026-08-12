@@ -31,6 +31,12 @@ import (
 // as an argument that nobody reconciled against the thing it checks, producing
 // a clean report indistinguishable from a correct one.
 //
+// The schedule has since changed underneath this file and this file did not
+// change with it: on 2026-08-12 the agent became six StartCalendarInterval
+// slots four hours apart, StartInterval was removed, and the bound followed
+// from 18h to 6h with nothing here edited. That is the whole argument for
+// deriving it.
+//
 // # Why the installed plist and not the config
 //
 // Because it cannot go stale. A cadence written into config.json is a record of
@@ -143,12 +149,28 @@ type schedule struct {
 // launchd deferring a run over a sleep.
 //
 // The slack is not for the work: the longest whole harvest ever recorded here
-// is 76.17s. It is for the machine being shut, and it is why the bound is not
-// tighter still. Against the 35 inter-harvest gaps measured on 2026-08-12, a
-// bound of 18h would have reported the 6 gaps over 17h; a bound of 13h would
-// have reported up to 13 of the 35. The 6 are worth reporting — a laptop that
-// was closed for a day genuinely did not harvest — and 13 of 35 is a check
-// nobody would read twice.
+// is 76.17s. It is for launchd deferring a run, and it is why the bound is not
+// tighter still. Against the 35 inter-harvest gaps measured on 2026-08-12 under
+// the 12h interval this replaced, a bound of 18h would have reported the 6 gaps
+// over 17h and a bound of 13h up to 13 of the 35.
+//
+// # What the bound is NOT
+//
+// It is not a promise about wall-clock time, and the report must never read it
+// as one. launchd fires a missed calendar slot within a second of the machine
+// waking — measured against com.apple.newsyslog, which slept through its 13:30
+// slot and ran at 13:34:57.652, 0.65s after a dark wake — so on a machine that
+// is up, the age of the newest run really is bounded by the cadence. It cannot
+// run at all while the machine is off, and nothing in launchd or in this file
+// bounds how long a laptop stays shut.
+//
+// Two things keep that from turning the check into a wolf-crier. A hole that
+// opens while the machine is asleep is closed within a second of the wake, and
+// this report can only be read on a machine that is running — so by the time
+// anyone looks, the catch-up run has already advanced the newest run. And where
+// the age is genuinely past the bound, the verdict states the age and says in
+// so many words that harvest_run cannot tell a missed harvest from a machine
+// that was not running. It reports the reading; it does not attribute a fault.
 func (s schedule) bound() (time.Duration, bool) {
 	if s.state != scheduleFound || s.interval <= 0 {
 		return 0, false

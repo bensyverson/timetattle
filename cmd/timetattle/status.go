@@ -320,20 +320,23 @@ const statusStranded = "stranded"
 // never had. The floor is a margin against a variance that has not been sampled,
 // chosen from the schedule instead: it is four times the longest whole harvest
 // ever recorded here (76.17s, the invocation beginning 2026-08-01T13:05:14Z) and
-// 1/144th of the 12-hour interval scripts/install-agent.sh schedules, so a death
-// is still reported long before the next harvest would paper over it. On the one
-// real stranded row in the store, harvest_run 28, the rule reports at
-// 2026-08-01T13:19:51Z — 17h47m before the staleness bound would have said
-// anything, and 23h47m before it while -stale still defaulted to 24h.
+// 1/48th of the four-hour cadence scripts/install-agent.sh now schedules — it
+// was 1/144th of the twelve-hour interval that preceded it — so a death is still
+// reported long before the next harvest would paper over it. On the one real
+// stranded row in the store, harvest_run 28, the rule reports at
+// 2026-08-01T13:19:51Z. That is 5h47m before the staleness bound derived from
+// today's schedule would have said anything, and was 23h47m before it while
+// -stale still defaulted to a flat 24h.
 //
 // # Why erring generous is cheap, and erring tight is not
 //
 // The two mistakes do not cost the same. Calling a live harvest dead is a lie
 // that exits non-zero, and it discredits every other line in the report. Calling
 // a dead harvest live only delays the news, and the delay is bounded twice over:
-// the next scheduled harvest supersedes the stranded row within 12 hours, and
-// the staleness check reports it within 18 whatever this rule decides — one and
-// a half times the installed interval, derived in status_schedule.go. There is a
+// the next scheduled harvest supersedes the stranded row within one interval,
+// and the staleness check reports it within one and a half whatever this rule
+// decides — 6h on the schedule installed today, derived rather than typed, in
+// status_schedule.go. There is a
 // backstop under being too slow and none under being too quick.
 //
 // No ceiling, deliberately. A tolerance that could only grow to some cap would
@@ -686,6 +689,21 @@ func verdict(out io.Writer, rows []sourceStatus, states []captureState, newest t
 		age := opt.now.Sub(newest)
 		fmt.Fprintf(out, "the schedule is stale: the newest run of any source is %s old, past the %s allowed\n",
 			short(age), short(bound.d))
+		// AN OBSERVATION ABOUT THE RECORD, NOT A FAULT ATTRIBUTED TO ANYTHING.
+		// An installed cadence is what launchd was asked for and not a promise
+		// about wall-clock time. launchd does fire a missed calendar slot
+		// almost immediately on wake — measured on this machine against
+		// com.apple.newsyslog, which slept through its 13:30 slot and ran at
+		// 13:34:57.652, 0.65s after a dark wake — but it cannot run at all
+		// while the machine is off, so a laptop closed over a weekend leaves a
+		// three-day hole that is nobody's fault.
+		//
+		// harvest_run holds only what ran, and a gap in it looks identical
+		// either way. Naming which one it was would be a conclusion this report
+		// never observed; the evidence that could separate them is screen-on
+		// presence in the store, which this command does not read.
+		fmt.Fprintln(out, "  whether the harvest was missed or the machine was not running through it "+
+			"is not in this record: harvest_run holds only what ran")
 		errs = append(errs, fmt.Errorf("stale: the newest harvest run is %s old", short(age)))
 	}
 	// The one line a reader is entitled to trust absolutely, which is why a

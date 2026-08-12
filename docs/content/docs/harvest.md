@@ -250,8 +250,6 @@ Override with `TIMETATTLE_INTERVAL` (seconds) or `TIMETATTLE_BIN`.
 $ timetattle status
 store:     /Users/you/.timetattle/timetattle.db
 schema:    0007_capture_run.sql, applied 2026-08-01T15:04:08.783000Z
-schedule:  every 12h00m, from StartInterval in /Users/you/Library/LaunchAgents/com.example.harvest.plist
-stale:     18h00m, an interval and a half of that schedule
 last run:  2026-08-01 08:30:08, 55m ago
 
 source                 last run  status  inputs    seen    new  last ok
@@ -274,7 +272,7 @@ preserved in /Users/you/.timetattle/snapshots:
   Motion vault  39 files  1h21m ago  11m ago       ok, nothing new, 39 already …
   filedays      none      -          11m ago       nothing to capture on this m…
 
-every source ran and succeeded within the last 18h00m, and every capture held
+every source ran and succeeded within the last 24h00m, and every capture held
 ```
 
 That is the report **in an 80-column terminal**, where every column has shrunk
@@ -413,14 +411,11 @@ harvest ever recorded here (76.17s) and 1/144th of the 12-hour interval.
 
 On the one real stranded row in the store — `harvest_run` 28,
 `claude-transcripts`, begun `2026-08-01T13:07:13Z` and never finished — the rule
-reports from `13:19:51Z`, which is **17h47m before the staleness bound would
-have said anything** (23h47m, while `-stale` still defaulted to 24h). Erring generous is cheap here and erring tight is not: calling a live
+reports from `13:19:51Z`, which is **23h47m before `-stale` would have said
+anything**. Erring generous is cheap here and erring tight is not: calling a live
 harvest dead is a lie that exits non-zero and discredits the whole report, while
 calling a dead harvest live only delays the news, and that delay is backstopped
-twice, by the next scheduled harvest within 12 hours and by the staleness bound
-within 18 (see [Where the staleness bound comes from](#where-the-staleness-bound-comes-from);
-the figure was 24 while `-stale` still defaulted to a number reconciled against
-nothing).
+twice, by the next scheduled harvest within 12 hours and by `-stale` within 24.
 
 A source part-way through its repositories is `running` too, not `partial`: three
 read and a fourth in flight is not a fourth that was lost. But a repository that
@@ -506,8 +501,7 @@ have different causes and different costs, and the failure detail says which:
 | `-store` | Event store to read. Defaults to `~/.timetattle/timetattle.db`. |
 | `-dir` | Snapshot directory to count. Defaults to `~/.timetattle/snapshots`. |
 | `-index` | Registry index, used to work out which sources a harvest would attempt. Defaults to `~/.timetattle/registered-directories.json`. |
-| `-schedule` | Installed launchd plist to derive the staleness bound from. Defaults to the agent `install-agent.sh` writes, under `~/Library/LaunchAgents/`. |
-| `-stale` | How old the newest run may be before the schedule is called stale. **No default.** It is derived from the schedule above, at one interval and a half. Given explicitly it wins, and the report says what it overrode. |
+| `-stale` | How old the newest run may be before the schedule is called stale. Defaults to `24h`, twice the interval `install-agent.sh` schedules, so one missed run is tolerated and two are not. |
 | `-inputs` | List every input each source read on its most recent harvest, one line each, with the failure under any that was lost. |
 
 It **exits non-zero** when a source's most recent run failed, when a source was
@@ -525,52 +519,8 @@ reading would be a false negative traded for the false positive it replaced:
 ```
 a harvest is in progress, and this report is a snapshot of it:
   claude-transcripts: running for 12s, and it is not presumed dead until 13m
-nothing else is wrong: every source that has finished succeeded within the last 18h00m, and every capture held
+nothing else is wrong: every source that has finished succeeded within the last 24h00m, and every capture held
 ```
-
-### Where the staleness bound comes from
-
-`status` does not carry a staleness threshold of its own. It **reads the
-installed launchd plist** — the same file `install-agent.sh` writes — and takes
-the bound from whichever scheduling key is there: `StartInterval` directly, or
-the widest gap between consecutive fires of a `StartCalendarInterval`. The bound
-is that interval **and a half**: on the 12-hour agent, 18 hours.
-
-The plist rather than a copy of the cadence in a config file, because it cannot
-go stale. A number in a config is a record of what someone meant to install; the
-plist *is* what launchd will run.
-
-One and a half rather than two, because at twice the interval the age of the
-newest run only reaches the bound at the instant the next run is already due —
-so a single skipped harvest cannot be reported at all, and it takes two in a
-row. At one and a half, a missed run is reported half an interval after it
-should have happened and half an interval before the next one is due. The
-remaining slack is not for the work (the longest whole harvest ever recorded is
-76.17s); it is for launchd deferring a run over a sleep.
-
-> **Corrects the `-stale` row above as it stood before 2026-08-12.** It read:
-> "Defaults to `24h`, twice the interval `install-agent.sh` schedules, so one
-> missed run is tolerated and two are not." That documented the defect as a
-> feature. On 2026-08-12 the store held no harvest row, no capture and no event
-> stamped that day, and `status` printed *every source ran and succeeded within
-> the last 24h00m*. There is no default now; the bound is derived, and the
-> report names it and the key it came from on every run.
-
-**A schedule that cannot be read produces no bound, and no verdict.** A plist
-that is missing, unreadable, or carries neither scheduling key is reported as
-itself — freshness is *not checked*, the store is called neither fresh nor
-stale, and the all-clear is withheld and replaced by a line saying so. Quietly
-falling back to a default would be the same defect one level down. Only the
-unreadable case exits non-zero, on the same footing as an unreadable
-`capture_run` table: the report could not take a reading it is supposed to take.
-Having looked and found no schedule installed is an observation, and a machine
-that harvests by hand is entitled to it.
-
-**What this still cannot see.** `status` reads `harvest_run.started_at`, so it
-reports whether a harvest RAN and never whether EVIDENCE ARRIVED. A harvest that
-fires on time and ingests nothing advances the staleness clock while the store
-stands still, and no bound derived from any schedule can catch that. Watching
-the store itself advance is a separate check.
 
 Staleness is not redundant with the failed-run check, and the incident that
 prompted this command is why. Because the old capture phase failed before

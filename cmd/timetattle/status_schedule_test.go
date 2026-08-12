@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,39 @@ func TestTheBoundComesFromAnEvenCalendarSchedule(t *testing.T) {
 	}
 	if bound, _ := s.bound(); bound != 18*time.Hour {
 		t.Errorf("the bound on a twice-daily schedule is %s, want 18h", bound)
+	}
+}
+
+// TestTheBoundComesFromTheSixSlotScheduleInstalledToday is the schedule this
+// machine now carries: six StartCalendarInterval slots at 00, 04, 08, 12, 16
+// and 20 local, minute 0, with StartInterval gone entirely.
+//
+// It is a fixture and not the live plist. The point of the whole file is that
+// the bound follows the installed schedule with nothing here edited: the same
+// code that derived 18h from the 12h StartInterval derives 6h from this,
+// because the schedule changed and the derivation did not.
+func TestTheBoundComesFromTheSixSlotScheduleInstalledToday(t *testing.T) {
+	var slots strings.Builder
+	slots.WriteString("\t<key>StartCalendarInterval</key>\n\t<array>\n")
+	for _, hour := range []int{0, 4, 8, 12, 16, 20} {
+		fmt.Fprintf(&slots, "\t\t<dict>\n\t\t\t<key>Hour</key>\n\t\t\t<integer>%d</integer>\n"+
+			"\t\t\t<key>Minute</key>\n\t\t\t<integer>0</integer>\n\t\t</dict>\n", hour)
+	}
+	slots.WriteString("\t</array>\n")
+
+	s := readSchedule(writePlist(t, plistWith(slots.String())))
+
+	if s.state != scheduleFound {
+		t.Fatalf("the installed six-slot schedule was not read as a schedule: %v (%v)", s.state, s.err)
+	}
+	if s.interval != 4*time.Hour {
+		t.Errorf("six slots four hours apart read as an interval of %s, want 4h", s.interval)
+	}
+	if s.uneven() {
+		t.Error("six evenly spaced slots are reported as uneven")
+	}
+	if bound, _ := s.bound(); bound != 6*time.Hour {
+		t.Errorf("the bound on the installed schedule is %s, want 6h", bound)
 	}
 }
 
@@ -358,6 +392,19 @@ func TestASingleSkippedHarvestOnATwelveHourScheduleTripsStatus(t *testing.T) {
 	}
 	if strings.Contains(got, "every source ran and succeeded") {
 		t.Errorf("the all-clear was printed over a skipped harvest:\n%s", got)
+	}
+	// AND IT MAY NOT CALL IT A FAULT. An installed cadence is what launchd was
+	// asked for, not a promise about wall-clock time: launchd fires a missed
+	// calendar slot within a second of the machine waking, but it cannot run at
+	// all while the machine is off, so a laptop closed over a weekend leaves a
+	// three-day hole that is nobody's fault. harvest_run holds only what ran,
+	// and cannot tell that from a harvest that was missed on a machine that was
+	// up the whole time. Stating the age is an observation; calling it a
+	// failure of the schedule would be the report concluding something it never
+	// saw, which is the rule this whole task exists under.
+	if !strings.Contains(got, "not running") {
+		t.Errorf("the stale verdict does not say that the record cannot tell a missed harvest "+
+			"from a machine that was not running:\n%s", got)
 	}
 
 	// The mutation. This is what the report said before the bound was derived,
