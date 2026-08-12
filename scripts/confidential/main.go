@@ -127,6 +127,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -740,7 +741,11 @@ func main() {
 		sc.Candidates = d.Candidates
 		sc.Deny = append(sc.Deny, d.Deny...)
 	}
-	printList(d, sc, *deriveNames)
+	listOut := io.Writer(os.Stdout)
+	if *classify {
+		listOut = os.Stderr
+	}
+	printList(listOut, d, sc, *deriveNames)
 
 	// THE PRECONDITION, AND WHY IT COMES BEFORE THE SCAN. Three commits in this
 	// repository have gone out on a skip that named a conclusion instead of a
@@ -847,17 +852,23 @@ func listSummary(sc Scanner) string {
 
 // printList prints the provenance of every part of the list, before anything is
 // scanned, whether or not the run is a gate.
-func printList(d derived, sc Scanner, didDerive bool) {
-	fmt.Printf("list: %s\n", listSummary(sc))
+//
+// The writer is a parameter because -classify's stdout is a FILE: the hook's
+// own refusal message says to redirect it straight into
+// ~/.timetattle/publication-gate.json, so in that mode everything that is not
+// the JSON must go to stderr or the saved file cannot be read back. gatecheck's
+// fourth check is the round-trip that caught this.
+func printList(w io.Writer, d derived, sc Scanner, didDerive bool) {
+	fmt.Fprintf(w, "list: %s\n", listSummary(sc))
 	if !didDerive {
-		fmt.Println("  -derive=false: nothing was read from this machine; the list is exactly what was passed in")
+		fmt.Fprintln(w, "  -derive=false: nothing was read from this machine; the list is exactly what was passed in")
 		return
 	}
 	for _, s := range d.Sources {
-		fmt.Println("  " + s.String())
+		fmt.Fprintln(w, "  "+s.String())
 	}
 	for _, r := range d.Refused {
-		fmt.Println("  " + r)
+		fmt.Fprintln(w, "  "+r)
 	}
 }
 

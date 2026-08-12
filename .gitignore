@@ -71,3 +71,10 @@ public/
 # ignore entry naming a dated confidentiality document is itself a pointer to
 # one. Contents stay on disk and in the private mirror's history.
 /project/private/
+
+# Design mockups and other binary working material. These are large -- 25 MB at
+# the time this entry was added -- and they are not the measurement trail that
+# the rest of project/ exists to publish. A document that needs an image should
+# say in words what the image shows, so that the published record still stands
+# on its own for a reader who never had the file.
+/project/images/

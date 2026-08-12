@@ -10,7 +10,7 @@
 # a repository where nobody has made that symlink looks identical to one where
 # the gate passes. This script is what tells those two apart.
 #
-# It checks three things, in the order they can fail:
+# It checks four things, in the order they can fail:
 #
 #   1. Is a hook installed at all, at the path THIS clone would use?
 #   2. Does the tool refuse to judge when it cannot build its name list --
@@ -18,6 +18,10 @@
 #      shipped three times in other tools?
 #   3. Does a planted name actually stop a commit, through the hook, rather
 #      than through somebody remembering to run the auditor?
+#   4. Does the classification file, saved EXACTLY the way the hook's own
+#      error message says to save it, parse when the gate reads it back?
+#      install.sh and release.sh each worked and had never been run against
+#      the other's output; this is the same seam one tool over.
 #
 # The planted name is INVENTED and comes from a fixture machine built in a
 # temporary directory: proving the gate catches a leak must not require
@@ -140,6 +144,41 @@ else
 	pass "it stopped at the gate rather than spending minutes on the test suite first"
 fi
 rm -rf "$FIXTURE"
+
+# --- 4. the saved classification must be readable by the gate that reads it ---
+#
+# The hook's refusal message tells a human to run
+#   go run ./scripts/confidential -classify > ~/.timetattle/publication-gate.json
+# so whatever -classify writes to STDOUT, redirected verbatim, must come back
+# readable. Only stdout is redirected here, exactly as that command line does.
+echo "==> 4. the classification round-trip, saved the way the hook says"
+ROUNDTRIP="$(mktemp -d)"
+cat >"$ROUNDTRIP/config.json" <<'EOF'
+{"reference_projects": {}}
+EOF
+cat >"$ROUNDTRIP/registered-directories.json" <<'EOF'
+{"index_version": 1, "directories": []}
+EOF
+TIMETATTLE_GATE_CONFIG="$ROUNDTRIP/config.json" \
+	TIMETATTLE_GATE_REGISTRY="$ROUNDTRIP/registered-directories.json" \
+	TIMETATTLE_GATE_CLASSIFICATION="$ROUNDTRIP/publication-gate.json" \
+	"$GATE_BIN" -dir . -classify >"$ROUNDTRIP/publication-gate.json" 2>/dev/null
+set +e
+READBACK_OUT="$(TIMETATTLE_GATE_CONFIG="$ROUNDTRIP/config.json" \
+	TIMETATTLE_GATE_REGISTRY="$ROUNDTRIP/registered-directories.json" \
+	TIMETATTLE_GATE_CLASSIFICATION="$ROUNDTRIP/publication-gate.json" \
+	"$GATE_BIN" -dir . 2>&1)"
+set -e
+if printf '%s' "$READBACK_OUT" | grep -q "could not be parsed"; then
+	fail "the file -classify saves via the documented redirect is one the gate cannot read back:
+$(printf '%s' "$READBACK_OUT" | grep "classification")"
+elif printf '%s' "$READBACK_OUT" | grep -q "classification (read)"; then
+	pass "the documented redirect produces a file the gate reads back"
+else
+	fail "the read-back run never reported reading the classification at all:
+$(printf '%s' "$READBACK_OUT" | head -10)"
+fi
+rm -rf "$ROUNDTRIP"
 
 echo ""
 if [ "$FAILED" -ne 0 ]; then
