@@ -236,13 +236,102 @@ $ go install ./cmd/timetattle
 $ ./scripts/install-agent.sh
 ```
 
-That installs a launchd agent running every 12 hours. Frequency is not what
-protects you — `knowledgeC` retains about 28 days and a Biome segment takes
-roughly five days to fill, so even weekly capture would rarely lose anything —
-but a snapshot is small and a wider margin covers the machine being away for
-a stretch. launchd runs a missed interval on the next wake.
+That installs a launchd agent that harvests at 00:00, 04:00, 08:00, 12:00,
+16:00 and 20:00 local time, plus once when it is loaded.
 
-Override with `TIMETATTLE_INTERVAL` (seconds) or `TIMETATTLE_BIN`.
+Override with `TIMETATTLE_HOURS` (a comma-separated list of hours) or
+`TIMETATTLE_BIN`.
+
+> **Corrected on 2026-08-12, and anyone who installed the earlier agent should
+> re-run the installer.** Until this date the agent was `StartInterval=43200`,
+> documented here as "every 12 hours … launchd runs a missed interval on the
+> next wake." Both halves were wrong.
+>
+> `launchd.plist(5)` says the opposite of that last sentence under
+> `StartInterval`: "If the system is asleep during the time of the next
+> scheduled interval firing, that interval will be missed due to shortcomings
+> in kqueue(3)." The promise about waking belongs to `StartCalendarInterval`,
+> further down the same page, and had been read onto the wrong key. On a
+> laptop that sleeps, `StartInterval` therefore counts something closer to
+> awake time. Measured over all 35 inter-harvest gaps since 2026-07-30: mean
+> 8.49h, max **54.64h**, with 13 gaps longer than the nominal 12 hours.
+>
+> The frequency argument was wrong for a different reason: it weighed only the
+> sources that prune. See below.
+
+### Why frequency matters, for one kind of source only
+
+Two kinds of loss sit behind a missed harvest, and the schedule turns on the
+difference.
+
+`knowledgeC` and Biome **prune**. Anything still inside their windows comes
+back in full whenever the next harvest runs, however late — on 2026-08-12 the
+store held nothing at all for that day, and a harvest run by hand recovered it
+as 8,280 events.
+
+The `mtime` sources **decay**, and no later harvest ever recovers them. A file
+records only its last modification, so work done today on a file last touched
+on 11 July does not add evidence for 11 July — it moves it. One repository scan
+found 1,773 files bearing 2026-07-11; the same scan hours later found 513. The
+1,260 that moved cannot be recovered by harvesting harder afterwards, only by
+having harvested sooner, and the loss leaves no visible edge: the count simply
+gets smaller and stays plausible.
+
+So the cadence is a sampling question. Only a scan taken while a file still
+carries a day's `mtime` can record that day, and what matters is how many
+harvests land inside a working session. Twice a day puts one inside an ordinary
+day and can put none inside a short one; six puts three or four inside any
+session long enough to be worth measuring.
+
+The ceiling is storage rather than anything about scheduling. Hourly would be
+the better schedule and is the simpler plist — omitted keys are wildcards, so
+hourly is a single entry where four-hourly is six — but a `knowledgeC` snapshot
+is written afresh on every run and is neither deduplicated nor pruned, which
+puts hourly at roughly 13 GB a year against 3.3 GB at every four hours. If
+snapshot deduplication or a retention policy lands, revisit it.
+
+None of this makes the perishable floors safe, because they are **volume**-based
+rather than time-based: `/app/usage` is capped near 10,000 rows and Biome fills
+fixed 512 KB segments, so "under 10 days" describes typical activity and a busy
+stretch shortens the real deadline by an amount nobody has measured. Every four
+hours is a cost judgement made under that uncertainty, not a proven margin.
+
+### What the calendar schedule does and does not guarantee
+
+`launchd.plist(5)`, under `StartCalendarInterval`: "Unlike cron which skips job
+invocations when the computer is asleep, launchd will start the job the next
+time the computer wakes up. If multiple intervals transpire before the computer
+is woken, those events will be coalesced into one event upon wake from sleep."
+
+That was verified here rather than taken off the page, since misreading this
+page is what caused the original defect. macOS ships `com.apple.newsyslog` on a
+calendar schedule at minute 30 of every hour. On 2026-08-12 this machine slept
+from 13:26:56 to 13:34:57, so the 13:30 slot passed with the machine down; the
+run that followed is stamped **13:34:57.652**, 0.65 seconds after the wake, and
+it then rescheduled itself for 14:30. A dark wake was enough — the job did not
+wait for anyone to open the lid.
+
+```console
+$ pmset -g log | grep -E 'Sleep|DarkWake'
+$ log show --last 8h --predicate 'eventMessage CONTAINS "newsyslog"' --style compact
+```
+
+Read the guarantee for exactly what it says: it bounds the delay after **wake**,
+not the gap in wall-clock time. A laptop closed on Friday and opened on Monday
+still has a three-day hole. What changes is that it harvests within seconds of
+the lid opening instead of somewhere in the next four hours, and that it
+harvests once rather than eighteen times in a row.
+
+Boot and logout are a separate case the key does not cover, because a job that
+is not loaded cannot have missed an interval. `RunAtLoad` is what covers those.
+
+To confirm what launchd actually loaded, rather than what the installer wrote,
+note that a calendar schedule does **not** appear as the `run interval` line
+`StartInterval` produced. It is one entry per hour under `event triggers`:
+
+```console
+$ launchctl print gui/$UID/com.bensyverson.timetattle.harvest | grep -A 8 calendarinterval
+```
 
 ## Checking that it is still working
 
@@ -407,7 +496,10 @@ The five-minute floor is a different kind of claim and is marked as one.
 store was recorded on a machine that was never wedged, and **a store cannot
 measure a stall it never had**. The floor is a margin against a variance that has
 not been sampled, chosen from the schedule instead: four times the longest whole
-harvest ever recorded here (76.17s) and 1/144th of the 12-hour interval.
+harvest ever recorded here (76.17s) and, when it was chosen, 1/144th of the
+then-current 12-hour interval. The schedule became four-hourly on 2026-08-12,
+which makes the same five minutes 1/48th of an interval. The floor was not
+re-derived; it is recorded here so that the fraction is not read as current.
 
 On the one real stranded row in the store — `harvest_run` 28,
 `claude-transcripts`, begun `2026-08-01T13:07:13Z` and never finished — the rule
@@ -415,7 +507,8 @@ reports from `13:19:51Z`, which is **23h47m before `-stale` would have said
 anything**. Erring generous is cheap here and erring tight is not: calling a live
 harvest dead is a lie that exits non-zero and discredits the whole report, while
 calling a dead harvest live only delays the news, and that delay is backstopped
-twice, by the next scheduled harvest within 12 hours and by `-stale` within 24.
+twice, by the next scheduled harvest — four hours away at most while the machine
+is awake, though not bounded at all across a sleep — and by `-stale` within 24.
 
 A source part-way through its repositories is `running` too, not `partial`: three
 read and a fourth in flight is not a fourth that was lost. But a repository that
@@ -734,9 +827,13 @@ segments are skipped and only the live one is stored.
 The live segment **is** re-stored whenever it has grown, because that is the
 only way not to lose the difference. What is guaranteed is the narrower and
 correct property: no segment is ever stored twice for the same contents. A
-segment settles on its own once a successor supersedes it. At twice a day
-that costs roughly 50 MB a year for the whole stream; the complete 24-day
-history is 712 KB compressed, against 3 MB raw.
+segment settles on its own once a successor supersedes it. That cost was
+measured at roughly 50 MB a year for the whole stream while the agent ran
+twice a day; the complete 24-day history is 712 KB compressed, against 3 MB
+raw. At the six runs a day the agent now schedules, the same arithmetic gives
+an upper bound near 150 MB a year rather than a measurement, and the real
+figure is lower, because a run whose live segment has not grown stores nothing
+at all.
 
 ### Recovering a capture
 
@@ -796,10 +893,19 @@ That reports every stream's retention window and how stale it is, flagging
 anything over a day old. It also inventories the sensitive fields a raw
 database holds, and confirms a snapshot has none of them.
 
-**Snapshots accumulate.** At roughly 1.6 MB twice a day that is about 1.2 GB
-a year for `knowledgeC`, plus roughly 50 MB a year for Biome. A retention
-policy is deliberately deferred until ingestion is trusted — until the
-collector is proven, the raw snapshots are the only copy.
+**Snapshots accumulate, and nothing deduplicates them.** A `knowledgeC`
+snapshot averages 1.54 MB (measured: 57 MB across 37 of them) and a fresh one
+is written under a new timestamped name on every run, unlike a Biome segment,
+which is skipped when its digest is already on disk. At the six runs a day the
+agent schedules that is about 3.3 GB a year for `knowledgeC`, against 1.1 GB
+at the twice-daily schedule it replaced, plus up to 150 MB a year for Biome.
+
+That figure, not anything about scheduling, is what rules out harvesting
+hourly — which would be about 13 GB a year. A retention policy is deliberately
+deferred until ingestion is trusted: until the collector is proven, the raw
+snapshots are the only copy. Deduplicating or pruning them would remove the
+only argument against a denser schedule, and the `mtime` sources would be
+better served by one.
 
 ## Recovering a knowledgeC snapshot
 
