@@ -48,7 +48,9 @@ package snapshot
 
 import (
 	"compress/gzip"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -80,14 +82,89 @@ type Result struct {
 	Rows int
 	// Bytes is the compressed size on disk.
 	Bytes int64
+	// Held reports that this run wrote nothing because a snapshot already on
+	// disk holds these exact contents. Path then names that snapshot.
+	Held bool
 }
 
-// Take writes a compact, gzipped snapshot of src into dir.
+// snapshotDigestLength is how much of the SHA-256 of a snapshot's contents
+// goes in its file name: 32 hex characters, 128 bits.
+//
+// It is its own constant rather than a reuse of digestLength or
+// vaultDigestLength for the reason vault.go already gives — the three capture
+// mechanisms are allowed to change independently — and the margin is chosen on
+// the same grounds as Biome's. A collision here would mean skipping a capture
+// of knowledgeC, which prunes itself and cannot be recovered by any means, so
+// the margin is deliberately absurd rather than merely sufficient.
+const snapshotDigestLength = 32
+
+// Take writes a compact, gzipped snapshot of src into dir, unless a snapshot
+// already in dir holds the identical contents.
 //
 // src is copied with its WAL and SHM sidecars before being read. Reading the
 // database alone silently drops the most recent events, because an open
 // writer keeps recent pages in the -wal file until a checkpoint folds them
 // back — and those are exactly the events a harvest run exists to capture.
+//
+// # Why a run over an unchanged source writes nothing
+//
+// Every snapshot used to be written afresh under a new timestamped name, with
+// no check of any kind, and that was this package's one asymmetry: Biome
+// segments and Motion vault files were already skipped on a digest match while
+// knowledgeC was not. Measured 2026-08-12 with `go run ./scripts/snapchurn`,
+// three of the 38 snapshots in the live corpus (4.8 MB, 8.2%) are byte-for-byte
+// repeats of a file sitting next to them, written by runs eleven seconds and
+// three minutes after the one they duplicate.
+//
+// That cost is what capped the harvest cadence. At 1.5 MB a snapshot, an hourly
+// schedule projects to about 13 GB a year, and the cadence argument — mtime
+// evidence MOVES rather than accumulates, so a harvest that comes too late
+// recovers nothing — was being decided on disk usage.
+//
+// What is skipped is a WRITE, never a capture. The source is read, staged and
+// extracted in full every time; the only thing that does not happen is storing
+// a second copy of bytes already on disk. Nothing existing is deleted, moved or
+// rewritten.
+//
+// # What "identical" means here, and why it is not the staged bytes
+//
+// A knowledgeC snapshot is a SQLite database PLUS its -wal and -shm sidecars,
+// and those three files are not a function of the rows inside them. A
+// checkpoint folds the WAL back into the main database and truncates the
+// sidecar, rewriting essentially every page while changing no row at all; a
+// write to ZSTRUCTUREDMETADATA or to /app/webUsage — both of which a snapshot
+// deliberately discards — appends WAL frames for data that is never preserved.
+// A digest over the staged source therefore reports "changed" almost every
+// time, and a dedup built on one would skip nothing while reporting success.
+//
+// The digest is taken over the EXTRACTED database instead: the ZOBJECT rows
+// this package actually keeps, in the file it actually writes. Extraction is
+// what normalises the source, so two runs over a differently-checkpointed
+// database with the same rows produce the same digest.
+//
+// That this holds in practice is not an inference. The three duplicate pairs
+// in the live corpus were produced by separate runs, each staging the live
+// knowledgeC afresh into its own temporary directory while macOS held the
+// database open, and their compressed outputs are byte-identical — 35 distinct
+// digests over 38 files, whether measured on the compressed or the decompressed
+// form. See TestTakeIsNotDefeatedByAChangedWALOverUnchangedRows for the
+// constructed case that sits beside that observation.
+//
+// # Where the record of "already held" lives
+//
+// In the file names, exactly as biome.go argues: a snapshot is named for the
+// instant it was taken AND the digest of its contents, so the question "do we
+// already hold these bytes" is answered by reading the directory. A separate
+// manifest could disagree with the files, and the files are the thing that
+// matters.
+//
+// The consequence for snapshots written before this existed is deliberate.
+// Their names carry no digest, so nothing can be matched against them without
+// decompressing every one on every run, and they are therefore never matched.
+// The first run after this lands writes a snapshot; every run after that can
+// hold against it. Rewriting the old names to add a digest was considered and
+// rejected: they are the perishable evidence this package exists to protect,
+// and no cleanup is worth touching them for.
 func Take(src, dir string, now time.Time) (Result, error) {
 	// Fail before creating anything, so an unreadable source leaves no
 	// half-written snapshot for a later run to mistake for real history.
@@ -114,10 +191,27 @@ func Take(src, dir string, now time.Time) (Result, error) {
 		return Result{}, err
 	}
 
+	digest, err := contentDigest(compact)
+	if err != nil {
+		return Result{}, err
+	}
+
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Result{}, fmt.Errorf("create snapshot directory %s: %w", dir, err)
 	}
-	out, err := compress(compact, dir, now)
+
+	// Rows is the source's count either way. A held run that reported zero
+	// rows would be indistinguishable from a source that had gone empty, and
+	// those two call for opposite reactions.
+	held, err := heldSnapshot(dir, digest)
+	if err != nil {
+		return Result{}, err
+	}
+	if held != "" {
+		return Result{Path: held, Rows: rows, Held: true}, nil
+	}
+
+	out, err := compress(compact, dir, now, digest)
 	if err != nil {
 		return Result{}, err
 	}
@@ -244,17 +338,78 @@ func extract(staged, dst string) (int, error) {
 	return rows, out.Close()
 }
 
-// compress gzips the compact database into dir under a timestamped name,
-// never overwriting an existing snapshot. An overwritten snapshot is history
-// destroyed, which is the exact failure this package exists to prevent.
-func compress(compact, dir string, now time.Time) (string, error) {
+// contentDigest is the SHA-256 of the extracted database, truncated to
+// snapshotDigestLength hex characters.
+//
+// It is taken over the UNCOMPRESSED file on purpose. The compressed form is a
+// function of the contents plus whatever the compressor does, so digesting it
+// would make the dedup depend on gzip staying byte-stable across Go versions
+// and levels — and the failure mode of that dependency is silent: every
+// snapshot would simply start looking new again, and nothing would report an
+// error. The two forms agree on the live corpus today (35 distinct digests
+// over 38 files, measured either way, `go run ./scripts/snapchurn`); digesting
+// the contents means it does not matter if they ever stop agreeing.
+func contentDigest(compact string) (string, error) {
+	f, err := os.Open(compact)
+	if err != nil {
+		return "", fmt.Errorf("open the extracted database to digest it: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("digest the extracted database: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:snapshotDigestLength], nil
+}
+
+// heldSnapshot returns the snapshot in dir already holding digest's contents,
+// or "" if there is none.
+//
+// The earliest such snapshot is returned rather than the newest, so the answer
+// is the same on every run and a reader following the reported path is always
+// sent to the same file.
+//
+// An unreadable directory is an error rather than "nothing held". Those two
+// differ by exactly the thing that matters: if a directory that cannot be read
+// were treated as empty, a machine with a permissions problem would quietly
+// write a fresh 1.5 MB snapshot every hour and look like it was working. The
+// opposite mistake is the one that is safe — an unmatched digest costs a
+// duplicate file, a wrongly matched one costs evidence — so nothing here
+// guesses.
+func heldSnapshot(dir, digest string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("read the snapshot directory %s to see what is already held: %w", dir, err)
+	}
+	// os.ReadDir sorts by name, and a name begins with its timestamp, so the
+	// first match is the earliest.
+	suffix := "-" + digest + ".db.gz"
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() && strings.HasPrefix(name, snapshotPrefix) && strings.HasSuffix(name, suffix) {
+			return filepath.Join(dir, name), nil
+		}
+	}
+	return "", nil
+}
+
+// snapshotPrefix is how a knowledgeC snapshot's name begins.
+// internal/knowledgec keeps its own copy for reading the directory back.
+const snapshotPrefix = "knowledgeC-"
+
+// compress gzips the compact database into dir under a name carrying both the
+// instant it was taken and the digest of what is inside it, never overwriting
+// an existing snapshot. An overwritten snapshot is history destroyed, which is
+// the exact failure this package exists to prevent.
+func compress(compact, dir string, now time.Time, digest string) (string, error) {
 	in, err := os.Open(compact)
 	if err != nil {
 		return "", fmt.Errorf("open compact database: %w", err)
 	}
 	defer in.Close()
 
-	dst, out, err := createUnique(dir, now)
+	dst, out, err := createUnique(dir, now, digest)
 	if err != nil {
 		return "", err
 	}
@@ -278,11 +433,19 @@ func compress(compact, dir string, now time.Time) (string, error) {
 	return dst, nil
 }
 
-// createUnique opens a new snapshot file, adding a counter if the timestamped
-// name is taken. O_EXCL makes this safe against a concurrent harvest run
-// rather than merely unlikely to collide.
-func createUnique(dir string, now time.Time) (string, *os.File, error) {
-	base := filepath.Join(dir, "knowledgeC-"+now.Format("20060102T150405"))
+// createUnique opens a new snapshot file, adding a counter if the name is
+// taken. O_EXCL makes this safe against a concurrent harvest run rather than
+// merely unlikely to collide.
+//
+// The counter survives the move to content-addressed names, and is reachable
+// only by two runs landing in the same second with DIFFERENT contents — the
+// same second with the same contents is answered by heldSnapshot before
+// anything gets here. It is kept rather than replaced by treating the
+// collision as "already held", because a run losing the O_EXCL race may be
+// looking at a file another process is still writing, and a duplicate file is
+// a cost while a half-written one reported as preserved is a loss.
+func createUnique(dir string, now time.Time, digest string) (string, *os.File, error) {
+	base := filepath.Join(dir, snapshotPrefix+now.Format("20060102T150405")+"-"+digest)
 	for n := range 1000 {
 		path := base + ".db.gz"
 		if n > 0 {

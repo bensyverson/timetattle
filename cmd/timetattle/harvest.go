@@ -130,11 +130,17 @@ error names every source that failed; the macOS stores need Full Disk Access.`,
 			lost = append(lost, fmt.Errorf("knowledgeC capture: %w", kcErr))
 			fmt.Fprintf(out, "knowledgeC: capture lost (%v)\n", kcErr)
 		} else {
-			// One file per run, always: a knowledgeC snapshot is named for the
-			// instant it was taken rather than content-addressed, so unlike Biome
-			// and the vault it never finds anything already held.
-			kc.filesNew, kc.bytes = 1, res.Bytes
-			fmt.Fprintf(out, "%s\n%d rows, %.1f MB\n", res.Path, res.Rows, float64(res.Bytes)/(1<<20))
+			// knowledgeC snapshots are content-addressed like Biome segments and
+			// vault files, so a run over an unchanged source writes nothing and
+			// reports the snapshot already holding those bytes. Ingestion below
+			// reads that path either way, which is why a held run still names a
+			// file rather than nothing.
+			kc = kc.capturedSnapshot(res)
+			if res.Held {
+				fmt.Fprintf(out, "%s\n%d rows, already held\n", res.Path, res.Rows)
+			} else {
+				fmt.Fprintf(out, "%s\n%d rows, %.1f MB\n", res.Path, res.Rows, float64(res.Bytes)/(1<<20))
+			}
 		}
 		captures = append(captures, kc)
 
