@@ -1,10 +1,13 @@
 # The harvest gap figures did not reproduce from their own method
 
 2026-08-12. Measured against the live store (`~/.timetattle/timetattle.db`,
-685 MB, 1,828 `harvest_run` rows at the time of writing) with
-`scripts/harvestgap`, which was written for this document because the figures it
-corrects were produced by SQL typed at a prompt and recorded only as prose.
-Every figure below names the command that reproduces it.
+685 MB) with `scripts/harvestgap`, which was written for this document because
+the figures it corrects were produced by SQL typed at a prompt and recorded only
+as prose. Every figure below names the command that reproduces it.
+
+The store is still being written to, so every figure here names an `-until`
+bound and the row count that bound selects, rather than "the store today". A
+number that stops reproducing tomorrow is the failure this document is about.
 
 Nothing here changes the conclusion the figures were used for: the harvester's
 worst outage was over two days long against a nominal twelve-hour timer, and
