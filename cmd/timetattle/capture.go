@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/bensyverson/timetattle/internal/snapshot"
 	"github.com/bensyverson/timetattle/internal/store"
 )
 
@@ -65,6 +66,23 @@ type captureOutcome struct {
 // captureEnded once the capture returns.
 func captureBegun(kind, input string) captureOutcome {
 	return captureOutcome{kind: kind, input: input, startedAt: time.Now()}
+}
+
+// capturedSnapshot fills in what a knowledgeC capture did with the files.
+//
+// It exists as its own method rather than two lines in harvest because a held
+// capture and a written one differ only in which counter moves, and putting
+// that decision where it can be tested is cheaper than discovering it wrong in
+// a status report months later. Migration 0007 defines the two columns: a
+// capture that found the contents already preserved wrote no file and no
+// bytes, and files_held = 1 is what says it looked.
+func (c captureOutcome) capturedSnapshot(res snapshot.Result) captureOutcome {
+	if res.Held {
+		c.filesHeld = 1
+		return c
+	}
+	c.filesNew, c.bytes = 1, res.Bytes
+	return c
 }
 
 // captureEnded closes the span and settles what happened.

@@ -56,7 +56,7 @@ day to day. See [Application focus from Biome](/docs/app-focus/).
 
 ```console
 $ timetattle harvest
-/Users/you/.timetattle/snapshots/knowledgeC-20260730T115142.db.gz
+/Users/you/.timetattle/snapshots/knowledgeC-20260730T115142-1e4a83afd60bd771f81f3cc9eccf141c.db.gz
 23044 rows, 1.5 MB
 ScreenTime.AppUsage: 6 segments captured, 0 unchanged, 0.7 MB
 biome-appusage: 24829 events seen, 24829 new
@@ -73,6 +73,22 @@ Timetattle (`internal/manifest/builtin`); a root that does not exist —
 Motion not installed, no `.blend1` file anywhere Spotlight can see — reports
 `0 events seen, 0 new` rather than an error, and a manifest you add yourself
 under `~/.timetattle/manifests/` appears here the same way.
+
+A snapshot's name carries the instant it was taken and a digest of what is
+inside it. When a run finds a snapshot already holding those exact contents it
+writes nothing and names that file instead, with `already held` in place of a
+size:
+
+```console
+/Users/you/.timetattle/snapshots/knowledgeC-20260730T115142-1e4a83afd60bd771f81f3cc9eccf141c.db.gz
+23044 rows, already held
+```
+
+That is a capture that ran and succeeded, not one that failed: the source was
+read, staged and extracted in full, and only the redundant write was skipped.
+`timetattle status` records it as `0 new, 1 held`, the same way it already
+records a Biome stream whose every segment was unchanged. See
+[Why snapshots stopped accumulating](#why-snapshots-stopped-accumulating).
 
 The snapshot and stream lines are what was preserved on disk; the lines named
 for a source are what was ingested. `seen` is what the source reported and `new` is
@@ -285,10 +301,23 @@ session long enough to be worth measuring.
 
 The ceiling is storage rather than anything about scheduling. Hourly would be
 the better schedule and is the simpler plist — omitted keys are wildcards, so
-hourly is a single entry where four-hourly is six — but a `knowledgeC` snapshot
-is written afresh on every run and is neither deduplicated nor pruned, which
-puts hourly at roughly 13 GB a year against 3.3 GB at every four hours. If
-snapshot deduplication or a retention policy lands, revisit it.
+hourly is a single entry where four-hourly is six.
+
+> **Partly lifted, 2026-08-12, and the arithmetic is worth keeping.** The
+> sentence that stood here said a `knowledgeC` snapshot "is written afresh on
+> every run and is neither deduplicated nor pruned, which puts hourly at
+> roughly 13 GB a year against 3.3 GB at every four hours". The first half is
+> no longer true — a run whose contents are already on disk now writes nothing
+> — and the second half survives it almost intact, which is the finding.
+> Measured with `go run ./scripts/snapchurn -cadence 1h`: over a trailing
+> 14 days, 89 of 336 hours saw no `ZOBJECT` row created, so at most **26.5%**
+> of hourly runs would be skipped, and that is an upper bound because a row
+> can also age out of retention inside an otherwise quiet hour. Hourly with
+> deduplication therefore projects to about **9.85 GB a year**, not 13 GB and
+> not something small. At four-hourly the same measurement skips 1 window in
+> 84, so today's schedule is essentially unchanged. Deduplication removes the
+> waste; it does not by itself make hourly cheap. See
+> [Why snapshots stopped accumulating](#why-snapshots-stopped-accumulating).
 
 None of this makes the perishable floors safe, because they are **volume**-based
 rather than time-based: `/app/usage` is capped near 10,000 rows and Biome fills
@@ -548,7 +577,7 @@ halves: what is on disk, and what the last capture recorded doing.
 | `outcome` | What it means |
 | --- | --- |
 | `ok, 2 new` | It ran and preserved two files. |
-| `ok, nothing new, 13 already held` | It ran, and every file was already held byte for byte. Biome segments and vault files are content-addressed, so **this is the healthy steady state**, not a stall. |
+| `ok, nothing new, 13 already held` | It ran, and every file was already held byte for byte. `knowledgeC` snapshots, Biome segments and vault files are all content-addressed, so **this is the healthy steady state**, not a stall. |
 | `nothing to capture on this machine` | It looked and there was nothing there: no Motion installed, no `filedays` roots configured, no such Biome stream. An observation, not a shrug. |
 | `partial, 3 preserved and some lost` | It preserved some of what it tried and lost the rest, with the reason named below the table. |
 | `failed` | It preserved nothing, with the reason named below the table. |
@@ -581,7 +610,12 @@ new harvest. Measured across the 55 rows this store holds, the largest gap
 inside a harvest is 0.0014s and the smallest gap between two harvests is 17.1s.
 Without that boundary `knowledgec-appusage` reports 23,043 seen instead of
 11,526 — two harvests of the same database added together — because its input
-is the snapshot it read, and that filename is different every time.
+is the snapshot it read.
+
+Note that the input is **not** a run identifier and never was. Since snapshots
+became content-addressed, two harvests over an unchanged `knowledgeC` read the
+same file and record the same input, so grouping by it would merge them. The
+boundary above is inferred from the timing of the rows and is unaffected.
 
 `last ok` is what turns "it is broken" into "it has been broken since". A
 source that failed this morning and a source that has never once succeeded
@@ -953,19 +987,82 @@ That reports every stream's retention window and how stale it is, flagging
 anything over a day old. It also inventories the sensitive fields a raw
 database holds, and confirms a snapshot has none of them.
 
-**Snapshots accumulate, and nothing deduplicates them.** A `knowledgeC`
-snapshot averages 1.54 MB (measured: 57 MB across 37 of them) and a fresh one
-is written under a new timestamped name on every run, unlike a Biome segment,
-which is skipped when its digest is already on disk. At the six runs a day the
-agent schedules that is about 3.3 GB a year for `knowledgeC`, against 1.1 GB
-at the twice-daily schedule it replaced, plus up to 150 MB a year for Biome.
+## Why snapshots stopped accumulating
 
-That figure, not anything about scheduling, is what rules out harvesting
-hourly — which would be about 13 GB a year. A retention policy is deliberately
-deferred until ingestion is trusted: until the collector is proven, the raw
-snapshots are the only copy. Deduplicating or pruning them would remove the
-only argument against a denser schedule, and the `mtime` sources would be
-better served by one.
+A `knowledgeC` snapshot averages 1.53 MB (measured 2026-08-12: 58.0 MB across
+38 of them, `go run ./scripts/snapchurn`). Every one of them used to be written
+afresh under a new timestamped name on every run, with no check of any kind —
+the one capture here that behaved that way, since a Biome segment and a Motion
+vault file are both skipped when a file already on disk holds their exact
+bytes. Three of those 38 snapshots, 4.8 MB, are byte-for-byte repeats of a file
+sitting next to them, written by runs eleven seconds and three minutes after
+the one they duplicate.
+
+A snapshot is now named for its contents as well as its instant, and a run that
+would write bytes already on disk writes nothing and reports the file that
+holds them. Nothing is ever deleted, moved or overwritten to achieve this, and
+the source is still read, staged and extracted in full every time — the only
+thing skipped is the redundant write.
+
+### What "identical" means, and why it is not the file
+
+The obvious implementation does not work, and fails silently. A `knowledgeC`
+snapshot is a SQLite database **plus** its `-wal` and `-shm` sidecars, and
+those three files are not a function of the rows inside them. A checkpoint
+folds the write-ahead log back into the main database and truncates the
+sidecar, rewriting a large fraction of a 35 MB file while changing no row at
+all; a write to `ZSTRUCTUREDMETADATA` or to `/app/webUsage` — both of which a
+snapshot deliberately discards — appends log frames for data that is never
+preserved. A digest over what was copied off disk therefore reports "changed"
+nearly every time, and a deduplication built on one would skip nothing while
+reporting success.
+
+The digest is taken over the **extracted** database instead: the `ZOBJECT` rows
+that actually get preserved, in the file that actually gets written. Extraction
+is what normalises the source. Measured against this machine's real database,
+a checkpoint moved the staged bytes from 36,999,800 to 36,864,000 and the
+21,965 preserved rows were unchanged, and the snapshot was correctly held.
+
+### What it is worth, and what it is not
+
+Removing the check and running the same capture twice over an unchanged real
+`knowledgeC` writes **1,497,605 bytes a second time** — 1.43 MB, on every run,
+for ever. That is the whole of what the check recovers per redundant run, and
+the number to weigh against a schedule.
+
+At the six runs a day the agent schedules, `knowledgeC` was about 3.3 GB a
+year, against 1.1 GB at the twice-daily schedule it replaced, plus up to
+150 MB a year for Biome.
+
+Deduplication does **not** scale that down by a fixed factor, and assuming it
+does is the easiest way to be wrong here by a wide margin. What it recovers is
+exactly the runs during which nothing was written to `knowledgeC` at all, so
+its yield depends entirely on how far the cadence outruns the source's own
+write rate. Measured over a trailing 14 days with
+`go run ./scripts/snapchurn`:
+
+| cadence | windows | no row created | projected |
+| --- | --- | --- | --- |
+| twice daily | 28 | 0 (0.0%) | 1.09 GB/yr, unchanged |
+| four-hourly | 84 | 1 (1.2%) | 3.23 GB/yr, against 3.27 |
+| hourly | 336 | 89 (26.5%) | 9.85 GB/yr, against 13.1 |
+
+Each skip figure is an upper bound: a row can also age out of retention inside
+an otherwise quiet window, and that changes a snapshot too. So at the schedule
+installed today this recovers almost nothing. What it does is stop the cost
+growing in proportion to the cadence, which is the only reason a denser
+schedule is arguable at all.
+
+The remaining redundancy is at a finer grain than a file. Across the 38
+snapshots the corpus stores 890,104 `ZOBJECT` row-instances and holds 38,966
+distinct rows, a 22.8× repeat: two snapshots an hour apart differ by a few
+dozen rows out of twenty-odd thousand, and a whole-snapshot digest recovers
+none of that. Reaching it would mean a snapshot that is no longer a complete
+picture on its own, which every reader here currently relies on, and that is a
+separate decision rather than a bigger version of this one.
+
+A retention policy remains deliberately deferred until ingestion is trusted:
+until the collector is proven, the raw snapshots are the only copy.
 
 ## Recovering a knowledgeC snapshot
 
@@ -980,6 +1077,15 @@ $ sqlite3 /tmp/kc.db \
 
 Timestamps are Core Data seconds from 2001-01-01, hence the `978307200`
 offset.
+
+Two name shapes coexist in the directory and both are ordinary snapshots.
+`knowledgeC-<instant>.db.gz` is what was written before snapshots carried a
+content digest; `knowledgeC-<instant>-<digest>.db.gz` is what is written now.
+Only the second shape can be matched against, so a run will never hold against
+one of the older files — they are the perishable evidence this whole phase
+exists to protect, and renaming them to add a digest was rejected on those
+grounds. Sorting by name is still sorting by time, because the instant comes
+first and is fixed width.
 
 ## What the Motion vault capture contains
 

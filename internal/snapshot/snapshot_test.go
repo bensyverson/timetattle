@@ -242,6 +242,22 @@ func TestTakeIsSubstantiallySmallerThanSource(t *testing.T) {
 // TestTakeDoesNotClobberEarlierSnapshots guards the insurance property. A
 // snapshot overwritten is history destroyed — the exact failure this package
 // exists to prevent.
+//
+// # Why this test's SETUP changed, and its assertion did not
+//
+// It used to take two snapshots of an UNCHANGED source at the same instant and
+// require two files. That is no longer the behaviour: Take now skips a write
+// whose contents are already on disk, so the second call reports the first
+// call's file and writes nothing. The old expectation was a statement about
+// name collisions, and it happened to be measurable only through a case that
+// content-addressing removes.
+//
+// The property being guarded is unchanged and is the one that matters — two
+// snapshots landing in the same second must never occupy one file — so the
+// source is changed between the calls, which is the only way two snapshots can
+// still collide on a name. That the OTHER case now writes one file instead of
+// two is asserted directly, and separately, in
+// TestTakeHoldsASnapshotWhoseContentsAreAlreadyPreserved.
 func TestTakeDoesNotClobberEarlierSnapshots(t *testing.T) {
 	dir := t.TempDir()
 	src, release := liveDB(t, dir)
@@ -253,6 +269,12 @@ func TestTakeDoesNotClobberEarlierSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Take: %v", err)
 	}
+
+	exec, done := writer(t, src)
+	exec(`INSERT INTO ZOBJECT (ZSTREAMNAME, ZVALUESTRING, ZSTRUCTUREDMETADATA, ZSTARTDATE, ZENDDATE)
+		VALUES ('/display/isBacklit', NULL, 1, 7777, 7777)`)
+	done()
+
 	second, err := Take(src, snapDir, at)
 	if err != nil {
 		t.Fatalf("second Take: %v", err)
@@ -265,6 +287,11 @@ func TestTakeDoesNotClobberEarlierSnapshots(t *testing.T) {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("snapshot %s does not exist: %v", p, err)
 		}
+	}
+	// The first file must still hold what it held, not the second's contents
+	// under the first's name.
+	if got := scalar(t, openSnapshot(t, first.Path), `SELECT COUNT(*) FROM ZOBJECT`); got != first.Rows {
+		t.Errorf("the earlier snapshot now holds %d rows, want the %d it captured", got, first.Rows)
 	}
 }
 
