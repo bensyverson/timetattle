@@ -18,7 +18,7 @@ install:
 	./scripts/sign.sh
 
 # One-time (or after changing the schedule): sign AND (re)install the launchd
-# agent that runs `timetattle harvest` twice a day. Re-runnable; replaces any
+# agent that runs `timetattle harvest` every four hours. Re-runnable; replaces any
 # existing agent. Routine reinstalls only need `make install`.
 agent:
 	go install $(PKG)
@@ -91,7 +91,7 @@ help:
 	@echo "Targets:"
 	@echo "  build      - compile ./$(BINARY) from $(PKG)"
 	@echo "  install    - go install AND re-sign (keeps the Full Disk Access grant)"
-	@echo "  agent      - install + (re)schedule the twice-daily harvest launchd agent"
+	@echo "  agent      - install + (re)schedule the four-hourly harvest launchd agent"
 	@echo "  run        - go run (pass args via ARGS=\"...\")"
 	@echo "  test       - run all Go tests"
 	@echo "  fmt        - go fmt ./..."
