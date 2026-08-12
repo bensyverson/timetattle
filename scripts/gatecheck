@@ -22,6 +22,8 @@
 #      error message says to save it, parse when the gate reads it back?
 #      install.sh and release.sh each worked and had never been run against
 #      the other's output; this is the same seam one tool over.
+#   5. Does this script's OWN cleanup refuse a path it did not create? See
+#      is_safe_temp_dir below for the near miss that put this check here.
 #
 # The planted name is INVENTED and comes from a fixture machine built in a
 # temporary directory: proving the gate catches a leak must not require
@@ -29,7 +31,7 @@
 #
 #   scripts/gatecheck
 #
-# Exit: 0 all three hold, 1 one of them does not, 2 skipped (precondition).
+# Exit: 0 all five hold, 1 one of them does not, 2 skipped (precondition).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -50,18 +52,97 @@ skip() {
 }
 FAILED=0
 
+# Every temporary directory this script creates, so the trap can remove them
+# even when a check aborts partway and never reaches its inline cleanup.
+TEMP_DIRS=()
+
+# Report whether a path is one mktemp actually handed us, and therefore safe to
+# remove.
+#
+# THE NEAR MISS THIS EXISTS TO PREVENT. GATE_BIN used to be built by appending
+# to a command substitution -- GATE_BIN="$(mktemp -d)/confidential" -- and the
+# EXIT trap removed `dirname "$GATE_BIN"` behind a `[ -n "$GATE_BIN" ]` guard.
+# When `mktemp -d` failed, the substitution was empty, so GATE_BIN became
+# "/confidential". That is a NON-EMPTY string, so the guard passed; dirname
+# reduced it to "/"; and because `set -e` had already aborted the script at the
+# failed assignment, the trap ran `rm -rf /` on the way out. Only rm's own
+# refusal to remove "/" kept that a near miss. Observed 2026-08-12, when a
+# sandbox denied mktemp write access to TMPDIR.
+#
+# The lesson generalises past this script: the old guard tested a PROXY (the
+# string is non-empty) for the property it actually needed (this is a directory
+# we created). A proxy that is cheap to check is worth nothing when the failure
+# mode produces a value that satisfies it.
+# Structural sanity only: could this plausibly be what `mktemp -d` returned?
+# Used to vet a directory at the moment it is created, before it is recorded.
+is_plausible_temp_dir() {
+	local d="${1:-}"
+	[ -n "$d" ] || return 1
+	[ -d "$d" ] || return 1
+	# A single-segment path -- "/", "/confidential", "/usr" -- is never
+	# something `mktemp -d` produced, and is precisely what a failed command
+	# substitution leaves behind.
+	[ "$(dirname "$d")" != "/" ] || return 1
+	return 0
+}
+
+# The full test, and the only one anything destructive may consult: the path is
+# structurally sane AND this script recorded creating it.
+#
+# Membership is the load-bearing half. Structure alone still accepts plenty of
+# directories that must never be removed -- the repository root satisfies every
+# structural rule above -- so "looks deep enough" would be one more cheap proxy
+# standing in for the property actually needed, which is precisely the mistake
+# documented above. Check 5 asserts the repository root is refused.
+is_safe_temp_dir() {
+	local d="${1:-}" known
+	is_plausible_temp_dir "$d" || return 1
+	for known in ${TEMP_DIRS+"${TEMP_DIRS[@]}"}; do
+		[ "$known" = "$d" ] && return 0
+	done
+	return 1
+}
+
+remove_temp_dir() {
+	is_safe_temp_dir "${1:-}" && rm -rf "$1"
+	# Never let a refusal become this function's exit status: the trap's last
+	# statement sets the script's exit code, and a guard that declined to
+	# delete is a success, not a failure.
+	return 0
+}
+
+# Set the variable NAMED by $1 to a fresh temporary directory, and record it for
+# cleanup. This is a name-out parameter rather than a value on stdout because a
+# command substitution would run it in a SUBSHELL, where both the TEMP_DIRS
+# bookkeeping and skip's `exit` would be lost -- which is the same class of
+# quiet failure as the bug above.
+new_temp_dir() {
+	local __var="$1" __dir
+	__dir="$(mktemp -d)" || skip "mktemp -d failed; cannot build the fixture machines these checks need"
+	is_plausible_temp_dir "$__dir" || skip "mktemp -d produced no usable directory (got '$__dir')"
+	TEMP_DIRS+=("$__dir")
+	printf -v "$__var" '%s' "$__dir"
+}
+
 cleanup() {
 	git rm -q --cached --ignore-unmatch "$PLANTED_FILE" >/dev/null 2>&1 || true
 	rm -f "$PLANTED_FILE"
-	[ -n "${GATE_BIN:-}" ] && rm -rf "$(dirname "$GATE_BIN")"
+	local d
+	for d in ${TEMP_DIRS+"${TEMP_DIRS[@]}"}; do
+		remove_temp_dir "$d"
+	done
+	return 0
 }
 trap cleanup EXIT
 
 command -v go >/dev/null 2>&1 || skip "go is not on PATH"
 
 # Built rather than `go run`, because `go run` exits 1 for any non-zero program
-# exit and this check is entirely about telling exit 1 from exit 2.
-GATE_BIN="$(mktemp -d)/confidential"
+# exit and this check is entirely about telling exit 1 from exit 2. The
+# directory is kept in its own variable so that cleanup never has to derive it
+# back out of a path it did not create.
+new_temp_dir GATE_TMP
+GATE_BIN="$GATE_TMP/confidential"
 go build -buildvcs=false -o "$GATE_BIN" ./scripts/confidential
 
 # --- 1. is the hook installed on this clone? ----------------------------------
@@ -81,7 +162,7 @@ fi
 
 # --- 2. a run that cannot build its list must not report clean ----------------
 echo "==> 2. refusal when the name list cannot be built"
-EMPTY="$(mktemp -d)"
+new_temp_dir EMPTY
 set +e
 NOWHERE_OUT="$(TIMETATTLE_GATE_CONFIG="$EMPTY/config.json" \
 	TIMETATTLE_GATE_REGISTRY="$EMPTY/registered-directories.json" \
@@ -100,11 +181,11 @@ if printf '%s' "$NOWHERE_OUT" | grep -qE "findings|verdict"; then
 else
 	pass "it reported no count of findings, because it scanned nothing"
 fi
-rm -rf "$EMPTY"
+remove_temp_dir "$EMPTY"
 
 # --- 3. does a planted name stop a commit, through the hook? ------------------
 echo "==> 3. a planted name, through the hook"
-FIXTURE="$(mktemp -d)"
+new_temp_dir FIXTURE
 mkdir -p "$FIXTURE/$PLANTED_NAME"
 cat >"$FIXTURE/config.json" <<EOF
 {"reference_projects": {"acorn": "$FIXTURE/$PLANTED_NAME"}}
@@ -143,7 +224,7 @@ if printf '%s' "$HOOK_OUT" | grep -q "go vet"; then
 else
 	pass "it stopped at the gate rather than spending minutes on the test suite first"
 fi
-rm -rf "$FIXTURE"
+remove_temp_dir "$FIXTURE"
 
 # --- 4. the saved classification must be readable by the gate that reads it ---
 #
@@ -152,7 +233,7 @@ rm -rf "$FIXTURE"
 # so whatever -classify writes to STDOUT, redirected verbatim, must come back
 # readable. Only stdout is redirected here, exactly as that command line does.
 echo "==> 4. the classification round-trip, saved the way the hook says"
-ROUNDTRIP="$(mktemp -d)"
+new_temp_dir ROUNDTRIP
 cat >"$ROUNDTRIP/config.json" <<'EOF'
 {"reference_projects": {}}
 EOF
@@ -178,7 +259,35 @@ else
 	fail "the read-back run never reported reading the classification at all:
 $(printf '%s' "$READBACK_OUT" | head -10)"
 fi
-rm -rf "$ROUNDTRIP"
+remove_temp_dir "$ROUNDTRIP"
+
+# --- 5. this script's own cleanup must refuse a path it did not create --------
+#
+# Checks 1-4 are about the gate. This one is about gatecheck itself, and it is
+# here because the failure it guards runs on the way OUT of every invocation,
+# including the ones that skipped. A destructive trap that only misfires when a
+# precondition fails is exactly the code least likely to be exercised in
+# testing and most likely to run on a machine having a bad day.
+#
+# Nothing is removed by this check: is_safe_temp_dir is a predicate, so the
+# poisoned values below are only ever asked about, never acted on.
+echo "==> 5. the cleanup guard refuses a path it did not create"
+GUARD_OK=1
+# "/confidential" is not hypothetical -- it is the literal value GATE_BIN held
+# during the near miss, and "/" is what dirname made of it.
+for POISONED in "" "/" "/confidential" "/usr" "$REPO_ROOT"; do
+	if is_safe_temp_dir "$POISONED"; then
+		fail "the cleanup guard accepted '$POISONED'; it must only ever remove a directory mktemp created"
+		GUARD_OK=0
+	fi
+done
+if ! is_safe_temp_dir "$GATE_TMP"; then
+	fail "the cleanup guard rejected $GATE_TMP, which mktemp -d did create; cleanup would leak every run"
+	GUARD_OK=0
+fi
+if [ "$GUARD_OK" -eq 1 ]; then
+	pass "it accepts mktemp's directory and refuses '', '/', '/confidential', '/usr' and the repository root"
+fi
 
 echo ""
 if [ "$FAILED" -ne 0 ]; then
