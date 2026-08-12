@@ -101,8 +101,15 @@ type statusOptions struct {
 	store     string
 	snapshots string
 	index     string
-	stale     time.Duration
-	now       time.Time
+	// plist is the installed launchd plist the staleness bound is derived
+	// from, and empty when none is to be consulted — which is a state of its
+	// own and never a default bound. See status_schedule.go.
+	plist string
+	// stale is an explicit -stale, and zero when none was given. Zero rather
+	// than a default of 24h: a bound nobody chose, reconciled against nothing,
+	// is the whole defect this report was carrying.
+	stale time.Duration
+	now   time.Time
 	// inputs asks for the per-input breakdown under the table.
 	inputs bool
 	// cols is how wide the terminal the report is going into is, and 0 when it
@@ -119,17 +126,29 @@ func statusCmd() *cobra.Command {
 		Short: "Report whether the harvest is still working",
 		Long: `Reports what each source and each capture last did, one line apiece, and
 writes nothing. Exits non-zero on a failed or partial run, a stranded run, a
-failed or partial capture, or a newest run or capture older than -stale; a
-harvest in progress, a source that has never run, and a capture nothing ever
-recorded are reported without failing.`,
+failed or partial capture, or a newest run or capture older than the staleness
+bound; a harvest in progress, a source that has never run, and a capture nothing
+ever recorded are reported without failing.
+
+The staleness bound is derived from the installed launchd schedule, at one and a
+half times its interval, and -stale overrides it. With no schedule installed and
+no -stale, freshness is reported as unchecked rather than judged: a bound nobody
+derived cannot call a store either fresh or stale.`,
 	}
 	fs := cmd.Flags()
 	storePath := fs.String("store", "", "event store to read (default: ~/.timetattle/timetattle.db)")
 	dir := fs.String("dir", "", "snapshot directory to check (default: ~/.timetattle/snapshots)")
 	indexPath := fs.String("index", "",
 		"registry index of registered directories (default: ~/.timetattle/registered-directories.json)")
-	stale := fs.Duration("stale", 24*time.Hour,
-		"how old the newest harvest may be before the schedule is called stale")
+	plist := fs.String("schedule", "",
+		"installed launchd plist to derive the staleness bound from "+
+			"(default: ~/Library/LaunchAgents/"+harvestAgentLabel+".plist)")
+	// No default. The bound is derived from the installed schedule, and a 24h
+	// default reconciled against nothing is what made a whole skipped harvest
+	// invisible on a 12h interval. See status_schedule.go.
+	stale := fs.Duration("stale", 0,
+		"how old the newest harvest may be before the schedule is called stale "+
+			"(default: one and a half times the installed schedule's interval)")
 	inputs := fs.Bool("inputs", false,
 		"list every input each source read on its most recent harvest, one line each")
 	cmd.RunE = func(*cobra.Command, []string) error {
@@ -138,6 +157,12 @@ recorded are reported without failing.`,
 			if *storePath, err = store.DefaultPath(); err != nil {
 				return err
 			}
+		}
+		if *plist == "" {
+			// A home directory that cannot be resolved is reported as an
+			// unreadable schedule below rather than aborting the report: the
+			// source table is most of what a reader came for.
+			*plist, _ = defaultSchedulePath()
 		}
 		if *dir == "" {
 			if *dir, err = snapshot.DefaultDir(); err != nil {
@@ -153,6 +178,7 @@ recorded are reported without failing.`,
 			store:     *storePath,
 			snapshots: *dir,
 			index:     *indexPath,
+			plist:     *plist,
 			stale:     *stale,
 			now:       time.Now(),
 			inputs:    *inputs,
@@ -297,7 +323,8 @@ const statusStranded = "stranded"
 // 1/144th of the 12-hour interval scripts/install-agent.sh schedules, so a death
 // is still reported long before the next harvest would paper over it. On the one
 // real stranded row in the store, harvest_run 28, the rule reports at
-// 2026-08-01T13:19:51Z — 23h47m before -stale would have said anything.
+// 2026-08-01T13:19:51Z — 17h47m before the staleness bound would have said
+// anything, and 23h47m before it while -stale still defaulted to 24h.
 //
 // # Why erring generous is cheap, and erring tight is not
 //
@@ -305,7 +332,8 @@ const statusStranded = "stranded"
 // that exits non-zero, and it discredits every other line in the report. Calling
 // a dead harvest live only delays the news, and the delay is bounded twice over:
 // the next scheduled harvest supersedes the stranded row within 12 hours, and
-// the -stale check reports it within 24 whatever this rule decides. There is a
+// the staleness check reports it within 18 whatever this rule decides — one and
+// a half times the installed interval, derived in status_schedule.go. There is a
 // backstop under being too slow and none under being too quick.
 //
 // No ceiling, deliberately. A tolerance that could only grow to some cap would
@@ -441,6 +469,15 @@ func reportStatus(out io.Writer, opt statusOptions) error {
 		fmt.Fprintf(out, "schema:    %s, applied %s\n", schema.Name, schema.AppliedAt.Format(store.TimeLayout))
 	}
 
+	// The bound freshness is judged against, and the schedule it came from,
+	// named before any verdict rests on it. An unreadable schedule sets the
+	// exit status for the same reason an unreadable capture_run table does: the
+	// report could not take a reading it is supposed to take, and a verdict
+	// printed over that would be an observation nobody made.
+	bound := resolveStale(opt)
+	writeSchedule(out, bound)
+	scheduleErr := bound.failure()
+
 	history, err := st.Runs(ctx, store.Filter{})
 	if err != nil {
 		return err
@@ -497,8 +534,8 @@ func reportStatus(out io.Writer, opt statusOptions) error {
 	fmt.Fprintln(out)
 	states := reportCaptures(out, opt, captures)
 
-	prior := errors.Join(expectErr, captureErr)
-	return errors.Join(prior, verdict(out, rows, states, newest, opt, prior))
+	prior := errors.Join(expectErr, captureErr, scheduleErr)
+	return errors.Join(prior, verdict(out, rows, states, newest, opt, bound, prior))
 }
 
 // verdict says what is wrong in words, and returns the error that makes the
@@ -510,7 +547,7 @@ func reportStatus(out io.Writer, opt statusOptions) error {
 // that has already been reported higher up, which is the one line in this
 // report a reader is entitled to trust absolutely.
 func verdict(out io.Writer, rows []sourceStatus, states []captureState, newest time.Time,
-	opt statusOptions, prior error) error {
+	opt statusOptions, bound staleBound, prior error) error {
 	var (
 		failed   []string
 		partial  []string
@@ -630,16 +667,25 @@ func verdict(out io.Writer, rows []sourceStatus, states []captureState, newest t
 	// knowledgec-appusage ingestion that failed are different losses: the second
 	// can be repeated from a snapshot on disk, and the first is a window that
 	// has closed.
-	errs = append(errs, statusCaptureVerdict(out, states, opt)...)
+	errs = append(errs, statusCaptureVerdict(out, states, opt, bound)...)
 
 	switch {
 	case newest.IsZero():
 		fmt.Fprintln(out, "no harvest has ever recorded a run in this store")
 		errs = append(errs, errors.New("no harvest has ever recorded a run in this store"))
-	case opt.now.Sub(newest) > opt.stale:
+	case !bound.ok:
+		// The third outcome, and the one this report may not skip in silence.
+		// "Fresh", "stale" and "nothing here can say" are three different
+		// findings, and printing either of the first two over a bound that was
+		// never derived is the defect this check exists to catch, one level
+		// down. See status_schedule.go.
+		fmt.Fprintf(out, "the freshness of the newest run and of every capture was not checked, "+
+			"because %s: the newest run is %s old and nothing here says whether that is late\n",
+			bound.unchecked(), short(opt.now.Sub(newest)))
+	case opt.now.Sub(newest) > bound.d:
 		age := opt.now.Sub(newest)
 		fmt.Fprintf(out, "the schedule is stale: the newest run of any source is %s old, past the %s allowed\n",
-			short(age), short(opt.stale))
+			short(age), short(bound.d))
 		errs = append(errs, fmt.Errorf("stale: the newest harvest run is %s old", short(age)))
 	}
 	// The one line a reader is entitled to trust absolutely, which is why a
@@ -648,11 +694,18 @@ func verdict(out io.Writer, rows []sourceStatus, states []captureState, newest t
 	// be the false negative traded for the false positive above, and this file
 	// is not permitted to make that trade in either direction.
 	if len(errs) == 0 && prior == nil {
-		if len(inFlight) > 0 {
+		switch {
+		case !bound.ok:
+			// Never the unqualified all-clear. Everything the report DID check
+			// came back clean, and the check a reader most wants — is the
+			// evidence still arriving — was not made at all.
+			fmt.Fprintln(out, "nothing else is wrong: every source that ran succeeded and every capture "+
+				"held, but that is not an all-clear on the schedule, which went unchecked")
+		case len(inFlight) > 0:
 			fmt.Fprintf(out, "nothing else is wrong: every source that has finished succeeded within "+
-				"the last %s, and every capture held\n", short(opt.stale))
-		} else {
-			fmt.Fprintf(out, "every source ran and succeeded within the last %s, and every capture held\n", short(opt.stale))
+				"the last %s, and every capture held\n", short(bound.d))
+		default:
+			fmt.Fprintf(out, "every source ran and succeeded within the last %s, and every capture held\n", short(bound.d))
 		}
 	}
 	return errors.Join(errs...)
@@ -939,7 +992,7 @@ func statusCaptureOutcome(s captureState) string {
 // same tolerance a source that has never run gets: captures come and go with
 // what is installed, and a check that cries wolf is a check nobody reads, which
 // is exactly how a day was lost.
-func statusCaptureVerdict(out io.Writer, states []captureState, opt statusOptions) []error {
+func statusCaptureVerdict(out io.Writer, states []captureState, opt statusOptions, bound staleBound) []error {
 	var errs []error
 	for _, s := range states {
 		if !s.recorded {
@@ -970,13 +1023,18 @@ func statusCaptureVerdict(out io.Writer, states []captureState, opt statusOption
 	// reading snapshots already on disk, writing fresh harvest_run rows, while
 	// the capture that feeds it has silently stopped. The source table looks
 	// perfect throughout.
+	//
+	// A bound that was never derived stops this loop rather than defaulting it.
+	// The one sentence in the verdict below says so once, for the captures and
+	// the sources together, so that a reader is never left to infer from
+	// silence that a capture was judged fresh.
 	for _, s := range states {
-		if !s.recorded {
+		if !s.recorded || !bound.ok {
 			continue
 		}
-		if age := opt.now.Sub(s.last.StartedAt); age > opt.stale {
+		if age := opt.now.Sub(s.last.StartedAt); age > bound.d {
 			fmt.Fprintf(out, "the %s capture is stale: it last ran %s ago, past the %s allowed\n",
-				s.label, short(age), short(opt.stale))
+				s.label, short(age), short(bound.d))
 			errs = append(errs, fmt.Errorf("stale: the %s capture last ran %s ago", s.label, short(age)))
 		}
 	}
