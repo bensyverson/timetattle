@@ -335,6 +335,26 @@ func compareNames(a, b string) int {
 // disagreement is a bug and never a rounding artefact — every quantity here is
 // an integer number of nanoseconds and no division has happened.
 //
+// ONE CHECK HERE IS NOT A CONSERVATION CHECK, and it sits in the bucket loop
+// beside the ones that are: a client owning exactly ONE project can never be
+// credited more than that project INSIDE ANY BUCKET, as an inequality. It is
+// there because a desync between the
+// two levels is invisible to everything else in this function. The buckets are
+// reconciled against the report per NAME, so booking a segment's client share
+// into a neighbouring bucket while its project share stays put conserves that
+// client's total exactly and reads clean. That is the second failure above — a
+// cursor one bucket out of step — arriving at a level where comparing sums
+// cannot see it, because moving clock between buckets changes no sum.
+//
+// Applied as a mutation and measured, 2026-08-13. WITHOUT this check the whole
+// cold suite passed except the two constructed cases in series_test.go — at 20m0s
+// credited against a project holding 10m0s — and `timetattle metrics -all -by day
+// -csv` over the whole store exited 0 and printed a plausible table in which 297
+// client rows sat on the wrong day. WITH it, that same run refuses, naming a
+// bucket that credits a one-project client 10m0s against the 0s its project holds
+// there. So the difference this makes is a silently misdated report against a
+// named one, on the shipped surface, on real data.
+//
 // ALLOCATION IS THE ONE EXCEPTION and it is checked differently, deliberately.
 // An edge that cuts a segment shared by k groups makes two divisions where the
 // whole-span report made one, and k-1 nanoseconds of remainder can land on a
@@ -348,6 +368,24 @@ func (r Report) checkSeries(buckets []Period) error {
 	byProject := map[string]time.Duration{}
 	byClient := map[string]time.Duration{}
 	allocated := map[string]time.Duration{}
+	// The clients whose relation to the rows beneath them is fixed by
+	// construction, and only those. A client with SEVERAL projects is
+	// deliberately absent: its hours are its own evidence re-clustered, so it
+	// legitimately holds a silence too wide for any one of its projects to
+	// bridge and can exceed both their union and their sum. On the live store
+	// that surplus is 19m13s of an unwindowed 617h40m54s, in 11 stretches
+	// — `go run ./scripts/rollupunion` — and a check reading it would be reading
+	// a correct report as a broken one. A client with ONE project is the other
+	// case entirely: its events are exactly that project's events that resolved
+	// to it, so the same clustering under the same parameters puts its spans
+	// inside the project's, and every segment it is active in is a segment the
+	// project is active in too. That containment is what the buckets inherit.
+	only := make(map[string]string, len(r.Clients))
+	for _, c := range r.Clients {
+		if len(c.Projects) == 1 {
+			only[c.Name] = c.Projects[0]
+		}
+	}
 	for i, b := range buckets {
 		presence += b.Presence.Total
 		observed += b.Presence.Observed
@@ -361,6 +399,27 @@ func (r Report) checkSeries(buckets []Period) error {
 		}
 		for _, s := range b.Clients {
 			byClient[s.Name] += s.Engaged.Total
+			// An INEQUALITY and never an equality, for the reason Compute's own
+			// check is one. A project is stamped with its client per observation
+			// from a log with effective dates, so a directory registered to a
+			// client partway through its life has earlier evidence that is the
+			// project's and no client's; the project then holds clock its client
+			// does not, which this report calls Clientless. A project worked for
+			// one client in the morning and another in the afternoon does the
+			// same. An equality would refuse both, and refusing here yields no
+			// series at all rather than a series missing a row.
+			name, one := only[s.Name]
+			if !one {
+				continue
+			}
+			p, _ := b.Project(name)
+			if s.Engaged.Total > p.Engaged.Total {
+				return fmt.Errorf("the bucket %d (%v..%v) credits client %s %v against the %v held "+
+					"there by its only project %s; the two are one body of evidence clustered twice, "+
+					"so the client cannot hold clock the project does not, and a level booked into "+
+					"the wrong bucket conserves every total this function already compares",
+					i, b.Start, b.End, s.Name, s.Engaged.Total, p.Engaged.Total, name)
+			}
 		}
 		if got := shares + b.Unattributed.Total; got != b.Presence.Total {
 			return fmt.Errorf("the bucket %v..%v allocated %v and left %v unattributed, coming to %v "+
