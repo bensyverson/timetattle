@@ -110,6 +110,13 @@ Scoping does not avoid it. `metrics -project <one project>` over the same day
 fails identically, because the scope selects rows for display and `Compute` has
 already run over everything.
 
+**Two day conventions, both refused.** The sweep cuts its windows at the
+configured working-day boundary — 05:00 in the calendar this store uses — while
+`metrics -from D -to D` cuts at midnight. Those are different windows over the
+same date and they are not interchangeable; 2026-04-24 is refused under both,
+which is why the script's finding and the binary's are quoted side by side
+rather than one standing for the other.
+
 **The anatomy of the refusal**, from auditing that day with the guard mutated
 off: the client has **three projects that day with no overlap between them at
 all** — union and sum are both 6h4m48.248532s — and one bridged stretch of
