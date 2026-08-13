@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bensyverson/timetattle/internal/adjustments"
 	"github.com/bensyverson/timetattle/internal/clientmap"
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
@@ -173,7 +175,15 @@ both commands share.`,
 			}
 		}
 
-		report, err := metrics.Compute(events, p)
+		// THE HUMAN CORRECTION LAYER, applied here exactly as metrics.go
+		// applies it — see dashboardAttributions below for the window rule,
+		// and for why only the attribution half of the log is read.
+		said, err := dashboardAttributions(ctx, st, filter)
+		if err != nil {
+			return err
+		}
+
+		report, err := metrics.Corrected(events, p, said)
 		if err != nil {
 			return err
 		}
@@ -191,6 +201,7 @@ both commands share.`,
 			Drop:      drop,
 			Events:    events,
 			Report:    report,
+			Said:      said,
 			ClientMap: cm,
 			Log:       log,
 			Exact:     *exact,
@@ -258,7 +269,7 @@ type dashboardData struct {
 	// the store, since it is already exactly what the aggregate below rests
 	// on.
 	Events []source.Event
-	// Report is metrics.Compute(Events, Params): the SAME aggregate
+	// Report is metrics.Corrected(Events, Params, Said): the SAME aggregate
 	// metrics itself would print for this store and this period, unfiltered
 	// by scope — see metricsScope's own doc comment for why the whole report
 	// is always computed and only the PRINTED rows are ever narrowed. A
@@ -271,6 +282,20 @@ type dashboardData struct {
 	// narrowDataToPeriod exists to guarantee and what the store-wide
 	// screen-on total printed under an eleven-day header used to disprove.
 	Report metrics.Report
+	// Said is the folded attribution half of the correction log over this
+	// window — what a person asserted about whose an hour was, disjoint and
+	// already resolved, exactly as it was handed to metrics.Corrected to
+	// produce Report above.
+	//
+	// A section needing a report over a DIFFERENT span from Report's (today,
+	// only the contract burn-down in dashboard_allocation.go, whose hours
+	// reach back to a contract's start) computes it with these rather than
+	// with metrics.Compute, or one dashboard would print corrected hours in
+	// its header and uncorrected hours against the money. Narrow them the way
+	// eventsFrom narrows events, with attributionsFrom below; a span wider
+	// than this window needs its own read of the log, since these were only
+	// ever fetched for this one.
+	Said []metrics.Attribution
 	// ClientMap is the client-project log Report's own client stamping
 	// already consulted, exposed so a section can ask the same question
 	// (clientmap.Map.At) about an instant Report itself does not carry, and
@@ -444,13 +469,13 @@ func clampPeriodToFirstObservation(period dashboardPeriod, scope metricsScope, d
 // clamped window: the order is fetch, clamp, narrow.
 //
 // A second clustering pass over a million events is not free, so it runs only
-// where it can change an answer. metrics.Compute is a pure function of the
+// where it can change an answer. metrics.Corrected is a pure function of the
 // events and the params, so a narrowing that excludes nothing can only produce
 // the report that is already in hand — and BOTH cases where it excludes
 // nothing are the ordinary ones rather than the exotic ones. Measured on
 // 2026-08-07 by timing each stage of this command's own pipeline against a
 // real store — 1,030,041 events in the trailing-year window, fetched in about
-// three seconds and clustered by the first metrics.Compute in 1.58s:
+// three seconds and clustered by the first report in 1.58s:
 //
 //   - Not clamped at all. Nothing to narrow; the report already describes the
 //     window -days asked for.
@@ -494,20 +519,78 @@ func narrowDataToPeriod(data *dashboardData, period dashboardPeriod) error {
 	data.Filter.From = period.From
 
 	events := eventsFrom(data.Events, period.From)
-	if len(events) == len(data.Events) {
-		// eventsFrom only ever drops, and preserves order, so an equal length
-		// is an identical slice — and an identical slice is an identical
-		// report. See this function's own doc comment for what skipping the
-		// pass here is worth on a real store.
+	// The assertions narrow with the events, and for the same reason: a
+	// correction wholly before the clamp describes clock this report no longer
+	// covers, and carrying it in would print it as clock that "fell outside
+	// every sitting" — a true sentence about a window the reader was never
+	// shown, and one `metrics` over the same span would never print.
+	said := attributionsFrom(data.Said, period.From)
+	if len(events) == len(data.Events) && len(said) == len(data.Said) {
+		// Both narrowings only ever drop, and both preserve order, so equal
+		// lengths mean identical slices — and identical inputs are an
+		// identical report. See this function's own doc comment for what
+		// skipping the pass here is worth on a real store.
 		return nil
 	}
-	report, err := metrics.Compute(events, data.Params)
+	report, err := metrics.Corrected(events, data.Params, said)
 	if err != nil {
 		return err
 	}
 	data.Events = events
+	data.Said = said
 	data.Report = report
 	return nil
+}
+
+// dashboardAttributions is the attribution half of the correction log, folded
+// over the window this dashboard is about to report on.
+//
+// It is metrics.go's own read of the same log, and the two are deliberately
+// identical: two commands reporting the same span from the same store must not
+// differ by a correction one of them read and the other did not. Until
+// 2026-08-13 this command called metrics.Compute — the uncorrected path — and
+// only the fact that nobody had yet recorded an attribution assertion kept the
+// two from disagreeing.
+//
+// THE WINDOW IS THE EVENT WINDOW, and the store's test is overlap rather than
+// containment: a correction beginning before the window and running into it
+// describes time inside it, while one recorded wholly outside cannot touch an
+// instant inside, because an assertion is keyed to wall clock and nothing else.
+//
+// ONLY THE ATTRIBUTION HALF IS APPLIED, though `engaged` and `not-engaged`
+// assertions travel in the same log. Those move the capacity denominator
+// internal/fit measures the clustering against, so absorbing them into a
+// report would shrink the model's own error signal for reasons having nothing
+// to do with the model. metrics.Corrected makes the same choice and says so at
+// length.
+func dashboardAttributions(ctx context.Context, st *store.Store,
+	filter store.Filter) ([]metrics.Attribution, error) {
+
+	recorded, err := st.Adjustments(ctx, filter.From, filter.To)
+	if err != nil {
+		return nil, err
+	}
+	return adjustments.Fold(nil, recorded).Attributions(), nil
+}
+
+// attributionsFrom keeps the corrections a store query starting at from would
+// have returned: those whose span reaches at or past it.
+//
+// It is eventsFrom's rule for the correction log — store.Adjustments' own
+// OVERLAP test transcribed, rather than a second idea of what a window
+// contains — so a piece straddling the clamp is kept WHOLE, exactly as a
+// straddling event is. The part of it inside the window is real, and cutting
+// it here would make the reported "outside every sitting" figure a function of
+// where the clamp happened to land.
+func attributionsFrom(said []metrics.Attribution, from time.Time) []metrics.Attribution {
+	out := make([]metrics.Attribution, 0, len(said))
+	for _, a := range said {
+		if a.End.Before(from) {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // eventsFrom keeps the events a store query starting at from would have
@@ -601,6 +684,7 @@ func renderDashboard(ctx context.Context, out io.Writer, scope metricsScope, per
 	cc colorCapability, data *dashboardData, detailed bool) error {
 	fmt.Fprintf(out, "%s\n", data.Store.Path())
 	fmt.Fprintf(out, "%s\n", dashboardHeaderLine(scope, period, data))
+	fmt.Fprintf(out, "%s\n", dashboardCorrectionsLine(data))
 
 	for _, s := range dashboardSections {
 		if s.Detailed && !detailed {
@@ -642,6 +726,48 @@ func dashboardHeaderLine(scope metricsScope, period dashboardPeriod, data *dashb
 	}
 	return fmt.Sprintf("%s, %s to %s (%d days requested, clamped to the first observation in scope)",
 		scopeLine, from, to, period.Days)
+}
+
+// dashboardCorrectionsLine says what a person's own corrections did to every
+// figure below it, INCLUDING when they did nothing and when there were none.
+//
+// # Why this prints on every run, and why it is one line
+//
+// The figures on this page are the machine's answer with any recorded
+// attribution assertion laid over it. A reader who has corrected a span and
+// sees no marker cannot otherwise tell three states apart: nothing was
+// recorded over this window, something was and the machine already agreed, or
+// the corrections were never read at all. This command spent its whole life
+// until 2026-08-13 in the third state and said nothing, which is the defect
+// this line exists to make impossible to repeat.
+//
+// `metrics` answers the same question with a whole CORRECTIONS section, which
+// breaks the four figures out and says what to do about each. A dashboard is a
+// glance rather than a reckoning, so it states the population and the clock
+// that moved and points at the command that explains it, rather than growing
+// a ninth panel that would be blank on almost every run.
+func dashboardCorrectionsLine(data *dashboardData) string {
+	c := data.Report.Corrections
+	if !c.Any() {
+		return "corrections: none recorded in this window, so every figure below is the " +
+			"machine's own answer"
+	}
+	parts := make([]string, 0, 4)
+	if moved := c.Moved(); moved > 0 {
+		parts = append(parts, fmt.Sprintf("%.1fh moved", moved.Hours()))
+	}
+	if c.Agreed > 0 {
+		parts = append(parts, fmt.Sprintf("%.1fh agreed with the machine", c.Agreed.Hours()))
+	}
+	// THE ONE A READER WILL OTHERWISE MISREAD AS THE TOOL IGNORING THEM. An
+	// attribution says whose an hour was, never that there was one, so a
+	// correction laid across clock no sitting covers moves nothing whatever —
+	// and the fix is a different assertion. `metrics` says which one.
+	if c.Outside > 0 {
+		parts = append(parts, fmt.Sprintf("%.1fh outside every sitting", c.Outside.Hours()))
+	}
+	return fmt.Sprintf("corrections: %s applied — %s (`timetattle metrics` breaks these out)",
+		plural(c.Assertions, "attribution assertion"), strings.Join(parts, ", "))
 }
 
 // dashboardHeaderHours is the header's own scoped-hours phrase — the same

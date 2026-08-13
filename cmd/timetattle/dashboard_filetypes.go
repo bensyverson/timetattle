@@ -40,7 +40,7 @@ import (
 // (internal/fsobserve), which is a different collector answering a related
 // but distinct question (see that package's own doc comment, "Not the same
 // job as internal/filedays") — and its events already flow into
-// data.Events, the same slice metrics.Compute itself was run over, because
+// data.Events, the same slice the report itself was computed over, because
 // dashboardCmd's own store query (dashboard.go) has no source filter. So
 // this section needs no extra Store query at all (contrary to this file's
 // own original stub comment, which assumed one the way source freshness
