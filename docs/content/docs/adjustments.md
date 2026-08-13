@@ -27,7 +27,7 @@ Nothing here touches the events, and nothing here touches `derived_session`.
 `timetattle sessionize` deletes and reinserts every session row on every run, so
 a correction keyed to a session could not survive one; a correction keyed to
 **wall clock** survives all of them, because a span means the same thing at a
-two-minute gap and at a two-hour one, and total engaged time varies 2.3× between
+two-minute gap and at a two-hour one, and total presence varies 2.3× between
 those two.
 
 There was a second design available: feed corrections *into* the clustering, so

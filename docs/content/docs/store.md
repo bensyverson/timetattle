@@ -440,7 +440,7 @@ not save it.
 ## What is deliberately not here
 
 - **Sessions.** Derived and disposable; the inference model will be refitted
-  repeatedly and total engaged time varies 2.3× across plausible clustering
+  repeatedly and total presence varies 2.3× across plausible clustering
   parameters, so nothing may depend on a stored session identifier.
 - **Adjustments *in `event`*.** They are overlays keyed to a wall-clock span,
   for the reason above, and they now live in tables of their own — `adjustment`

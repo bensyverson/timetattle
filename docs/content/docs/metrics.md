@@ -723,7 +723,7 @@ figures [`timetattle sessionize`](sessions.md) prints over the same sittings.
 ## The threshold is still not a settled number
 
 Everything here inherits the caveat on [sittings and
-configuration](sessions.md): total engaged time ran 2.3x across the plausible
+configuration](sessions.md): total presence ran 2.3x across the plausible
 range of the gap threshold, nothing has yet fitted it against ground truth, and
 the shipped 15-minute default is a placeholder in the middle of that range. Use
 `timetattle sessionize -sweep` to see the spread on your own data before quoting

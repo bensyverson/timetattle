@@ -563,7 +563,7 @@ against real numbers.
 
 What a source must **not** do is decide which events belong to the same working
 session. That is inference, it is fitted against ground truth, and measurements
-during design showed total engaged time varying 2.3× across plausible
+during design showed total presence varying 2.3× across plausible
 thresholds. A source that clustered its own events would make that fit
 impossible to perform consistently. Sources describe what they observed;
 Timetattle decides what it means.
