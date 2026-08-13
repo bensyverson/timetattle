@@ -9,8 +9,8 @@ description: "The human-facing sibling of metrics: same data, a trailing window 
 `timetattle dashboard` is [`metrics`](metrics.md)'s human-facing sibling. It
 reads the same store, computes over the same pipeline — the same clustering
 parameters from the config file, the same client-project log, the same
-`metrics.Compute` — and answers the same two questions, engaged time and
-presence. What differs is the shape of the answer: `metrics` is the terse,
+correction layer, the same `metrics.Corrected` — and answers the same two
+questions, engaged time and presence. What differs is the shape of the answer: `metrics` is the terse,
 stable, machine-facing surface this tool's other commands and any script
 piping it are built against, and `dashboard` is free to lay itself out with
 box drawing and color and to change that layout at will. Neither command
@@ -48,6 +48,46 @@ The header also states the window's own hours before the range — `38.9h
 attributed` under any scope, `224.1h presence` under `-all` — and it is the
 exact figure the Component Stats row below prints, never a second
 computation of it.
+
+## Corrections: the same ones `metrics` applies, and no `-uncorrected`
+
+Every figure on the page has any recorded attribution correction laid over it —
+the `attributed` and `unattributed` assertions from
+[the correction log](adjustments.md), folded over the same window and applied
+by the same code `metrics` uses. Two commands reporting the same span from the
+same store must not differ by a correction one of them read and the other did
+not, and until 2026-08-13 this one did: it computed the uncorrected answer, and
+only the fact that nobody had yet recorded an attribution assertion kept the
+disagreement from being visible.
+
+One line under the header says what the layer did, in both states:
+
+```console
+corrections: none recorded in this window, so every figure below is the machine's own answer
+corrections: 1 attribution assertion applied — 1.8h moved, 0.2h outside every sitting
+```
+
+It prints on every run because silence is otherwise indistinguishable from
+agreement: a reader who has corrected an hour and sees no line cannot tell
+*nothing was recorded here* from *the corrections were never read*. `metrics`
+answers the same question with a whole
+[CORRECTIONS section](metrics.md#corrections-what-a-person-said) that breaks the
+four figures out and says what to do about each; a dashboard is a glance rather
+than a reckoning, so it states the population and the clock that moved and
+points at the command that explains it.
+
+**There is no `-uncorrected` here.** The machine's answer alone is a
+comparison, not a view — it is what [the fitting](fitting.md) measures against —
+and `metrics -uncorrected` keeps it reachable for anyone who wants to subtract
+the two. A second copy of the flag on the human surface would only invite a
+reader to compare two dashboards by eye, which is the least reliable way there
+is to subtract two reports.
+
+A contract's **hours to date** in Allocation & Effective Rate reach outside the
+window, so they are computed from their own store query rather than from the
+report the rest of the page shares — and they carry the same corrections, read
+over that same wider span. Otherwise one page would print a corrected figure in
+its header and an uncorrected one against the money.
 
 ## Color: detected once, shared by every section
 

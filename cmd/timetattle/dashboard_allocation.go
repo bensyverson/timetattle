@@ -378,7 +378,7 @@ func writeContractCollectionCaveat(out io.Writer, cal sessions.Calendar, e scope
 // metrics never runs calls Store directly, exactly as the freshness and
 // filetype sections do.
 //
-// The cost is one store query over the wider span plus one metrics.Compute
+// The cost is one store query over the wider span plus one clustering pass
 // over what it returns — the same two operations dashboardCmd already pays
 // once. narrowDataToPeriod's own doc records what those cost on a real store:
 // about three seconds to fetch a trailing year's 1,030,041 events and 1.58s to
@@ -402,7 +402,15 @@ type allocationHistory struct {
 	// data.Events when no wider fetch was needed.
 	events []source.Event
 	from   time.Time
-	// reports memoises metrics.Compute per start instant.
+	// said is the folded attribution half of the correction log over the SAME
+	// span as events, and it is re-read whenever that span is widened. A
+	// contract's hours-to-date is the one figure on this page computed from
+	// its own query rather than from data.Report, so leaving it uncorrected
+	// would print a person's correction in the header and its absence against
+	// the money — the two-tools-unreconciled state one command below the one
+	// this whole layer exists to end.
+	said []metrics.Attribution
+	// reports memoises metrics.Corrected per start instant.
 	reports map[time.Time]metrics.Report
 	params  sessions.Params
 }
@@ -415,6 +423,7 @@ func allocationHistoryFor(ctx context.Context, entries []scopedEngagement, cal s
 	h := &allocationHistory{
 		events:  data.Events,
 		from:    data.Filter.From,
+		said:    data.Said,
 		reports: map[time.Time]metrics.Report{data.Filter.From: data.Report},
 		params:  data.Params,
 	}
@@ -447,7 +456,16 @@ func allocationHistoryFor(ctx context.Context, entries []scopedEngagement, cal s
 			events[i].Identity.Client = c
 		}
 	}
-	h.events, h.from = events, earliest
+	// AND THE CORRECTIONS ARE RE-READ OVER THE SAME WIDER SPAN. data.Said was
+	// only ever fetched for the reporting window; a contract's life reaches
+	// back before it, and a correction recorded against that older work is
+	// exactly the kind a burn-down must not ignore — it is the hours already
+	// spent, which is what the effective rate divides by.
+	said, err := dashboardAttributions(ctx, data.Store, store.Filter{From: earliest, To: data.Filter.To})
+	if err != nil {
+		return nil, err
+	}
+	h.events, h.from, h.said = events, earliest, said
 	// The window's own cached report is dropped: it was computed over a
 	// narrower slice, and keying it by an instant this history no longer
 	// starts at would hand a contract the wrong population.
@@ -503,21 +521,24 @@ func (h *allocationHistory) hoursToDate(e scopedEngagement, cal sessions.Calenda
 	return row.Engaged.Total, nil
 }
 
-// report is metrics.Compute over this history narrowed to from, memoised.
+// report is metrics.Corrected over this history narrowed to from, memoised.
 //
 // eventsFrom is dashboard.go's own narrowing — the store's `COALESCE(ended_at,
 // started_at) >= ?` predicate transcribed once — so a contract's population is
 // what a store query starting at its own start date would have returned,
-// rather than a second idea of what a window contains.
+// rather than a second idea of what a window contains. attributionsFrom is the
+// same narrowing for the correction log, so a contract's hours carry exactly
+// the assertions a `metrics` report over the same span would carry.
 func (h *allocationHistory) report(from time.Time) (metrics.Report, error) {
 	if r, ok := h.reports[from]; ok {
 		return r, nil
 	}
-	events := h.events
+	events, said := h.events, h.said
 	if from.After(h.from) {
 		events = eventsFrom(events, from)
+		said = attributionsFrom(said, from)
 	}
-	r, err := metrics.Compute(events, h.params)
+	r, err := metrics.Corrected(events, h.params, said)
 	if err != nil {
 		return metrics.Report{}, err
 	}

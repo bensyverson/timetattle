@@ -14,7 +14,7 @@ const hoursPerDay = 24
 // renderTimeOfDay draws a 24-column horizontal strip of when work typically
 // happened across the period: one column per local clock hour, intensity
 // showing that hour's share of the period's total sitting minutes. It reads
-// data.Report.Sessions — the SAME clustering metrics.Compute already ran
+// data.Report.Sessions — the SAME clustering the report already ran
 // (dashboardData's own doc comment in dashboard.go) — and never re-clusters,
 // so the wall-clock non-double-counting internal/sessions guarantees
 // (package doc: "Sittings are global") is inherited rather than redone.

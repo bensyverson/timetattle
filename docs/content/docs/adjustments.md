@@ -146,6 +146,46 @@ who made each and when, and the totals asserted — and it says out loud when a
 span has nothing recorded against it, because *nothing recorded* and *nothing
 found wrong* are the two states this whole layer exists to keep apart.
 
+## Where a correction shows up
+
+Recording one is half of it. Two commands read this log back, and they read
+exactly the same half of it, so no two reports of the same span can differ by a
+correction one of them applied and the other did not.
+
+[`timetattle metrics`](metrics.md) lays the `attributed` and `unattributed`
+assertions over its figures **by default**, and prints a
+[CORRECTIONS section](metrics.md#corrections-what-a-person-said) on every
+report — including when nothing was recorded over the span, because a reader
+who has corrected an hour and sees no section cannot otherwise tell *applied
+and agreed* from *never read*. `-uncorrected` gives the machine's answer alone,
+which is the comparison [the fitting](fitting.md) rests on.
+
+[`timetattle dashboard`](dashboard.md) applies the same assertions, over the
+same window, and says in one line under its header how many were applied and
+how much clock they moved. It has no `-uncorrected` of its own: it is the
+human surface, and the machine's uncorrected answer stays reachable through
+`metrics -uncorrected` for anyone who wants to subtract the two.
+
+**`engaged` and `not-engaged` are deliberately not applied to either report.**
+They travel in this same log, and they move the capacity denominator every
+share in a report is divided by — which is precisely the residual the
+clustering is fitted against. A report that had already absorbed them would
+shrink the model's own error signal for reasons having nothing to do with the
+model improving. Applying them needs its own case made; attribution carries no
+such hazard, because no parameter being fitted is an attribution parameter.
+
+An attribution assertion says **whose** an hour was, never that there was one.
+One laid across clock no sitting covers therefore moves nothing whatever, and
+both commands report that rather than swallowing it: `-assert engaged` is what
+makes the hour exist in the first place.
+
+Neither command read this log at all until 2026-08-10, and the dashboard went
+on printing the uncorrected answer until 2026-08-13. A person could reattribute
+a span, watch it survive re-derivation exactly as promised, and find every
+reported hour unmoved with nothing anywhere saying why — which is why both now
+name the population they checked instead of leaving a reader to infer it from
+an absent line.
+
 ## What is deliberately not here
 
 - **Anything keyed to a session.** Sessions are disposable and are rebuilt
