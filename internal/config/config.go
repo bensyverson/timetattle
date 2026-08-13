@@ -227,15 +227,25 @@ func DefaultPath() (string, error) {
 // The returned config has been validated. A file that parses into nonsense
 // fails here rather than at the first place the nonsense matters.
 func Load(path string) (*Config, error) {
-	c := Default()
-
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return c, nil
+		return Default(), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read the config at %s: %w", path, err)
 	}
+	return parse(raw, path)
+}
+
+// parse is the half of Load that does not touch the filesystem: everything
+// from the version check to Validate, over bytes that are already in hand.
+//
+// It is separate so that a WRITE can be checked against the same reader that
+// will have to load it — see edit.go, which parses what it is about to write
+// and refuses rather than leaving a config on disk that this build cannot read
+// back. path is carried only to name the file in the errors.
+func parse(raw []byte, path string) (*Config, error) {
+	c := Default()
 
 	// THE VERSION IS READ FIRST, and it has to be. config_version exists to
 	// turn a file from the future into a sentence rather than a puzzle — and

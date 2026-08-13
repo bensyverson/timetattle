@@ -261,6 +261,36 @@ from a key nobody typed. Every figure below is invented.
 - A stated zero is refused. Absence and zero are different facts, and only
   absence means "unsaid".
 
+#### When something else writes this section
+
+Nothing writes `config.json` today — the file is yours, and hand-editing it is
+the way engagements are configured. The web dashboard will eventually offer an
+editing form for this section, and the rules it writes under are fixed, so a
+hand-editor can rely on them:
+
+- **Only the `engagements` key is rewritten.** Every other top-level section is
+  copied through with its values' bytes exactly as you typed them, and keys
+  stay in the order you wrote them. Nothing materialises a default into your
+  file: the values in `sessions` are provisional placeholders, and a writer
+  that emitted the whole configuration would freeze whichever ones the current
+  build happens to hold, where they would then contradict every later change to
+  them with no symptom.
+- **A blank field is an omitted key**, never `0` and never `""`. A currency box
+  left empty writes no `currency` key at all, and an hourly entry is written
+  with no `contract_total`, `expected_hours` or `started` in it — not with
+  zeros. That is not tidiness: `"contract_total": 0` would make the entry
+  declare both shapes, which the loader refuses, so an entry filled with zeros
+  could not be saved at all.
+- **A hand-edit is never overwritten.** Before replacing the file, the writer
+  re-reads it and compares against the bytes it read; if they differ — because
+  you edited it in another window, or a second process wrote it — nothing is
+  written and the write is refused by name. Your edit is what survives. The
+  same holds if the file did not exist when the editor opened it and exists
+  now: a file it never read is a file it will not replace.
+- **The replacement is atomic.** The new file is written beside the old one and
+  renamed over it, so a command reading the config halfway through a save sees
+  the whole old file or the whole new one, never a truncated one.
+
 #### The hourly shape: a budget pro-rated to the window
 
 ```
