@@ -229,6 +229,36 @@ figure for typical activity; a heavy stretch shortens the real deadline, and
 nothing here or anywhere else in this repository has yet measured segment roll
 rate against activity.
 
+> **Corrected in part, 2026-08-13.** Two claims in the paragraph above need
+> adjusting, and the third is now measured. Source:
+> [`2026-08-13-knowledgec-snapshot-series.md`](2026-08-13-knowledgec-snapshot-series.md),
+> `go run ./scripts/streamseries -days`.
+>
+> 1. **"Both perishable sources expire by volume" is too broad for knowledgeC.**
+>    Only `/app/usage` does. `/display/isBacklit` and `/device/isLocked` expire
+>    by **age** at ~28 days — shortest retained spans of 27.86 and 27.51 days,
+>    medians of 28.39 and 28.38 across 43 snapshots, with no relationship to
+>    load. Both mechanisms exist and the tighter one wins; for `/app/usage` that
+>    is the count, for the rest it is the age.
+>
+> 2. **"Capped near 10,000 rows" describes a floor, not a ceiling.** 26 of the
+>    43 snapshots held more than 10,000 rows, the largest 11,871. macOS lets the
+>    table grow and trims it back to exactly 10,000 oldest-first.
+>
+> 3. **The knowledgeC half of "nobody has measured it" is now measured, and the
+>    caveat was right.** A named row was watched die between 8.92 and 9.46 days.
+>    At the typical 824 rows a day the cap holds 12.14 days, against a 12.24-day
+>    median retained span observed — agreement to 0.10 days, which is itself the
+>    evidence that the count is what evicts. At the busiest day on record, 2,798
+>    rows, it holds **3.57 days**. So "under ten days" stands as typical, and the
+>    real deadline under load is roughly a third of it.
+>
+> Biome's segment roll rate against activity is still unmeasured. Nothing in
+> this correction changes any harvest-cadence conclusion in this document: the
+> installed four-hourly snapshot beats 3.57 days by a wide margin. What it
+> retires is the use of "ten days" as a **margin** rather than as a typical
+> figure.
+
 That has a direct consequence for how the figures above may be used. **"No loss
 yet" is an observation about the days measured. It is not a margin, and it must
 not be spent as one.** A 54.70h outage survived by Biome in early August says
@@ -251,6 +281,20 @@ nothing about a 54.70h outage during a week of heavy use.
          SUM(source_id='knowledgec-appusage'), SUM(source_id='biome-appusage')
   FROM event WHERE started_at >= '2026-08-05' GROUP BY day ORDER BY day;
   ```
+
+  > **Settled 2026-08-13, and a tool now reproduces it.** The observation was
+  > right and the absence is in the SOURCE, not in ingestion: macOS wrote its
+  > last `/app/usage` row at 2026-08-10 19:28:31 local and ten consecutive
+  > snapshots over the next 63h50m held the identical newest timestamp while
+  > `/display/isBacklit` recorded normally. `go run ./scripts/streamseries
+  > -streams /app/usage` reports it, and `timetattle status` now flags it
+  > unprompted.
+  >
+  > One correction to the sentence above: this is the **second** such stall, not
+  > a repeat of a single July one. The July stall ran 2026-07-27 14:28 to
+  > 2026-07-29 09:23 local — a **Monday to a Wednesday**, through two working
+  > days, not a quiet weekend as it was described elsewhere on 2026-08-13.
+  > `/app/usage` wrote no row at all on 2026-07-28 while the backlight wrote 29.
 - `~/.timetattle/harvest.log` and `harvest.err` are a second, independent record
   of when the harvester ran, and could separate "launchd never fired" from "the
   process started and died" — the one distinction §5 says the store cannot make.

@@ -9,8 +9,25 @@
 //
 // # Why this reads a snapshot and never the live database
 //
-// knowledgeC prunes itself — /app/usage is capped near 10,000 rows and the other
-// streams run a 28-30 day window — so internal/snapshot copies it, strips it to
+// knowledgeC prunes itself by two independent mechanisms, whichever binds
+// first. Most streams expire by AGE: /display/isBacklit and /device/isLocked
+// were measured across 43 preserved snapshots on 2026-08-13 holding a shortest
+// retained span of 27.86 and 27.51 days and a median of 28.39 and 28.38, which
+// is a 28-day window and nothing to do with how busy the machine was.
+// /app/usage additionally expires by ROW COUNT, and that is the one that bites:
+// macOS lets it grow — 26 of those 43 snapshots held more than 10,000 rows and
+// the largest held 11,871 — then trims it back to exactly 10,000, oldest first.
+// So 10,000 is a FLOOR rather than a ceiling, and a reader seeing more than
+// 10,000 rows is reading a genuinely larger table.
+//
+// Because the count is what evicts, /app/usage's window moves with the
+// workload: 10,000 rows at the typical 824 a day is 12.14 days, matching the
+// 12.24-day median retained span actually observed, but at the busiest day
+// measured (2,798 rows) the same cap holds only 3.57 days. A specific row was
+// watched die between 8.92 and 9.46 days. Reproduce all of it with
+// `go run ./scripts/streamseries -streams /app/usage -days`.
+//
+// That is why internal/snapshot copies the database, strips it to
 // the ZOBJECT table and gzips it on every harvest. This package reads those
 // files. Reading the live database instead would mean a second Full Disk Access
 // path to get wrong, and would tie collection to whatever macOS had not yet
@@ -203,18 +220,34 @@ func NewLocked(path string) *Locked {
 // AppUsage collects /app/usage, which is NOT the application attribution path.
 //
 // internal/biome is. Biome reaches back three weeks unbroken at millisecond
-// resolution, where this stream is capped near 10,000 rows giving under ten days;
-// and this stream has been seen to stop. It wrote its last row on 2026-07-27 at
-// 14:28:03, produced nothing at all on 07-28, and then resumed on its own on
-// 07-29 — 806 rows by 21:02, verified in knowledgeC-20260729T211413.db.gz. An
-// earlier reading of that stall as a permanent retirement is corrected in
+// resolution, where this stream is trimmed to a 10,000-row floor giving under ten
+// days; and this stream has been seen to stop, TWICE.
+//
+// The first stall: it wrote its last row on 2026-07-27 at 14:28:03, produced
+// nothing at all on 07-28, and then resumed on its own on 07-29 — 806 rows by
+// 21:02, verified in knowledgeC-20260729T211413.db.gz. An earlier reading of that
+// stall as a permanent retirement is corrected in
 // project/private/2026-07-28-source-corrections.md §1.
 //
-// What survives the correction is the reason for the architecture rather than the
-// story: a source that has demonstrably gone silent for a full day cannot be the
-// one that says which application held the screen. It is collected because it is
-// cheap and because cross-checking two independent readings of the same fact is
-// how the bare-stop analysis was validated at all.
+// The second: it wrote its last row on 2026-08-10 at 19:28:31 and ten
+// consecutive snapshots over the following 63h50m held the identical newest
+// timestamp while /display/isBacklit recorded normally throughout. Note that
+// 2026-07-27 was a Monday and 2026-07-29 a Wednesday, so NEITHER stall is a
+// quiet weekend — both ran through working days on a machine that was in use.
+// Against this stream's own cadence (median 8s, p99 13m54s, measured from the
+// source rather than from the store) they are 61x and 276x the p99. Do not judge
+// such a freeze against the stream's LONGEST gap: that gap is the July stall, so
+// the comparison is a fault divided by a fault and always looks reassuring.
+//
+// Both stalls were observed with the table at exactly 10,000 rows, immediately
+// after a trim. With one trim witnessed and one inferred that is a hypothesis
+// for the next occurrence, not a cause.
+//
+// What survives all of it is the reason for the architecture rather than the
+// story: a source that has demonstrably gone silent for days at a time cannot be
+// the one that says which application held the screen. It is collected because it
+// is cheap and because cross-checking two independent readings of the same fact
+// is how the bare-stop analysis was validated at all.
 //
 // It also lags. Rows were measured arriving 23 hours behind /display/isBacklit,
 // with creation times equal to event times, so a row appears long after the work
