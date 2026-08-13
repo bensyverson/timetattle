@@ -173,6 +173,17 @@ not — a directory registered to a client partway through its life has earlier
 evidence belonging to the project and to no client, which the report reports as
 `Clientless`.
 
+The same relation holds inside **every bucket** of a `-by day` or `-by week`
+slice, and is checked there too. A bucket is summed from the same segments the
+report is, and a segment names its projects and its clients together, so the clip
+a bucket edge makes is one duration booked to both levels at once — an edge
+cannot divide a client and its project differently. Note that the *other*
+direction gets worse under slicing rather than better: a client's figure can sit
+comfortably inside its projects' sum over a whole span and outside that sum in
+one bucket of it, because narrowing the window strips out the concurrency that
+was inflating the sum. A roll-up that reconciles over a span has said nothing
+about the buckets of it.
+
 Allocation divides by client at the client level and by project at the project
 level, so they are different splits rather than the same one re-added. A minute
 two of one client's projects and one of another's were all active in gives each
