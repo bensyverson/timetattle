@@ -209,7 +209,7 @@ func TestNeutralHomePlaceholderIsNotFlagged(t *testing.T) {
 func TestRealHomePathInsideALongerPathIsFlagged(t *testing.T) {
 	src := `NEXT  timetattle consolidate -former /Users/wombat/git/claude/shared \` // gate:fixture
 	if n := kindHits(scanText("orient.md", src, Scanner{}), KindIdentity); n != 1 {
-		t.Errorf("scanText found %d identity findings, want 1: /Users/wombat/git/claude/shared names a real account", n)
+		t.Errorf("scanText found %d identity findings, want 1: /Users/wombat/git/claude/shared names a real account", n) // gate:fixture
 	}
 }
 
