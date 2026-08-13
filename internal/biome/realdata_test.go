@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"testing"
 	"time"
 )
@@ -198,8 +197,24 @@ func TestRealSegmentsAgreeWithTheTombstoneStream(t *testing.T) {
 		t.Skipf("%d records are marked deleted but no tombstone stream was found beside the segments", len(deleted))
 	}
 
-	if len(tombstones) != len(deleted) {
-		t.Errorf("the tombstone stream holds %d records but %d index entries are marked deleted", len(tombstones), len(deleted))
+	// THE COUNTS ARE REPORTED, NOT EQUATED, and the reason is in
+	// tombstonecensus_test.go: the tombstone stream outlives the segments it
+	// describes, so a bijection between it and the currently-deleted entries is
+	// true only in the instant a segment's deletions are written and false ever
+	// after. What still has to hold in BOTH directions is stated over the
+	// segments actually on disk — every deleted entry names a tombstone, below,
+	// and every tombstone naming a segment still present has an entry, here.
+	keys := make([]string, 0, len(tombstones))
+	for k := range tombstones {
+		keys = append(keys, k)
+	}
+	live, rotated := tombstoneCensus(keys, realSegmentNames(t, dir))
+	if unreadable := len(keys) - live - rotated; unreadable > 0 {
+		t.Errorf("%d tombstone keys name no segment this test can read, so they were classified as neither held nor rotated", unreadable)
+	}
+	if live != len(deleted) {
+		t.Errorf("%d tombstone records name a segment still on disk but %d index entries are marked deleted; a tombstone whose segment is present must have an entry",
+			live, len(deleted))
 	}
 	matched := 0
 	for _, d := range deleted {
@@ -220,8 +235,8 @@ func TestRealSegmentsAgreeWithTheTombstoneStream(t *testing.T) {
 		}
 		matched++
 	}
-	t.Logf("%d deleted records, %d tombstone records, %d matched on both length and timestamp; actors %v",
-		len(deleted), len(tombstones), matched, tombstoneActors(tombstones))
+	t.Logf("%d deleted records, %d tombstone records (%d naming a segment still on disk, %d naming one that has rotated away), %d matched on both length and timestamp; actors %v",
+		len(deleted), len(tombstones), live, rotated, matched, tombstoneActors(tombstones))
 }
 
 // deletedEntry is one state-3 index entry, described by what the segment alone
@@ -232,6 +247,26 @@ type deletedEntry struct {
 	key       string // segment name and index-entry offset, as the tombstone names it
 	length    uint64 // payload bytes, from the segment's own offset chain
 	stampBits uint64
+}
+
+// realSegmentNames is the set of segments in the directory right now. It is the
+// dividing line the census needs: a tombstone naming a segment in this set still
+// has an entry to be checked against, and one naming a segment outside it does
+// not and never will again.
+func realSegmentNames(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	out := map[string]bool{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		out[e.Name()] = true
+	}
+	return out
 }
 
 // realDeletedEntries walks the index of every segment without parsing a single
@@ -284,15 +319,10 @@ type tombstoneRecord struct {
 	stampBits uint64
 }
 
-// tombstoneKey identifies the record a tombstone refers to. The tombstone
-// carries the segment's name and the offset of the index entry measured from
-// the end of the 32-byte header, which is the one relationship in this file
-// that was read off four sample records rather than proved across all of them
-// — so the assertions above check length and timestamp independently, and this
-// key only has to be consistent, not meaningful.
-func tombstoneKey(segment string, offset uint64) string {
-	return segment + "@" + strconv.FormatUint(offset, 10)
-}
+// tombstoneKey, segmentOfTombstoneKey and tombstoneCensus live in
+// tombstonecensus_test.go, which is UNTAGGED: they are arithmetic over strings
+// and need no corpus, so they are tested on any machine while only the reading
+// of the live directories below stays behind the tag.
 
 // realTombstones reads the SEGB stream in the tombstone/ subdirectory. Its
 // container framing is the segments' own, checksums included, but its payload
