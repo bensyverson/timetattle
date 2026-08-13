@@ -481,6 +481,25 @@ func reportStatus(out io.Writer, opt statusOptions) error {
 	writeSchedule(out, bound)
 	scheduleErr := bound.failure()
 
+	// WHAT THE STORE ITSELF HOLDS, as against what a harvest reports having
+	// done. Everything else in this report reads harvest_run, so a harvest that
+	// fires on time and ingests nothing advances every other clock here while
+	// the store stands still. See status_evidence.go.
+	//
+	// A failure to read it does not abandon the report, on the same reasoning as
+	// the capture record below: the source table is unaffected and is most of
+	// what a reader came for. It is reported rather than swallowed, because
+	// printing no evidence line at all is exactly the silence this check exists
+	// to end.
+	evidence, evidenceErr := st.Evidence(ctx)
+	if evidenceErr != nil {
+		fmt.Fprintf(out, "warning:   the store's own evidence could not be read (%v)\n", evidenceErr)
+	}
+	fresh := evidenceFreshness(evidence, bound)
+	if evidenceErr == nil {
+		writeEvidence(out, fresh, opt.now)
+	}
+
 	history, err := st.Runs(ctx, store.Filter{})
 	if err != nil {
 		return err
@@ -537,8 +556,8 @@ func reportStatus(out io.Writer, opt statusOptions) error {
 	fmt.Fprintln(out)
 	states := reportCaptures(out, opt, captures)
 
-	prior := errors.Join(expectErr, captureErr, scheduleErr)
-	return errors.Join(prior, verdict(out, rows, states, newest, opt, bound, prior))
+	prior := errors.Join(expectErr, captureErr, scheduleErr, evidenceErr)
+	return errors.Join(prior, verdict(out, rows, states, newest, opt, bound, fresh, prior))
 }
 
 // verdict says what is wrong in words, and returns the error that makes the
@@ -550,7 +569,7 @@ func reportStatus(out io.Writer, opt statusOptions) error {
 // that has already been reported higher up, which is the one line in this
 // report a reader is entitled to trust absolutely.
 func verdict(out io.Writer, rows []sourceStatus, states []captureState, newest time.Time,
-	opt statusOptions, bound staleBound, prior error) error {
+	opt statusOptions, bound staleBound, fresh evidenceReport, prior error) error {
 	var (
 		failed   []string
 		partial  []string
@@ -672,6 +691,10 @@ func verdict(out io.Writer, rows []sourceStatus, states []captureState, newest t
 	// has closed.
 	errs = append(errs, statusCaptureVerdict(out, states, opt, bound)...)
 
+	// What the store's own contents say, which is a different question from
+	// everything above and raises no error of its own. See evidenceVerdict.
+	evidenceVerdict(out, fresh, opt.now)
+
 	switch {
 	case newest.IsZero():
 		fmt.Fprintln(out, "no harvest has ever recorded a run in this store")
@@ -719,11 +742,26 @@ func verdict(out io.Writer, rows []sourceStatus, states []captureState, newest t
 			// evidence still arriving — was not made at all.
 			fmt.Fprintln(out, "nothing else is wrong: every source that ran succeeded and every capture "+
 				"held, but that is not an all-clear on the schedule, which went unchecked")
+		case len(fresh.silent()) > 0:
+			// A SOURCE THAT HAS STOPPED RECORDING REPLACES THE ALL-CLEAR RATHER
+			// THAN QUALIFYING IT. "Every source ran and succeeded" is true of a
+			// machine on which one source has said nothing for two days — every
+			// run of it really did return ok — and printing it as the last word
+			// is the whole defect. The line above already carries the reading.
+			fmt.Fprintf(out, "nothing else is wrong: every source ran and every capture held within "+
+				"the last %s, but %s stopped recording, above\n",
+				short(bound.d), plural(len(fresh.silent()), "source"))
 		case len(inFlight) > 0:
 			fmt.Fprintf(out, "nothing else is wrong: every source that has finished succeeded within "+
-				"the last %s, and every capture held\n", short(bound.d))
+				"the last %s, and every capture held%s\n",
+				short(bound.d), evidenceAllClear(fresh, opt.now))
 		default:
-			fmt.Fprintf(out, "every source ran and succeeded within the last %s, and every capture held\n", short(bound.d))
+			// The age of the newest evidence is welded onto this line and not
+			// left to the header. A green bottom line that mentioned only
+			// harvests is what a reader took away from 2026-08-13, and the two
+			// facts must not be separable.
+			fmt.Fprintf(out, "every source ran and succeeded within the last %s, and every capture held%s\n",
+				short(bound.d), evidenceAllClear(fresh, opt.now))
 		}
 	}
 	return errors.Join(errs...)
@@ -974,13 +1012,44 @@ func statusCaptureAge(s captureState, now time.Time) string {
 	return short(now.Sub(s.last.StartedAt)) + " ago"
 }
 
+// captureSkipped is a capture that passed over its source BY POLICY — the
+// throttled knowledgeC snapshot, whose cadence is deliberately no longer welded
+// to the harvest cadence. It is defined by migration 0015 and belongs to
+// internal/store.
+//
+// IT IS SPELLED HERE AS A STRING RATHER THAN IMPORTED, and that is a compromise
+// with a shelf life rather than a design. The migration and the store constant
+// landed on a parallel branch; this file needed the arm below before the two
+// trees met, and a second copy of a string is exactly the kind of thing this
+// project has watched go stale. It is safe only because of the default arm
+// below: if this spelling and the store's ever diverge, a `skipped` row falls
+// into "a status this report does not recognise" and says so, which is a loud
+// failure rather than a silent one. Replace it with store.CaptureSkipped at the
+// first opportunity.
+const captureSkipped store.CaptureStatus = "skipped"
+
 // statusCaptureOutcome is what the last capture did, in words.
 //
-// The four cases below are four different facts and none of them may be printed
-// as another. "Nothing new" is a healthy reading from a content-addressed
-// capture over an unchanged source. "Nothing to capture" is a machine with no
-// Motion installed. "No capture recorded" is the absence of a reading
-// altogether. And "failed" is the one that was invisible.
+// Every case below is a different fact and none of them may be printed as
+// another. "Nothing new" is a healthy reading from a content-addressed capture
+// over an unchanged source. "Skipped" is a decision not to look at all.
+// "Nothing to capture" is a machine with no Motion installed. "No capture
+// recorded" is the absence of a reading altogether. And "failed" is the one that
+// was invisible.
+//
+// The two that are easiest to confuse are the first two, and they are one column
+// apart in the table: migration 0015's CHECK pins a skipped run to files_new,
+// files_held and bytes all zero, and a run that looked and found everything
+// already held records files_new zero with files_held positive. Until 2026-08-13
+// this switch fell through to the ok wording for any status it did not
+// recognise, so a policy skip printed as "ok, nothing new" — a decision reported
+// in the words of an observation, which is the collapse this whole report exists
+// to refuse.
+//
+// The default arm is the general fix and matters more than the skipped arm. A
+// status this file has never heard of is now named as unrecognised rather than
+// described as healthy, so the NEXT status added to capture_run cannot arrive
+// here wearing the all-clear.
 func statusCaptureOutcome(s captureState) string {
 	if !s.recorded {
 		return "no capture recorded"
@@ -992,15 +1061,23 @@ func statusCaptureOutcome(s captureState) string {
 		return "failed"
 	case store.CapturePartial:
 		return fmt.Sprintf("partial, %s preserved and some lost", plural(s.last.FilesNew, "file"))
+	case captureSkipped:
+		// A DECISION, NOT A READING. Nothing was looked at, so nothing about the
+		// source was observed, and the files on disk are from whenever the last
+		// capture that did run put them there.
+		return "skipped by policy, so nothing was looked at"
+	case store.CaptureOK:
+		held := ""
+		if s.last.FilesHeld > 0 {
+			held = fmt.Sprintf(", %d already held", s.last.FilesHeld)
+		}
+		if s.last.FilesNew == 0 {
+			return "ok, nothing new" + held
+		}
+		return fmt.Sprintf("ok, %d new%s", s.last.FilesNew, held)
+	default:
+		return fmt.Sprintf("a status this report does not recognise (%q)", s.last.Status)
 	}
-	held := ""
-	if s.last.FilesHeld > 0 {
-		held = fmt.Sprintf(", %d already held", s.last.FilesHeld)
-	}
-	if s.last.FilesNew == 0 {
-		return "ok, nothing new" + held
-	}
-	return fmt.Sprintf("ok, %d new%s", s.last.FilesNew, held)
 }
 
 // statusCaptureVerdict names what is wrong with the capture phase, and returns
