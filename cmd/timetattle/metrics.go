@@ -17,6 +17,7 @@ import (
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/sessions"
+	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
 )
 
@@ -620,6 +621,7 @@ func reportMetrics(out io.Writer, path string, r metrics.Report, cols int,
 	metricsCollisions(out, cols, contested)
 	metricsClients(out, r, cols, scope)
 	metricsProjects(out, r, cols, scope)
+	metricsMix(out, r, cols, scope)
 	metricsUnattributed(out, r, cols)
 	metricsCorrections(out, r, cols, uncorrected)
 
@@ -911,6 +913,132 @@ func metricsWriteProjects(out io.Writer, rows [][]string, cols int) {
 		floor:   10,
 		cols:    cols,
 	})
+}
+
+// metricsMix prints WHAT KIND of work the clock held, as against whose it was.
+//
+// Every other table here answers "whose hour was this". This one answers "what
+// was going on in it", which is the question a person actually asks of a week
+// and the one the report could not answer at all: it could say forty hours and
+// could not say how much of that was Claude, how much was git, how much was a
+// file changing on disk.
+//
+// # IT IS NOT A BREAKDOWN AND THE COLUMN DOES NOT ADD UP
+//
+// A commit made in the middle of a Claude Code session is observed by gitlog
+// AND by claude-transcripts, and neither can be made to give the minute up. So
+// there is no partition of the clock by source and columns that summed to
+// presence would be arithmetically false — the same arithmetic the client
+// roll-up above already lives under, one axis over. The sentence saying so is
+// printed with the table and not in the documentation, because a reader adding
+// the column up is doing it here.
+//
+// Two figures per row make that safe rather than merely stated. "participated"
+// is the presence a family's own evidence clusters to, and it overlaps
+// everything else; "solely" is the part no other family reaches, which is the
+// figure that is honestly comparable between rows. Those and the clock NO
+// family reaches do tile presence exactly, and internal/metrics checks it.
+//
+// # The mapping is printed, not documented
+//
+// Which source ids went into which row is read off the CORPUS and printed
+// beneath the table. A grouping a reader cannot check is a verdict whose list
+// nobody has seen, which is this repository's standing rule about tools fed a
+// list, and it has been broken here twice before. Printed from the corpus, a
+// collector nobody has classified appears by name under "unclassified" the
+// first time it harvests, instead of quietly not being in any row.
+func metricsMix(out io.Writer, r metrics.Report, cols int, scope metricsScope) {
+	if len(r.Mix.Families) == 0 {
+		return
+	}
+
+	rows := make([][]string, 0, len(r.Mix.Families))
+	mapping := make([]string, 0, len(r.Mix.Families))
+	for _, f := range r.Mix.Families {
+		share := 0.0
+		if r.Presence.Total > 0 {
+			share = 100 * f.Engaged.Total.Seconds() / r.Presence.Total.Seconds()
+		}
+		rows = append(rows, []string{f.Name,
+			metricsHours(f.Engaged.Total), fmt.Sprintf("%.1f%%", share),
+			metricsHours(f.Solely), metricsHours(f.Engaged.Observed),
+			fmt.Sprintf("%d", f.Events)})
+		mapping = append(mapping, fmt.Sprintf("%s from %s", f.Name, strings.Join(f.Sources, ", ")))
+	}
+
+	fmt.Fprint(out, "\nACTIVITY MIX, by kind of evidence\n")
+	writeColumns(out, table{
+		indent:  "  ",
+		gutter:  " ",
+		head:    []string{"family", "participated", "share", "solely", "observed", "observations"},
+		body:    rows,
+		natural: []int{12, 13, 8, 9, 9, 13},
+		right:   []bool{false, true, true, true, true, true},
+		floor:   10,
+		cols:    cols,
+	})
+
+	fmt.Fprint(out, "\n")
+	wrap(out, "  ", "THESE ROWS OVERLAP AND NEVER SUM. A commit made during a Claude Code session "+
+		"is observed by Git and by Claude, so the same minute is in both rows and adding the "+
+		"column up produces a figure that is not any quantity at all. \"participated\" is the "+
+		"presence a family's own evidence clusters to; \"solely\" is the part of it no other "+
+		"family reaches, and is what would drop out of this section without that stream.", cols)
+	// Printed at zero as well, and that is the point of it. It is what says the
+	// rows do not tile presence, and omitting it when it happens to be nothing
+	// would make the mix read as a partition on exactly the spans where it most
+	// nearly is one.
+	fmt.Fprint(out, "\n")
+	metricsWhy(out, cols, metricsHours(r.Mix.Unreached),
+		"reached by NO family: silence the gap threshold bridged BETWEEN two streams, which "+
+			"neither of them bridges on its own. It is presence, and no kind of work is "+
+			"responsible for it.")
+	// The mapping, from the corpus. Wrapped rather than clipped, for the same
+	// reason the absence figures are: a shortened line here would delete a
+	// source id, and the whole purpose of the line is that every id is on it.
+	wrap(out, "  ", "built from: "+strings.Join(mapping, "; "), cols)
+	// AND THE FAMILIES THAT ARE NOT ABOVE. A family with nothing in this span
+	// gets no row, and correctly so: a 0.0h row would state that it observed
+	// none of this span when the only thing known is that no observation of it
+	// exists here. But saying NOTHING is the other half of the same mistake — a
+	// reader cannot tell a stream that recorded nothing from one this tool has
+	// never heard of. Read from the shared mapping rather than from the corpus,
+	// because a family absent from the corpus is exactly what cannot be read
+	// out of it.
+	if absent := metricsFamiliesAbsentFrom(r); len(absent) > 0 {
+		wrap(out, "  ", fmt.Sprintf("no observation in this span: %s. That is not a figure of "+
+			"zero — nothing from those streams reached this span at all.",
+			strings.Join(absent, ", ")), cols)
+	}
+	// Presence and ignored sources are missing from that list by ROLE rather
+	// than by oversight, and a reader who knows the store holds a backlight
+	// stream would otherwise read its absence as a gap in the mapping.
+	if len(r.Params.PresenceSources) > 0 || len(r.Params.IgnoreSources) > 0 {
+		wrap(out, "  ", "the presence and ignored sources named at the top of this report are in "+
+			"no row: one bounds sittings without creating any and the other is dropped on the "+
+			"way in, so neither can be responsible for an hour of work.", cols)
+	}
+	if scope.filtering() {
+		wrap(out, "  ", "the mix above is the WHOLE span's and was not narrowed by the filter, "+
+			"exactly as the PRESENCE line at the top was not. What kind of work a stream "+
+			"observed is a question about the clock, not about whose the clock was.", cols)
+	}
+}
+
+// metricsFamiliesAbsentFrom names every family the mapping knows and this
+// report has no row for, sorted.
+//
+// The unclassified row is deliberately not a family and is never named here: it
+// is not a stream that recorded nothing, it is a stream nobody has placed, and
+// it only ever appears when there is something in it.
+func metricsFamiliesAbsentFrom(r metrics.Report) []string {
+	var out []string
+	for _, f := range source.Families() {
+		if _, ok := r.Mix.Family(string(f)); !ok {
+			out = append(out, string(f))
+		}
+	}
+	return out
 }
 
 // metricsUnattributed prints presence no project could be attributed, split by

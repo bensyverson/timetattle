@@ -327,6 +327,139 @@ Which sources count as recording an act is a judgment made in one place,
 `internal/source`, and named out loud there. An **unclassified source is weak**:
 not having weighed a stream is not the same as having found it strong.
 
+## The activity mix: what kind of work, not whose
+
+Every other table in the report answers *whose* an hour was. `ACTIVITY MIX`
+answers *what was going on in it* — how much of a week was Claude, how much was
+git, how much was a file changing on disk.
+
+```
+ACTIVITY MIX, by kind of evidence
+  family        participated    share    solely  observed  observations
+  Apps                352.3h    30.2%     87.3h    324.2h         55635
+  Blender               1.6h     0.1%      0.5h      0.0h            10
+  Claude              989.3h    84.9%    339.8h      0.0h        856656
+  Files               475.2h    40.8%     43.5h      0.0h        132312
+  Git                 308.0h    26.4%     16.5h      0.0h          4543
+  Jobs                293.7h    25.2%      2.4h    158.7h         16655
+  Motion                7.2h     0.6%      3.0h      0.0h            38
+
+        1.2h  reached by NO family: silence the gap threshold bridged BETWEEN
+              two streams, which neither of them bridges on its own.
+```
+
+Those figures are the whole store, unwindowed, from `timetattle metrics -all` on
+2026-08-13. They sum to 2427.3h against the **1165.3h of presence** the same run
+reports — **2.08 times the clock**, which is the point of the section rather
+than a defect in it.
+
+### The rows overlap and never sum
+
+**Adding that column up produces a figure that is not any quantity at all.** A
+commit made in the middle of a Claude Code session is observed by `Git` *and* by
+`Claude`, and neither can be made to give the minute up, so there is no
+partition of the clock by source. This is the same arithmetic the
+[client roll-up](#a-client-is-re-clustered-so-it-can-hold-a-little-clock-no-project-holds)
+already lives under, one axis over — and on the live store the families
+genuinely do sum to several times presence, so it is not a technicality.
+
+Two figures per row are what make the section safe to read rather than merely
+warned about:
+
+| | |
+| --- | --- |
+| `participated` | the presence this family's own evidence clusters to. It overlaps every other row. |
+| `solely` | the part of it **no other family reaches**: what would drop out of this section if the stream were not there. |
+
+`solely` is the honestly comparable figure. The `solely` figures *are* disjoint,
+and together with the clock **no** family reaches they tile presence exactly —
+which the report checks, two different ways, before printing anything.
+
+### A family's clock is its own evidence re-clustered
+
+Exactly as a project's and a client's are. The alternative — crediting a family
+the whole of any sitting its evidence appears anywhere inside — is a model this
+tool has already measured wrong one level down, where it summed to 24.01h across
+a 12.78h day. Applied to families it would credit `Git` a whole afternoon on the
+strength of one commit at the end of it.
+
+**This is why the figure differs from the `dashboard`'s source bar.** That panel
+partitions whole *sittings* by which families evidenced them, treating the
+sitting as atomic — a legitimately different question asked of the same
+evidence. A family's clock there can never be *smaller* than it is here, since a
+sitting is credited in full for one observation anywhere inside it. The two are
+not the same measurement and must not be subtracted from each other; they also
+do not cover the same span, since the dashboard reports a trailing window and
+this reports whatever `-from`/`-to` asked for.
+
+### Clock no family reaches
+
+The line beneath the table is printed even when it is zero, because it is what
+says the rows do not tile presence. It is silence the gap threshold bridged
+**between** two streams: ten minutes of Claude, a commit twelve minutes later
+and more Claude twelve minutes after that is one sitting, and no single family's
+own clustering covers the whole of it. Awarding that clock to a family would
+credit a stream with time it never reached.
+
+### The mapping is printed, not documented
+
+The `built from:` line beneath the table names the source ids that went into
+each row, **read from the corpus rather than from the table in the code**. A
+grouping a reader cannot check is a verdict whose list nobody has seen. Read
+from the corpus, the line names exactly what produced the figures beside it.
+
+| family | streams |
+| --- | --- |
+| `Apps` | `biome-appusage`, every `knowledgec-` stream |
+| `Blender` | `blender-backups` |
+| `Claude` | `claude-transcripts` |
+| `Files` | `fs-observations` |
+| `Git` | every `gitlog-` stream |
+| `Jobs` | every `job-` stream |
+| `Motion` | `motion-autosave` |
+
+`Files` is its own family and not folded in with `Blender` and `Motion`: the
+generic walk says a file changed and cannot say which application changed it or
+whether a person did, while the other two name the application they came from.
+Both `job-` streams are one family, because rows that never sum would otherwise
+leave a reader with two figures and no way to add them.
+
+It is one table, in `internal/source`, and `timetattle dashboard` draws its
+source bar from the same one. Two commands disagreeing about what an hour *was*
+would be worse than neither reporting it.
+
+**A family with nothing in the span gets no row, and is named anyway.** A
+`0.0h` row would state that `Blender` observed none of this week when the only
+thing known is that no Blender observation reached it; saying nothing at all
+would leave a reader unable to tell a stream that recorded nothing from one the
+tool has never heard of. So a `no observation in this span:` line names them.
+(On the whole store every family is present and the line does not appear.)
+
+**A source no family has been decided for is named, not dropped.** A manifest
+can declare any id, so the mapping is a list, and a list goes stale silently —
+in the direction that makes a report look complete. Those observations appear
+under `unclassified` with their ids on the `built from:` line, so somebody can
+decide where they belong. (`dashboard` refuses to draw at all in that case; a
+chart is all-or-nothing, while withholding an entire `metrics` report would hide
+every figure the new stream has nothing to do with.)
+
+### What is not in the mix
+
+**Presence and ignored sources**, by role rather than by oversight. A backlight
+reading bounds sittings and creates none, and an ignored source is dropped on
+the way in, so neither can be responsible for an hour of work. The backlight
+has [its own figures](#presence-is-not-screen-on-time).
+
+**Evidence that no project could be attributed is in the mix, and deliberately.**
+Biome and knowledgeC carry no path and appear in no project row and no client
+row anywhere in the report; this is the one place they are counted. Leaving them
+out would answer "what kind of work was this" using only the streams that happen
+to resolve to a directory.
+
+**The mix is not narrowed by `-client` or `-project`.** It is a decomposition of
+presence, exactly as the `PRESENCE` line at the top is, and a filtered report
+says so rather than letting the figures be read as the filtered scope's own mix.
+
 ## Absolute and allocation
 
 A minute two projects were both active across can be counted two ways, and both
