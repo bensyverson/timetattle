@@ -100,6 +100,95 @@ func concurrentDay(t *testing.T) metrics.Report {
 	return realReport
 }
 
+var (
+	byClientOnce   sync.Once
+	byClientReport metrics.Report
+	byClientWhy    string
+	// Kept apart from byClientWhy on purpose. "There is no store on this
+	// machine" is a reason to skip; "the store is there and Compute REFUSED
+	// it" is a failure, and folding the second into the first would report a
+	// guard firing on real evidence as a test that measured nothing — the
+	// absence-is-not-an-observation collapse this project has shipped three
+	// times. Measured: with the client level clustered at a wider gap than the
+	// projects, this is the difference between a green run with a skip in it
+	// and a red one naming 30m26.849s of inflation.
+	byClientRefused string
+)
+
+// concurrentDayByClient is the same day with its CLIENTS resolved, computed once.
+//
+// It exists because concurrentDay above computes from the store's raw events and
+// those carry no client at all: the client on an observation is stamped by the
+// caller from the client-project log, per observation and at that observation's
+// own anchor, because a directory's owner has effective dates. Every shipped
+// command does that stamping before it calls into this package — see
+// cmd/timetattle and scripts/rollupunion — so a report built without it names
+// ZERO clients and any assertion about the roll-up made against it would pass
+// having examined nothing.
+func concurrentDayByClient(t *testing.T) metrics.Report {
+	t.Helper()
+	byClientOnce.Do(func() {
+		path, err := store.DefaultPath()
+		if err != nil {
+			byClientWhy = "no home directory: " + err.Error()
+			return
+		}
+		if _, err := os.Stat(path); err != nil {
+			byClientWhy = "cannot stat " + path + ": " + err.Error()
+			return
+		}
+		st, err := store.OpenReadOnly(path)
+		if err != nil {
+			byClientWhy = "cannot read " + path + ": " + err.Error()
+			return
+		}
+		defer st.Close()
+
+		from := time.Date(2026, 7, 28, 5, 0, 0, 0, time.Local)
+		events, err := st.Events(context.Background(), store.Filter{From: from, To: from.AddDate(0, 0, 1)})
+		if err != nil {
+			byClientWhy = "cannot read events: " + err.Error()
+			return
+		}
+		if len(events) == 0 {
+			byClientWhy = "the live store holds nothing for 2026-07-28"
+			return
+		}
+		cm, err := st.ClientMap(context.Background(), time.Time{})
+		if err != nil {
+			byClientWhy = "cannot read the client-project log: " + err.Error()
+			return
+		}
+		for i := range events {
+			if events[i].Identity.Project == "" {
+				continue
+			}
+			if c, ok := cm.At(events[i].Identity.Project, events[i].Anchor()); ok {
+				events[i].Identity.Client = c
+			}
+		}
+		cfg := config.Default()
+		byClientReport, err = metrics.Compute(events, sessions.Params{
+			Gap:             cfg.Sessions.Gap.Duration(),
+			LeadIn:          cfg.Sessions.LeadIn.Duration(),
+			TailOut:         cfg.Sessions.TailOut.Duration(),
+			PresenceSources: cfg.Sessions.PresenceSources,
+			IgnoreSources:   cfg.Sessions.IgnoreSources,
+		})
+		if err != nil {
+			byClientRefused = err.Error()
+		}
+	})
+	if byClientRefused != "" {
+		t.Fatalf("Compute refused a real day of this store, which is a finding and not a "+
+			"reason to skip: %s", byClientRefused)
+	}
+	if byClientWhy != "" {
+		t.Skipf("%s", byClientWhy)
+	}
+	return byClientReport
+}
+
 // Criterion 37i on real data. Engaged time overlaps across projects, and
 // presence counts the clock once — measured on a day three projects genuinely
 // interleaved rather than on a fixture arranged to make it true.
@@ -392,4 +481,51 @@ func TestWeakIsNotTheSameQuantityAsUnobservedOnRealData(t *testing.T) {
 			"make the weak column a restatement of the observed one. Check that the attesting " +
 			"sources in internal/source still reach this day's evidence")
 	}
+}
+
+// THE ONE THING THE ROLL-UP GUARD STILL ASSERTS, ON REAL EVIDENCE. A client
+// owning exactly one project is that project's own observations clustered again
+// under the same parameters, so it can never be credited more clock than the
+// project is. The check that closes Compute is that sentence and nothing more,
+// since 2026-08-13 — the one it replaced compared EVERY client against the SUM
+// of its projects, which is false wherever a client's projects interleave and
+// refused a whole day of this store over a correct figure.
+//
+// A constructed case cannot establish this. The relation holds by construction
+// on evidence a test writes down, because a test writes down evidence that
+// resolves cleanly; what it cannot arrange is a project stamped with its client
+// from a log with effective dates, over months, with harvests landing in the
+// middle. The whole-store reading is in
+// project/2026-08-13-rollup-reclustering-resolved.md, reproduced by
+// `go run ./scripts/rollupunion`; this is the same relation on the day the rest
+// of this file measures.
+//
+// It says out loud how many clients it found in that state, because a report in
+// which NO client owns exactly one project would pass this test having checked
+// nothing at all, and that is not the same finding as the relation holding.
+func TestAOneProjectClientIsNeverCreditedMoreThanItsProjectOnRealData(t *testing.T) {
+	r := concurrentDayByClient(t)
+	var checked int
+	for _, c := range r.Clients {
+		if len(c.Projects) != 1 {
+			continue
+		}
+		p, ok := r.Project(c.Projects[0])
+		if !ok {
+			t.Errorf("a client names a project the report does not hold, so the roll-up cannot " +
+				"be traced to the rows it came from")
+			continue
+		}
+		checked++
+		if c.Engaged.Total > p.Engaged.Total {
+			t.Errorf("a client with one project is credited %v against the %v its project holds; "+
+				"the two are the same evidence clustered twice and this cannot happen",
+				c.Engaged.Total, p.Engaged.Total)
+		}
+	}
+	if checked == 0 {
+		t.Skipf("no client on 2026-07-28 owns exactly one project, so the relation was not "+
+			"exercised; the report names %d client(s)", len(r.Clients))
+	}
+	t.Logf("checked %d client(s) owning exactly one project", checked)
 }

@@ -258,18 +258,41 @@ type Project struct {
 // Client is one client's share of the clock, rolled up across every project of
 // theirs.
 //
-// A ROLL-UP IS A UNION AND NEVER A SUM, and that is the whole reason this type
-// exists rather than a caller adding Project rows together. Engaged is
-// ABSOLUTE: a minute two projects were both active in counts in full for each,
-// which is what makes it the invoice figure. Add three of one client's project
-// rows up and the client is credited three times for a minute they worked once.
+// A ROLL-UP IS NEVER A SUM, and that is the whole reason this type exists rather
+// than a caller adding Project rows together. Engaged is ABSOLUTE: a minute two
+// projects were both active in counts in full for each, which is what makes it
+// the invoice figure. Add three of one client's project rows up and the client
+// is credited three times for a minute they worked once.
 //
-// The distinction is invisible where a client has one project — one row summed
-// is the same number as one span unioned — and in the live registry every
-// client is 1:1 except one, which spans 33 projects. So the whole of the risk
-// sits on that one shape, and it is computed here the same way a project's is:
-// by re-clustering the client's OWN evidence under the same parameters and
-// intersecting the result with the global sittings.
+// IT IS NOT THE UNION OF THOSE ROWS EITHER, and this doc comment said for months
+// that it was. A client's hours are its OWN evidence — every one of its
+// projects' observations at once — clustered again under the same parameters and
+// intersected with the global sittings, exactly as a project's hours are derived
+// one level down. Clustering does not distribute over a union, so the two are
+// not the same figure: a silence too wide for any single project to bridge can
+// be narrow enough to bridge once the client's evidence is taken together, and
+// the client is then credited a stretch none of its projects is credited. On the
+// live store that surplus is 19m13s of 617h40m54s, in 11 stretches, measured by
+// `go run ./scripts/rollupunion` on 2026-08-13.
+//
+// THE SURPLUS IS WORK AND NOT AN ARTEFACT, which is why it is kept. Moving
+// between two of one client's projects costs attention that neither project's
+// own evidence records, so a stretch bridged only at the client level is that
+// switching cost made visible. A client's hours are what that client's evidence
+// clusters to when taken together, and the projects' sum is the figure that is
+// missing something.
+//
+// TWO CONSEQUENCES A READER OF A REPORT SHOULD KNOW. A client can exceed the sum
+// of its projects, so a report where it does is correct rather than broken — the
+// check that used to refuse exactly that report is gone, and what replaced it is
+// at the close of Compute. And clock a client holds that no project of any client
+// holds is ALSO printed under unattributed presence as silence the gap threshold
+// bridged: the same minutes appear in two sections, once as this client's and
+// once as clock nothing could be attributed. Both statements are true of it.
+//
+// The distinction is invisible where a client has one project — one row is the
+// whole of its evidence — and in the live registry every client is 1:1 except
+// one, which spans 33 projects. So the whole of it sits on that one shape.
 //
 // Allocated divides by CLIENT and not by project, which is a different split
 // rather than the same one re-added. A minute two of one client's projects and
@@ -285,7 +308,9 @@ type Client struct {
 	Projects []string
 	// Events is how many attributed observations this rests on.
 	Events int
-	// Engaged is ABSOLUTE and is the UNION across this client's projects. The
+	// Engaged is ABSOLUTE, and is this client's own evidence re-clustered
+	// rather than its projects' spans merged: it can exceed both their sum and
+	// their union, by the silence only their combined evidence bridges. The
 	// same decomposition as Project.Engaged: Observed counts only this
 	// client's own evidence, which is zero on real data for the reason the
 	// package doc gives.
@@ -385,7 +410,9 @@ type Report struct {
 	// Projects, sorted by name.
 	Projects []Project
 	// Clients, sorted by name: the same accounting rolled up one level, by
-	// union rather than by sum. See Client.
+	// re-clustering each client's own evidence rather than by adding or
+	// merging the project rows. See Client, which says what that makes it
+	// larger than.
 	Clients []Client
 	// Clientless is presence a PROJECT was attributed but no CLIENT was: the
 	// project resolved, and the client-project log had no single answer for it
@@ -913,20 +940,44 @@ func Watched(events []source.Event, p sessions.Params, said []Attribution, w Wat
 				"spans, off by %v; the segmentation is missing a cut", c.Name, c.Engaged.Total, got,
 				c.Engaged.Total-got)
 		}
-		// THE ROLL-UP IS A UNION, ASSERTED RATHER THAN INTENDED. A client can
-		// never be credited more clock than the projects underneath it are,
-		// because its span is their union; if it exceeds their sum, the union
-		// was computed as an addition somewhere.
-		var summed time.Duration
-		for _, name := range c.Projects {
-			if p, ok := r.Project(name); ok {
-				summed += p.Engaged.Total
+		// A CLIENT WITH ONE PROJECT IS THAT PROJECT'S OWN EVIDENCE CLUSTERED
+		// AGAIN, so it can never hold more clock than the project does.
+		//
+		// This is what is left of a check that used to compare EVERY client
+		// against the SUM of its projects, on the belief that a roll-up is the
+		// union of their spans. That belief is false: clustering does not
+		// distribute over a union, so where a client's projects are worked
+		// alternately the client bridges silences none of them bridges and
+		// legitimately exceeds the sum. The check refused whole reports over
+		// correct figures — no row missing, no report at all — and it did not
+		// catch the addition-shaped bug it was written for, which the equality
+		// immediately above catches first, every time.
+		//
+		// What it DID catch, established by mutation on the live store: the
+		// client level clustered at a wider gap than the projects, inflating a
+		// client's own spans while its segments and spans still agreed with each
+		// other. The whole test suite passed under that mutation and this check
+		// alone refused it, on a client with ONE project, by 3h38m2.96s. Five of
+		// the six clients in that store own one project, so this is not a narrow
+		// case; it is where the containment is exact.
+		//
+		// IT IS AN INEQUALITY AND NOT AN EQUALITY, deliberately. A project is
+		// stamped with its client per observation from a log with effective
+		// dates, so a directory registered to a client partway through its life
+		// has earlier evidence that is the project's and no client's. The
+		// project then holds clock its client does not — the report calls that
+		// Clientless — and an equality here would refuse the whole report over
+		// an ordinary registration. A project worked for one client in the
+		// morning and another in the afternoon does the same. Both shapes are
+		// in this package's own tests, and were measured against the equality
+		// in project/2026-08-13-rollup-reclustering-resolved.md.
+		if len(c.Projects) == 1 {
+			if p, ok := r.Project(c.Projects[0]); ok && c.Engaged.Total > p.Engaged.Total {
+				return Report{}, fmt.Errorf("client %s is credited %v against the %v held by its "+
+					"only project %s; a client with one project is that project's own evidence "+
+					"clustered again and can never exceed it",
+					c.Name, c.Engaged.Total, p.Engaged.Total, p.Name)
 			}
-		}
-		if c.Engaged.Total > summed {
-			return Report{}, fmt.Errorf("client %s is credited %v across projects summing to %v; a "+
-				"roll-up is the union of its projects' spans and can never exceed their sum",
-				c.Name, c.Engaged.Total, summed)
 		}
 	}
 

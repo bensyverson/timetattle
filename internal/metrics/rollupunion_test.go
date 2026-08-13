@@ -2,7 +2,6 @@ package metrics_test
 
 import (
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -95,32 +94,97 @@ func TestAClientHoldsClockNoProjectOfItsOwnHoldsWhileTheGuardStaysSilent(t *test
 	}
 }
 
-// THE REFUSAL REACHES THE HUMAN SURFACE AND NOT ONLY `metrics`, pinned at the
-// call rather than argued from the call graph.
+// THE HUMAN SURFACE GETS THE REPORT TOO, pinned at the call rather than argued
+// from the call graph.
 //
 // Corrected is the entry point `dashboard` uses — cmd/timetattle/dashboard.go
 // calls it once for the run and again per engagement in the allocation section,
-// and returns its error unchanged, so a refusal there prints no dashboard at
-// all rather than a dashboard missing a row. It was wired to this path on
-// 2026-08-13; before that it called Compute and was uncorrected, which is a
-// different defect that was fixed by giving it this one.
+// and returns its error unchanged, so anything Compute refuses prints no
+// dashboard at all rather than a dashboard missing a row. Until 2026-08-13 this
+// test pinned the interleaving corpus being REFUSED through exactly that call,
+// which meant an ordinary day's alternation between two of a client's projects
+// blanked the human surface entirely.
 //
-// The corpus is the one rollupcost_test.go pins, and this asserts only that the
-// SAME refusal arrives through the SAME call with an empty correction log —
-// which is what every dashboard run on a store nobody has corrected does.
-func TestTheRollUpRefusalArrivesThroughTheCallTheDashboardMakes(t *testing.T) {
+// The corpus is the one rollupcost_test.go carries, and this asserts the same
+// figure arrives through the same call with an empty correction log — which is
+// what every dashboard run on a store nobody has corrected does. It is not a
+// duplicate of that test: what it pins is the PATH, and the path is the reason
+// the defect cost a dashboard and not only a `metrics` run.
+func TestTheInterleavedRollUpArrivesThroughTheCallTheDashboardMakes(t *testing.T) {
 	events := []source.Event{
 		clientPoint(at(9, 0), "atelier", "loom"),
 		clientPoint(at(9, 12), "atelier", "kiln"),
 		clientPoint(at(9, 24), "atelier", "loom"),
 		clientPoint(at(9, 36), "atelier", "kiln"),
 	}
-	_, err := metrics.Corrected(events, testParams(), nil)
-	if err == nil {
-		t.Fatal("Corrected computed the interleaving corpus; if the contradiction has been " +
-			"settled, this test and the one in rollupcost_test.go both go")
+	r, err := metrics.Corrected(events, testParams(), nil)
+	if err != nil {
+		t.Fatalf("the call the dashboard makes refused the interleaving corpus, so there is no "+
+			"dashboard at all for a day worked this way: %v", err)
 	}
-	if !strings.Contains(err.Error(), "can never exceed their sum") {
-		t.Fatalf("the corpus was refused for some other reason than the roll-up guard: %v", err)
+	c := clientOf(t, r, "atelier")
+	if want := 46 * time.Minute; c.Engaged.Total != want {
+		t.Errorf("the dashboard's own call credits the client %v, want %v — the same figure "+
+			"`metrics` computes, since it is the same computation", c.Engaged.Total, want)
+	}
+}
+
+// A ONE-PROJECT CLIENT CAN LEGITIMATELY HOLD LESS THAN ITS PROJECT, WHICH IS WHY
+// THE CHECK THAT REPLACED THE UNION GUARD IS AN INEQUALITY AND NOT AN EQUALITY.
+//
+// The guard that closed Compute until 2026-08-13 refused any client exceeding
+// its projects' sum, and it went because that invariant is false wherever a
+// client's projects interleave. What survives of it is the half that is true by
+// construction: a client owning exactly ONE project is that project's own
+// evidence, clustered again under the same parameters, so it can never exceed
+// it. That is also the shape the removed guard actually caught — a mutation
+// inflating the client's own clustering fired on a one-project client, and five
+// of the six clients in the live store are in that state.
+//
+// The obvious tightening — that the two are EQUAL to the nanosecond — is not
+// true, and this is the case that breaks it. A project is stamped with a client
+// per observation, from a log with effective dates, so a directory registered to
+// a client only from some date has evidence BEFORE that date which is the
+// project's and no client's. The project then holds clock its client does not,
+// and an equality would refuse the whole report over it: no report, which is
+// exactly the failure being repaired. `Clientless` is the figure that names that
+// clock, and it already exists.
+//
+// This test is green under the shipped inequality and RED under the equality
+// proposed for it, which is the only reason it can be written down at all.
+func TestAOneProjectClientHoldsLessThanItsProjectWhenTheClientResolvedLate(t *testing.T) {
+	events := []source.Event{
+		// Before the registration: the project resolves, the client does not.
+		point(at(9, 0), "loom"),
+		point(at(9, 5), "loom"),
+		// After it: the same project, now stamped with its client.
+		clientPoint(at(14, 0), "atelier", "loom"),
+		clientPoint(at(14, 5), "atelier", "loom"),
+	}
+	r := compute(t, events)
+
+	p := projectOf(t, r, "loom")
+	c := clientOf(t, r, "atelier")
+	if len(c.Projects) != 1 {
+		t.Fatalf("the client owns %v, and this case is only about a client with exactly one "+
+			"project", c.Projects)
+	}
+	// Two sittings of 15m for the project — 08:55-09:10 and 13:55-14:10 — and
+	// only the second of them is the client's.
+	if want := 30 * time.Minute; p.Engaged.Total != want {
+		t.Errorf("the project is credited %v, want %v", p.Engaged.Total, want)
+	}
+	if want := 15 * time.Minute; c.Engaged.Total != want {
+		t.Errorf("the client is credited %v, want %v", c.Engaged.Total, want)
+	}
+	if c.Engaged.Total >= p.Engaged.Total {
+		t.Fatalf("the client holds %v against its only project's %v; this corpus no longer "+
+			"exercises the direction it was written for", c.Engaged.Total, p.Engaged.Total)
+	}
+	// The difference is not lost and it is not silence either: it is presence a
+	// PROJECT was attributed and no CLIENT was, which the report names.
+	if want := 15 * time.Minute; r.Clientless != want {
+		t.Errorf("clientless presence %v, want %v; clock the client does not hold has to land "+
+			"somewhere that says what it is", r.Clientless, want)
 	}
 }

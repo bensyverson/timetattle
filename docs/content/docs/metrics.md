@@ -150,16 +150,28 @@ stretches, the longest 4m19s — that no project of its own holds, out of 617.7h
 The same minutes also appear under UNATTRIBUTED PRESENCE as bridged silence,
 because a stretch no project covers is a stretch nothing was attributed in.
 
-**This can refuse a whole report.** A closing check in the roll-up rejects any
-report in which a client exceeds its projects' *sum*, and where a client's
-projects run one after another rather than concurrently that sum has no slack to
-absorb the bridged clock. `timetattle metrics -from 2026-04-24 -to 2026-04-24`
-on the corpus above exits non-zero and prints nothing at all for exactly that
-reason. Which of the two — the re-clustered figure or the check — is the one to
-keep is an open question recorded in
-`project/2026-08-13-rollup-union-or-reclustering.md`; until it is settled, a
-window that refuses can be widened, since concurrency elsewhere in the span
-restores the slack.
+**That stretch is kept, and it is work rather than an artefact.** Moving between
+two of one client's projects costs attention that neither project's own evidence
+records; a stretch bridged only once the client's evidence is taken together is
+that switching cost made visible. So a client's hours are what that client's
+evidence clusters to when taken together, and **a client can exceed the sum of
+its projects** — a report where it does is correct, not broken.
+
+Until 2026-08-13 a closing check refused exactly that report. It rejected any
+client exceeding its projects' *sum*, and where a client's projects run one after
+another rather than concurrently, that sum has no overlap to absorb the bridged
+clock: `timetattle metrics -from 2026-04-24 -to 2026-04-24` on the corpus above
+exited non-zero and printed nothing at all — no missing row, no report. The check
+was wrong rather than the figure, and it is gone. The decision and every figure
+behind it are in `project/2026-08-13-rollup-reclustering-resolved.md`.
+
+What still closes the roll-up is the half of it that is true by construction: a
+client owning exactly **one** project is that project's own evidence clustered
+again, so it can never be credited more than the project is. That is an
+inequality and not an equality, because a project can hold clock its client does
+not — a directory registered to a client partway through its life has earlier
+evidence belonging to the project and to no client, which the report reports as
+`Clientless`.
 
 Allocation divides by client at the client level and by project at the project
 level, so they are different splits rather than the same one re-added. A minute
