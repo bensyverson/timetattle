@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bensyverson/timetattle/internal/sessions"
+	"github.com/bensyverson/timetattle/internal/source"
 )
 
 // renderSourceAttribution draws a horizontal stacked bar of estimated hours
@@ -78,23 +79,33 @@ const maxSourceSegments = 8
 
 // family is a coarse grouping of the granular source ids sessions.Session's
 // own Sources field carries — see sourceFamily below for the mapping and why
-// this layer exists at all. It is a display-only taxonomy: nothing outside
-// this file (sessions.Session.Sources, metrics.Report, the store) knows
-// families exist, exactly as nothing outside this file previously knew about
-// "combinations" — the same section-local narrowing dashboard_sources.go's
-// own package doc already describes.
+// this layer exists at all.
+//
+// IT IS NO LONGER A DISPLAY-ONLY TAXONOMY, and this comment used to say it was:
+// "nothing outside this file knows families exist". `timetattle metrics` now
+// prints an ACTIVITY MIX built on the same rollup, and two tables mapping the
+// same ids would be two tables to go stale — in the direction where the
+// dashboard calls an hour Claude's and the report calls it something else, with
+// nobody subtracting. So the judgment itself moved to internal/source, beside
+// WeakEvidence, which is the same kind of judgment about the same subject. What
+// stayed here is everything about DRAWING it: the combination grouping, the cap
+// and its remainder row, and the refusal to render on an id with no family.
+//
+// This type and its constants remain so that nothing else in this file or its
+// test changed. They are defined in terms of the shared names rather than
+// repeating the strings, so there is still exactly one place a family is named.
 type family string
 
 // The seven families every mapped source id rolls up to, named exactly as
 // job 57dP7 (the task this file's family rollup belongs to) specifies them.
 const (
-	familyApps    family = "Apps"
-	familyBlender family = "Blender"
-	familyClaude  family = "Claude"
-	familyFiles   family = "Files"
-	familyGit     family = "Git"
-	familyJobs    family = "Jobs"
-	familyMotion  family = "Motion"
+	familyApps    = family(source.FamilyApps)
+	familyBlender = family(source.FamilyBlender)
+	familyClaude  = family(source.FamilyClaude)
+	familyFiles   = family(source.FamilyFiles)
+	familyGit     = family(source.FamilyGit)
+	familyJobs    = family(source.FamilyJobs)
+	familyMotion  = family(source.FamilyMotion)
 )
 
 // sourceFamily maps one granular source id to the family its evidence rolls
@@ -134,42 +145,28 @@ const (
 // check every real collector and built-in manifest id is run through so this
 // case is rare in practice.
 //
-// # Why prefix rules for three families and a literal table for the rest
+// # Where the table itself went, and why it is not here any more
 //
-// gitlog-, job- and knowledgec- each name a single collector that emits more
-// than one stream under a shared namespace (internal/gitlog's CommitsID and
-// ReflogID; internal/jobs' EventsID and ClaimsID; internal/knowledgec's
-// four reader ids) — a prefix rule covers a whole collector's present AND
-// future streams in one line, and is exactly as safe as the literal
-// alternative since every one of those ids is already required to start with
-// its collector's own namespace. The remaining five families each cover
-// exactly one single-stream source (claude-transcripts, biome-appusage,
-// fs-observations, motion-autosave, blender-backups), where a prefix rule
-// would just be a more roundabout way of writing the same one-to-one entry a
-// literal case already is.
+// The mapping — the prefix rules for the three multi-stream collectors and the
+// literal entries for the four single-stream ones — is now internal/source's
+// FamilyOf, with the whole of its reasoning. It moved when `timetattle metrics`
+// grew an activity mix over the same families: one judgment, one place, so the
+// two commands cannot come to disagree about what an hour was.
+//
+// WHAT DID NOT MOVE IS WHAT THIS SECTION DOES WITH ok==false. The shared
+// function refuses to guess and says so; each caller then decides what refusing
+// means for its own output, and they answer differently on purpose. Here it is
+// fatal to the render, for the reason the whole of this file's error policy
+// gives, unchanged: a chart drawn with a grouping decision nobody made is worse
+// than no chart. `metrics` instead carries such observations under a row that
+// NAMES the ids, because refusing an entire report would withhold every figure
+// that stream has nothing to do with. See
+// TestSourceAttributionFailsRenderOnAnUnmappedSource for the failure guaranteed
+// here, and TestSourceFamilyMapsEveryKnownSourceID for the completeness check
+// every real collector and built-in manifest id is still run through.
 func sourceFamily(id string) (family, bool) {
-	switch {
-	case strings.HasPrefix(id, "gitlog-"):
-		return familyGit, true
-	case strings.HasPrefix(id, "job-"):
-		return familyJobs, true
-	case strings.HasPrefix(id, "knowledgec-"):
-		return familyApps, true
-	}
-	switch id {
-	case "claude-transcripts":
-		return familyClaude, true
-	case "biome-appusage":
-		return familyApps, true
-	case "fs-observations":
-		return familyFiles, true
-	case "motion-autosave":
-		return familyMotion, true
-	case "blender-backups":
-		return familyBlender, true
-	default:
-		return "", false
-	}
+	f, ok := source.FamilyOf(id)
+	return family(f), ok
 }
 
 // sourceSegment is one family combination's share of the period, or (when

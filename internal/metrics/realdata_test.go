@@ -21,6 +21,7 @@ import (
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/sessions"
+	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
 )
 
@@ -528,4 +529,102 @@ func TestAOneProjectClientIsNeverCreditedMoreThanItsProjectOnRealData(t *testing
 			"exercised; the report names %d client(s)", len(r.Clients))
 	}
 	t.Logf("checked %d client(s) owning exactly one project", checked)
+}
+
+// THE ACTIVITY MIX ON REAL EVIDENCE, and the property a fixture cannot
+// establish: that the families genuinely OVERLAP over a real day. A constructed
+// case can be arranged to overlap; only real data can say the overlap is what
+// the corpus is actually like, which is what makes a partition by source the
+// wrong shape rather than merely an unnecessary one.
+//
+// It also exercises the whole of the mix's internal arithmetic, because that
+// check lives inside Compute: a family credited clock another family also
+// reaches, or a stretch counted as unreached while something reaches it, makes
+// Compute REFUSE — and concurrentDayByClient reports a refusal as a failure
+// rather than as a reason to skip.
+func TestTheFamiliesOverlapOnRealDataAndNoneExceedsPresence(t *testing.T) {
+	r := concurrentDayByClient(t)
+	if len(r.Mix.Families) < 2 {
+		t.Skipf("2026-07-28 holds %d evidence family/families, so nothing can overlap; "+
+			"the mix cannot be exercised on this day", len(r.Mix.Families))
+	}
+
+	var participated, alone time.Duration
+	for _, f := range r.Mix.Families {
+		participated += f.Engaged.Total
+		alone += f.Solely
+		if f.Engaged.Total > r.Presence.Total {
+			t.Errorf("family %s participated in %v against %v of presence; a family's clock is "+
+				"intersected with the sittings and cannot exceed them", f.Name,
+				f.Engaged.Total, r.Presence.Total)
+		}
+		if f.Solely > f.Engaged.Total {
+			t.Errorf("family %s holds %v alone of the %v it participated in", f.Name,
+				f.Solely, f.Engaged.Total)
+		}
+		if len(f.Sources) == 0 {
+			t.Errorf("family %s names no source id, so the mapping behind it cannot be checked "+
+				"by anybody reading the report", f.Name)
+		}
+	}
+	if participated <= r.Presence.Total {
+		t.Errorf("the families summed to %v against %v of presence on a real day; if they never "+
+			"overlapped, a partition by source would be the right shape after all and this "+
+			"whole section is built on the wrong premise", participated, r.Presence.Total)
+	}
+	// The disjoint half, asserted from outside as well as inside Compute.
+	if alone+r.Mix.Unreached > r.Presence.Total {
+		t.Errorf("what the families hold alone (%v) plus what none of them reaches (%v) exceeds "+
+			"%v of presence", alone, r.Mix.Unreached, r.Presence.Total)
+	}
+	t.Logf("%d families, %v participated against %v of presence, %v held alone, %v reached by none",
+		len(r.Mix.Families), participated, r.Presence.Total, alone, r.Mix.Unreached)
+}
+
+// EVERY STREAM THIS STORE ACTUALLY HOLDS HAS A FAMILY, checked against a list
+// read out of the store rather than one written by hand.
+//
+// cmd/timetattle's TestSourceFamilyMapsEveryKnownSourceID covers every id the
+// built binary's own collectors can emit, which is the other half and not this
+// one: a MANIFEST may declare any id it likes, so a store can hold a stream no
+// Go package names. A mapping checked only against the code would report clean
+// against a list that cannot see them — the failure this repository has logged
+// twice, where a clean report is indistinguishable from a correct one.
+func TestEveryStreamTheLiveStoreHoldsHasAFamily(t *testing.T) {
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Skipf("no home directory: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("cannot stat %s: %v", path, err)
+	}
+	st, err := store.OpenReadOnly(path)
+	if err != nil {
+		t.Skipf("cannot read %s: %v", path, err)
+	}
+	defer st.Close()
+
+	// Freshness names every source the store has ever TRIED to harvest, which
+	// is the widest list the store can produce and cannot go stale the way a
+	// literal one would.
+	fresh, err := st.Freshness(context.Background())
+	if err != nil {
+		t.Fatalf("cannot read what this store has harvested: %v", err)
+	}
+	if len(fresh) == 0 {
+		t.Skip("this store has never harvested anything, so there is no list to check")
+	}
+	var unclassified []string
+	for _, f := range fresh {
+		if _, ok := source.FamilyOf(f.Source); !ok {
+			unclassified = append(unclassified, f.Source)
+		}
+	}
+	if len(unclassified) > 0 {
+		t.Errorf("this store holds %d stream(s) no family has been decided for: %v. They are "+
+			"reported under %q rather than dropped, but somebody has to decide where they "+
+			"belong: internal/source/family.go", len(unclassified), unclassified,
+			metrics.Unclassified)
+	}
+	t.Logf("checked %d stream(s) this store has harvested", len(fresh))
 }

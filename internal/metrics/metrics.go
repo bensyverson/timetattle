@@ -414,6 +414,12 @@ type Report struct {
 	// merging the project rows. See Client, which says what that makes it
 	// larger than.
 	Clients []Client
+	// Mix is the ACTIVITY MIX: which kinds of evidence stream observed this
+	// clock, and how much of it none of them reaches. It is the only figure in
+	// the report about what KIND of work was done rather than whose it was, and
+	// its rows overlap and never sum — see ActivityMix and the head of
+	// families.go.
+	Mix ActivityMix
 	// Clientless is presence a PROJECT was attributed but no CLIENT was: the
 	// project resolved, and the client-project log had no single answer for it
 	// at that instant.
@@ -566,10 +572,17 @@ func Watched(events []source.Event, p sessions.Params, said []Attribution, w Wat
 	// sizes.
 	perProject := make(map[string]int)
 	perClient := make(map[string]int)
+	perFamily := make(map[string]int)
 	for _, e := range events {
 		if role := roles[e.Source]; role == roleIgnored || role == rolePresence {
 			continue
 		}
+		// Counted BEFORE the attribution test below, because the activity mix
+		// holds every evidence source and not only the ones that resolve to a
+		// directory: Biome and knowledgeC carry no path, appear in no project
+		// row anywhere in the report, and are exactly the streams a reader
+		// asking what KIND of work this was wants counted.
+		perFamily[familyOf(e.Source)]++
 		if e.Identity.Project == "" {
 			continue
 		}
@@ -584,7 +597,14 @@ func Watched(events []source.Event, p sessions.Params, said []Attribution, w Wat
 		// one above. A client and a project may carry the SAME NAME — in the
 		// live registry one pair does — and one map keyed on the bare name
 		// would merge them into a bucket that is neither.
-		byClient      = make(map[string][]source.Event, len(perClient))
+		byClient = make(map[string][]source.Event, len(perClient))
+		// The activity mix's buckets, and the source ids that actually landed
+		// in each of them. The ids are collected from the CORPUS rather than
+		// read back out of the mapping table, so the report names the streams
+		// that produced the figures beside them and a collector nobody
+		// classified appears by name the first time it harvests.
+		byFamily      = make(map[string][]source.Event, len(perFamily))
+		familyIDs     = make(map[string]map[string]bool, len(perFamily))
 		clientOwns    = map[string]map[string]bool{}
 		bounds        []source.Event
 		unregistered  []source.Event
@@ -599,6 +619,10 @@ func Watched(events []source.Event, p sessions.Params, said []Attribution, w Wat
 	}
 	for name, n := range perClient {
 		byClient[name] = make([]source.Event, 0, n)
+	}
+	for name, n := range perFamily {
+		byFamily[name] = make([]source.Event, 0, n)
+		familyIDs[name] = map[string]bool{}
 	}
 	for _, e := range events {
 		switch role := roles[e.Source]; {
@@ -622,6 +646,16 @@ func Watched(events []source.Event, p sessions.Params, said []Attribution, w Wat
 			continue
 		}
 		observedRaw = append(observedRaw, rawSpan(e))
+		// Filed by KIND of stream before it is filed by whose work it was.
+		// These two questions are asked of the same observation and the answers
+		// are independent: an unattributable focus interval still says what kind
+		// of work was going on.
+		fam := familyOf(e.Source)
+		byFamily[fam] = append(byFamily[fam], e)
+		if familyIDs[fam] == nil {
+			familyIDs[fam] = map[string]bool{}
+		}
+		familyIDs[fam][e.Source] = true
 		switch {
 		case e.Identity.Project != "":
 			byProject[e.Identity.Project] = append(byProject[e.Identity.Project], e)
@@ -677,6 +711,24 @@ func Watched(events []source.Event, p sessions.Params, said []Attribution, w Wat
 	}
 	clients, err := reduce(byClient, bounds, presence, p, v, PhaseClients)
 	if err != nil {
+		return Report{}, err
+	}
+	// AND THE SAME REDUCTION A THIRD TIME, one axis over. The other two ask
+	// whose an hour was; this one asks what KIND of work it was, and the answer
+	// is a union for exactly the same reason theirs is — a commit made during a
+	// Claude session is observed by both streams and neither can be made to give
+	// the minute up. Re-clustered rather than accumulated from anything above,
+	// because the family buckets cut across every project and client in the
+	// report and nothing already computed sums to them.
+	//
+	// It costs one more pass of the same shape, and it is bounded where the
+	// other two are not: there are at most eight families however many projects
+	// a store holds.
+	mix, err := reduce(byFamily, bounds, presence, p, v, PhaseFamilies)
+	if err != nil {
+		return Report{}, err
+	}
+	if r.Mix, err = mixOf(mix, byFamily, familyIDs, presence); err != nil {
 		return Report{}, err
 	}
 

@@ -50,6 +50,12 @@ const (
 	// projects' spans and never their sum, so they cannot be added up from the
 	// rows below. It steps once per client.
 	PhaseClients Phase = "client roll-up"
+	// PhaseFamilies is the activity mix: each KIND of evidence stream's own
+	// observations re-clustered, for the reason families.go gives — a family's
+	// clock is a union and cannot be added up from anything already computed.
+	// It steps once per family, and there are at most eight of them however
+	// many projects and clients the store holds.
+	PhaseFamilies Phase = "activity mix"
 	// PhaseSegments is carving presence at every boundary and summing every
 	// figure in the report out of the pieces.
 	PhaseSegments Phase = "segmenting"
