@@ -40,6 +40,14 @@ under ten days; the Biome stream on the machine this was built against reached
 back 24 unbroken days at millisecond resolution — 47,029 records from
 2026-07-05 19:55 onward.
 
+> **Sharpened 2026-08-13**, `go run ./scripts/streamseries -streams /app/usage`.
+> The 10,000 is a floor a periodic trim reduces the table to, not a ceiling —
+> 26 of 43 preserved snapshots held more, the largest 11,871. "Under ten days"
+> is confirmed by a named row seen alive at 8.92 days and gone by 9.46, and
+> falls to 3.57 days at the busiest daily rate on record. The stream also
+> stalled a second time, from 2026-08-10, which strengthens rather than changes
+> the conclusion on this page.
+
 `knowledgeC` is still the only source that observes *presence* — that you were
 at the machine when no file changed — which is why
 [harvesting](/docs/harvest/) it remains the thing that cannot wait.

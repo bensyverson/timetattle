@@ -339,9 +339,9 @@ interval. `0` disables the throttle and takes one on every run.
 
 The reason is the same split as above, read the other way round. Frequency
 protects the `mtime` sources and nothing else. `knowledgeC` prunes by **volume**
-— `/app/usage` is capped near 10,000 rows, and a four-hourly schedule already
-puts about sixty captures inside that window — so everything still inside it
-comes back whole on the next harvest whenever that is. A denser snapshot cadence
+— `/app/usage` is trimmed back to a 10,000-row floor, and a four-hourly schedule
+already puts about sixty captures inside that window — so everything still inside
+it comes back whole on the next harvest whenever that is. A denser snapshot cadence
 therefore buys `knowledgeC` almost nothing, while costing more than anything
 else in the phase: about 1.5 MB written afresh whenever the extracted rows
 differ at all.
@@ -393,6 +393,25 @@ fixed 512 KB segments, so "under 10 days" describes typical activity and a busy
 stretch shortens the real deadline by an amount nobody has measured. Hourly
 harvests with four-hourly snapshots is a cost judgement made under that
 uncertainty, not a proven margin.
+
+> **Measured 2026-08-13.** The `knowledgeC` half of that is no longer
+> unmeasured, and the caveat was right. Across 43 preserved snapshots
+> (`go run ./scripts/streamseries -streams /app/usage -days`):
+>
+> - A named row was observed alive at 8.92 days and gone by **9.46 days**, so
+>   "under ten days" is now a measurement rather than an estimate.
+> - At the typical rate of 824 rows a day the cap holds 12.14 days, against a
+>   median retained span of 12.24 days actually observed — agreement to 0.10
+>   days, which is what confirms the **row count** is what evicts here.
+> - At the busiest day on record, 2,798 rows, the same cap holds **3.57 days**.
+>
+> So a sustained heavy stretch cuts the deadline from ten days to roughly 3.6,
+> and the busiest-day figure is a lower bound. A four-hourly snapshot beats all
+> three comfortably; what this retires is "ten days" as a *margin*.
+> `/app/usage` is also the only stream whose deadline moves this way — the
+> others expire by age at ~28 days regardless of load. Biome's segment roll
+> rate against activity remains unmeasured. See
+> [`project/2026-08-13-knowledgec-snapshot-series.md`](https://github.com/bensyverson/timetattle/blob/main/project/2026-08-13-knowledgec-snapshot-series.md).
 
 ### What the calendar schedule does and does not guarantee
 
@@ -1061,9 +1080,16 @@ foreclosed:
 | --- | --- | --- |
 | `/display/isBacklit` | ~28 days | Screen on/off. The presence denominator. |
 | `/device/isLocked` | ~28 days | At-machine confirmation. |
-| `/app/usage` | <10 days, unreliable | Stalled 2026-07-27 to 07-28, resumed 07-29. Cross-check only; Biome is the attribution path. |
+| `/app/usage` | <10 days, unreliable | Stalled 2026-07-27 to 07-29, and again from 2026-08-10. Cross-check only; Biome is the attribution path. |
 | `/app/mediaUsage` | ~28 days | Unevaluated; plausibly a render signal. |
 | others | ~28 days | Retained because their value is not yet known. |
+
+> **Measured 2026-08-13**, `go run ./scripts/streamseries`. The "~28 days" is
+> confirmed and is an **age** limit: `/display/isBacklit` held a shortest
+> retained span of 27.86 days and a median of 28.39 across 43 snapshots, and
+> `/device/isLocked` 27.51 / 28.38. `/app/usage` is the exception and is capped
+> by **row count** instead, giving 9.46 to 15.11 days depending on how busy the
+> machine was. The two mechanisms are independent and the tighter one wins.
 
 **Dropped:**
 

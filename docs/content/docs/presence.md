@@ -181,6 +181,26 @@ its own. It is collected because it is cheap, and because cross-checking two
 independent readings of one fact is how the bare-stop analysis was validated at
 all.
 
+> **Corrected and extended 2026-08-13**, from the 43 preserved snapshots read as
+> a series (`go run ./scripts/streamseries -streams /app/usage -table`).
+>
+> **The stall was not a one-off, and 10,000 is not a ceiling.** The stream
+> stalled again on 2026-08-10 at 19:28 local and was still frozen 63h50m later,
+> which is 276× the p99 of its own 8-second cadence. Both stalls ran through
+> working days with the backlight recording normally throughout, so neither is
+> an idle machine.
+>
+> "Capped near 10,000 rows" describes a **floor**, not a ceiling: 26 of 43
+> snapshots held more than 10,000 rows and the largest held 11,871. macOS lets
+> the table grow and periodically trims it back to exactly 10,000, oldest
+> first. A harvest reporting `events_seen` above 10,000 is reading a genuinely
+> larger table and is not miscounting.
+>
+> "Under ten days" survives as a measurement: a named row was observed alive at
+> 8.92 days and gone by 9.46. But the deadline is set by **volume**, so at the
+> busiest day on record it falls to 3.57 days. See
+> [`project/2026-08-13-knowledgec-snapshot-series.md`](https://github.com/bensyverson/timetattle/blob/main/project/2026-08-13-knowledgec-snapshot-series.md).
+
 `/app/mediaUsage` is collected on the same terms and with less to show for it:
 1,495 rows across eight bundle identifiers, 88% of them Safari. That is
 consistent with video playback in a browser and equally consistent with several
