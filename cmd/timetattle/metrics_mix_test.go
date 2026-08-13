@@ -88,3 +88,26 @@ func TestTheActivityMixIsTheWholeSpansUnderAFilterAndSaysSo(t *testing.T) {
 		t.Errorf("the unfiltered report carries the filtered report's caveat")
 	}
 }
+
+// ABSENCE OF A ROW IS NOT AN OBSERVATION, which is this project's cardinal
+// rule and the one it has broken most often. A family with no observation in
+// this span has no row, and correctly so — a 0.0h row would state "Blender
+// observed none of this week" when the only thing known is that no Blender
+// observation exists here. But silence about it says nothing either, and a
+// reader cannot tell a family that recorded nothing from one the tool has
+// never heard of. So the families that are missing are named.
+func TestTheActivityMixNamesTheFamiliesThatRecordedNothing(t *testing.T) {
+	out := mixReport(t)
+
+	// This corpus is transcripts and one focus interval: five of the seven
+	// families recorded nothing in it, and the report must say which.
+	if !strings.Contains(out, "no observation in this span") {
+		t.Fatalf("the mix does not say which families recorded nothing:\n%s", out)
+	}
+	for _, want := range []string{"Blender", "Files", "Git", "Jobs", "Motion"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("family %q is neither a row nor named as absent, so a reader cannot tell "+
+				"it recorded nothing from it not existing:\n%s", want, out)
+		}
+	}
+}

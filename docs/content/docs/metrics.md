@@ -428,6 +428,13 @@ It is one table, in `internal/source`, and `timetattle dashboard` draws its
 source bar from the same one. Two commands disagreeing about what an hour *was*
 would be worse than neither reporting it.
 
+**A family with nothing in the span gets no row, and is named anyway.** A
+`0.0h` row would state that `Blender` observed none of this week when the only
+thing known is that no Blender observation reached it; saying nothing at all
+would leave a reader unable to tell a stream that recorded nothing from one the
+tool has never heard of. So a `no observation in this span:` line names them.
+(On the whole store every family is present and the line does not appear.)
+
 **A source no family has been decided for is named, not dropped.** A manifest
 can declare any id, so the mapping is a list, and a list goes stale silently —
 in the direction that makes a report look complete. Those observations appear

@@ -17,6 +17,7 @@ import (
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
 	"github.com/bensyverson/timetattle/internal/sessions"
+	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
 )
 
@@ -996,6 +997,19 @@ func metricsMix(out io.Writer, r metrics.Report, cols int, scope metricsScope) {
 	// reason the absence figures are: a shortened line here would delete a
 	// source id, and the whole purpose of the line is that every id is on it.
 	wrap(out, "  ", "built from: "+strings.Join(mapping, "; "), cols)
+	// AND THE FAMILIES THAT ARE NOT ABOVE. A family with nothing in this span
+	// gets no row, and correctly so: a 0.0h row would state that it observed
+	// none of this span when the only thing known is that no observation of it
+	// exists here. But saying NOTHING is the other half of the same mistake — a
+	// reader cannot tell a stream that recorded nothing from one this tool has
+	// never heard of. Read from the shared mapping rather than from the corpus,
+	// because a family absent from the corpus is exactly what cannot be read
+	// out of it.
+	if absent := metricsFamiliesAbsentFrom(r); len(absent) > 0 {
+		wrap(out, "  ", fmt.Sprintf("no observation in this span: %s. That is not a figure of "+
+			"zero — nothing from those streams reached this span at all.",
+			strings.Join(absent, ", ")), cols)
+	}
 	// Presence and ignored sources are missing from that list by ROLE rather
 	// than by oversight, and a reader who knows the store holds a backlight
 	// stream would otherwise read its absence as a gap in the mapping.
@@ -1009,6 +1023,22 @@ func metricsMix(out io.Writer, r metrics.Report, cols int, scope metricsScope) {
 			"exactly as the PRESENCE line at the top was not. What kind of work a stream "+
 			"observed is a question about the clock, not about whose the clock was.", cols)
 	}
+}
+
+// metricsFamiliesAbsentFrom names every family the mapping knows and this
+// report has no row for, sorted.
+//
+// The unclassified row is deliberately not a family and is never named here: it
+// is not a stream that recorded nothing, it is a stream nobody has placed, and
+// it only ever appears when there is something in it.
+func metricsFamiliesAbsentFrom(r metrics.Report) []string {
+	var out []string
+	for _, f := range source.Families() {
+		if _, ok := r.Mix.Family(string(f)); !ok {
+			out = append(out, string(f))
+		}
+	}
+	return out
 }
 
 // metricsUnattributed prints presence no project could be attributed, split by

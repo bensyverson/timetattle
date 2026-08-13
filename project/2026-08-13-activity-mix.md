@@ -83,6 +83,14 @@ tells a reader the rows do not tile presence.
 
 The report states in the table's own footer that the rows overlap and never sum.
 
+A family with **nothing** in the span gets no row — a `0.0h` row would state
+that it observed none of this week when the only thing known is that no
+observation of it reached the span — and the missing ones are **named** on a
+`no observation in this span:` line, read from the shared mapping rather than
+from the corpus, since a family absent from the corpus is precisely what cannot
+be read out of it. On the whole store all seven are present and the line does
+not appear; it is a windowed report's line.
+
 ## The whole store, unwindowed
 
 `timetattle metrics -all`, 2026-08-13, 1,073,726 observations read, presence
