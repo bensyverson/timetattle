@@ -152,6 +152,36 @@ which reads as a perfect fit and is a statement about nothing
 Both counts appear on purpose. "No blind labels" and "no labels" call for
 different actions.
 
+### A blind label narrows the circularity; it does not break it
+
+Worth being exact about what `-blind` buys, because it is easy to read the advice
+above as promising more than it does. A blind review removes the model's
+*conclusion* from the reviewer's screen. It does not give him a second,
+independent observation of the day: he is still reconstructing from the same
+evidence the model read. That makes a blind label worth much more than a
+confirming one, and still less than a measurement taken from outside.
+
+Which raises the question of what a genuinely independent check would be, and the
+answer is uncomfortable for a tool of this kind. Anything this tool ingests is
+disqualified from refereeing it. A task tracker looks like an excellent
+candidate — a claim brackets a named unit of work with a declared start and
+finish — right up until you notice `job-claims` is already a source, at which
+point checking the model against it measures the model's own weighting of its own
+input. The same disqualifies AI transcripts, git history and file mtimes.
+
+**So coverage and verifiability trade against each other.** The more of a
+person's observable record an inference consumes, the fewer independent standards
+remain to judge it by, until the only one left is watching them work. That is a
+property of the design rather than a gap in it, and the honest response is the
+one `fit` already takes: report the circularity in the output, refuse a residual
+that would read as perfect, and let the reader discount the number accordingly.
+
+On this repository's own store that reasoning is followed to its conclusion in
+`project/2026-08-13-why-there-is-no-ground-truth.md`, which records why the
+calibration phase was closed as unachievable rather than left open as unfinished.
+A user whose evidence mix is narrower than this one has more room, and for them
+the advice above stands unchanged.
+
 ### A pooled run says where each population would have gone alone
 
 Reporting the split at the winning point is not enough, because the question is

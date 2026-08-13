@@ -239,6 +239,12 @@ until enough days have been through it.
   list of names comes from now that it derives one instead of being handed
   one, and why it refuses to answer rather than answering wrongly.
 
+Two things sit outside that list. [`backlog.md`](backlog.md) records work
+deliberately deferred — what it is, why it is parked, and what would un-park
+it — so an absence is legible as a decision rather than an oversight. `project/`
+holds dated design documents and measurement findings, several of which correct
+each other in place; that trail is part of the record rather than a draft of it.
+
 ## Development
 
 Install the pre-commit hook once per clone. Git does not copy hooks when it
