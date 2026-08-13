@@ -229,32 +229,67 @@ func TestTheAuditReportsWhenItsOwnTotalDisagreesWithTheReports(t *testing.T) {
 	}
 }
 
-// When the guard refuses, THERE IS NO REPORT — Compute returns the zero value
-// and every figure above is unavailable. The error text is then the only
-// surviving measurement of how far the two levels diverged, so this tool reads
-// its two durations back out rather than printing "refused" and losing them.
-// The distinction the whole project turns on applies here too: a window with no
-// figures because the report was refused is not a window that measured zero.
-func TestTheRefusalsOwnNumbersAreReadBackOutOfIt(t *testing.T) {
+// THE INTERLEAVING CORPUS IS NO LONGER REFUSED, and this sweep counts refusals,
+// so it has to be told apart from a window that measured nothing.
+//
+// Until 2026-08-13 this corpus was the pinned refusal: a client credited 46m
+// against projects summing to 40m, and no report at all. The guard that produced
+// it encoded an invariant that is false wherever a client's projects interleave,
+// and it was replaced by one that cannot be provoked by any corpus — see
+// internal/metrics/rollupcost_test.go and
+// project/2026-08-13-rollup-reclustering-resolved.md.
+func TestTheInterleavingCorpusIsNoLongerRefused(t *testing.T) {
 	events := []source.Event{
 		clientPoint(at(9, 0), "atelier", "loom"),
 		clientPoint(at(9, 12), "atelier", "kiln"),
 		clientPoint(at(9, 24), "atelier", "loom"),
 		clientPoint(at(9, 36), "atelier", "kiln"),
 	}
-	_, err := metrics.Compute(events, shippedParams())
-	if err == nil {
-		t.Fatal("this corpus is the pinned refusal and must still be refused here")
+	r, err := metrics.Compute(events, shippedParams())
+	if err != nil {
+		t.Fatalf("the corpus that used to be refused must now compute: %v", err)
 	}
-	credited, summed, ok := parseRefusal(err)
+	rows := audit(r)
+	if len(rows) != 1 {
+		t.Fatalf("expected one client in the audit, got %d", len(rows))
+	}
+	if want := -6 * time.Minute; rows[0].Margin != want {
+		t.Errorf("margin %v, want %v; a negative margin used to mean no report and now means "+
+			"only that the client bridged clock its projects could not", rows[0].Margin, want)
+	}
+}
+
+// WHEN A WINDOW IS REFUSED, THERE IS NO REPORT — Compute returns the zero value
+// and every figure above is unavailable. The error text is then the only
+// surviving measurement of how far the two levels diverged, so this tool reads
+// its two durations back out rather than printing "refused" and losing them. The
+// distinction the whole project turns on applies here too: a window with no
+// figures because the report was refused is not a window that measured zero.
+//
+// THE REFUSAL IS BUILT HERE RATHER THAN PROVOKED, and that is a statement about
+// the check rather than a shortcut. The roll-up guard that closes Compute since
+// 2026-08-13 compares a client owning ONE project against that project, which is
+// the same evidence clustered twice, so no corpus can make it fire — only a
+// defect in the clustering can. The literal below is copied from
+// internal/metrics/metrics.go, and if the two ever drift apart the sweep does
+// NOT silently count zero refusals: an error it cannot parse aborts the sweep
+// with that error, which is the loud failure and not the quiet one.
+func TestTheRefusalsOwnNumbersAreReadBackOutOfIt(t *testing.T) {
+	err := errors.New("client atelier is credited 51h39m27.261521s against the 48h1m24.29735s " +
+		"held by its only project loom; a client with one project is that project's own " +
+		"evidence clustered again and can never exceed it")
+	credited, held, ok := parseRefusal(err)
 	if !ok {
 		t.Fatalf("the refusal was not recognised as the roll-up guard's: %v", err)
 	}
-	if want := 46 * time.Minute; credited != want {
+	// The figures are the live-store ones the replaced guard was proved with: a
+	// one-project client inflated by clustering the client level at gap 30m
+	// while the projects stayed at 15m, caught at 3h38m2.96s.
+	if want := 51*time.Hour + 39*time.Minute + 27*time.Second + 261521*time.Microsecond; credited != want {
 		t.Errorf("credited %v, want %v", credited, want)
 	}
-	if want := 40 * time.Minute; summed != want {
-		t.Errorf("summed %v, want %v", summed, want)
+	if want := 48*time.Hour + 1*time.Minute + 24*time.Second + 297350*time.Microsecond; held != want {
+		t.Errorf("held by the project %v, want %v", held, want)
 	}
 }
 

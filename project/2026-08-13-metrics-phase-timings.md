@@ -150,9 +150,19 @@ and 2.07 by samples. Nothing here is unaccounted for.
 
 ## Why the roll-up costs what it costs
 
-A client's absolute hours are the union of its projects' spans and never their
-sum, so the roll-up cannot add columns — it re-clusters each client's own
-evidence, exactly as a project's is derived. It is therefore a *second* pass of
+A client's absolute hours are never the sum of its projects' spans, so the
+roll-up cannot add columns — it re-clusters each client's own evidence, exactly
+as a project's is derived.
+
+> **CORRECTION, 2026-08-13.** This sentence originally read "are the union of its
+> projects' spans and never their sum". They are not the union either: clustering
+> does not distribute over a union, so a client's re-clustered hours can EXCEED
+> the union of its projects', and on this store they do by 19m13s. The cost
+> reasoning below is unaffected — it turns on the roll-up re-clustering, which it
+> still does. The question this document raised as a correctness question was
+> settled the same day in favour of the re-clustering; see
+> `project/2026-08-13-rollup-union-or-reclustering.md` for the measurement and
+> `project/2026-08-13-rollup-reclustering-resolved.md` for the decision. — `unionist` It is therefore a *second* pass of
 the same shape as the per-project one, over larger groups: 38 projects cost
 1.371 s (36 ms each) and 6 clients cost 0.537 s (90 ms each), because a client's
 evidence is all of its projects' evidence at once.
@@ -224,6 +234,18 @@ The reproduction is pinned by
 `internal/metrics/rollupcost_test.go`, which asserts the current refusal and says
 in its own comment that the refusal is a defect. Whoever settles the question
 will see it fail, and should delete it.
+
+> **SETTLED 2026-08-13 by `unionist`, task qAkml.** The first of the two answers
+> was taken: a client's hours ARE its own evidence re-clustered, because the
+> stretch bridged only at the client level is the cost of switching between two
+> of that client's projects and neither project's evidence records it. The guard
+> and `Client`'s doc comment were what was wrong and both have changed; no figure
+> on this store changed, and the whole-store report is byte-identical across the
+> commit. The test named above still exists under a new name and now pins the
+> resolved behaviour rather than the refusal. The refusal quoted above is no
+> longer the text `Compute` can produce; what closes the roll-up now is that a
+> client owning exactly ONE project can never exceed that project. See
+> `project/2026-08-13-rollup-reclustering-resolved.md`.
 
 ## What this corrects
 

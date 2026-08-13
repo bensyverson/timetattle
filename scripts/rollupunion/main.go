@@ -4,34 +4,43 @@
 //
 // # Why this exists
 //
-// internal/metrics says two things about what a client's hours are, and they
-// are not the same thing:
+// internal/metrics used to say two things about what a client's hours are, and
+// they were not the same thing:
 //
 //   - THE IMPLEMENTATION re-clusters the client's own evidence under the same
 //     parameters, exactly as a project's hours are derived one level down.
-//   - THE DOC COMMENT ON metrics.Client, and the guard that closes Compute, say
-//     the figure is the UNION of the client's projects' spans, and the guard
-//     refuses any report in which a client exceeds its projects' SUM.
+//   - THE DOC COMMENT ON metrics.Client, and the guard that closed Compute, said
+//     the figure was the UNION of the client's projects' spans, and the guard
+//     refused any report in which a client exceeded its projects' SUM.
 //
 // Clustering does not distribute over a union. Where a client's projects
 // interleave, a silence too wide to bridge inside any one project is narrow
 // enough to bridge once that client's evidence is taken together, so the client
-// holds clock no project of its own holds. THE DOC'S CLAIM IS THEREFORE FALSE
-// AS SOON AS THAT HAPPENS AT ALL, while the guard — which compares against the
-// weaker SUM, inflated by every instant two of the client's projects overlap —
-// stays quiet until the bridged clock exceeds that inflation. The two are
-// different thresholds on the same phenomenon and this tool measures both:
+// holds clock no project of its own holds. This tool measured how much: 19m13s
+// of an unwindowed 617h40m54s, and one calendar day in the live store that
+// produced no report whatever.
 //
-//	HELD BY THE CLIENT ALONE  falsifies the doc comment, and is exactly what a
-//	                          merge-the-project-spans roll-up would take away.
-//	MARGIN                    is the headroom before the guard refuses. When it
-//	                          goes negative Compute returns an error, and there
-//	                          is NO REPORT — not a wrong row, no report at all,
-//	                          from `timetattle metrics` and from `dashboard`.
+// THE QUESTION WAS SETTLED ON 2026-08-13 IN FAVOUR OF THE RE-CLUSTERING —
+// project/2026-08-13-rollup-reclustering-resolved.md — because the bridged
+// stretch is the cost of switching between two of one client's projects, which
+// neither project's own evidence records. The doc comment and the guard were
+// what changed; no reported figure did. This tool stays, because the quantity it
+// measures is now a documented property of the report rather than a suspicion,
+// and nothing else measures it:
 //
-// Nobody had counted either on the live store when the question was raised, and
-// a decision about which figure is right should not be argued from a corpus
-// nobody has looked at.
+//	HELD BY THE CLIENT ALONE  the clock a client holds that no project of its
+//	                          own holds. It is what a merge-the-project-spans
+//	                          roll-up would take away, and the same clock is
+//	                          also printed under UNATTRIBUTED PRESENCE.
+//	MARGIN                    the client against the SUM of its projects. A
+//	                          NEGATIVE margin is now an ordinary reading and no
+//	                          longer refuses anything; it is kept because it is
+//	                          how far past the old belief a window has gone.
+//
+// What CAN still refuse is narrower and is a defect rather than a working
+// pattern: a client owning exactly ONE project credited more than that project,
+// which is the same evidence clustered twice. The sweep counts those, and there
+// are none.
 //
 // # The populations, which are not interchangeable
 //
@@ -214,16 +223,18 @@ func run(storePath, configPath, from, to, sweep string, names, uncorrected bool)
 		}
 		got, err := reportOver(context.Background(), st, w, p, excludes, uncorrected)
 		if err != nil {
-			credited, summed, ok := parseRefusal(err)
+			credited, held, ok := parseRefusal(err)
 			if !ok {
 				return fmt.Errorf("%s: %w", d, err)
 			}
+			// A refusal now comes only from a ONE-project client, so it says
+			// nothing about the multi-project margin and must not be counted
+			// into it: that column would otherwise report a window as having
+			// exercised the interleaving when it did no such thing.
 			refused++
-			worst = min(worst, summed-credited)
-			worstMulti = min(worstMulti, summed-credited)
-			multiSeen++
-			fmt.Printf("  %-12s  %7s  %13s  %11s  %5s  %14v  %14v  REFUSED: a client credited %v against %v summed\n",
-				d.String(), "-", "-", "-", "-", summed-credited, summed-credited, credited, summed)
+			worst = min(worst, held-credited)
+			fmt.Printf("  %-12s  %7s  %13s  %11s  %5s  %14v  %14s  REFUSED: a client credited %v against the %v held by its only project\n",
+				d.String(), "-", "-", "-", "-", held-credited, "-", credited, held)
 			continue
 		}
 		rows := audit(got.report)
@@ -397,8 +408,13 @@ func population(f store.Filter) string {
 // rather than a fragment is what keeps another of Compute's checks — several of
 // which also name a client and a duration — from being counted as a refusal
 // this tool exists to count.
-var refusal = regexp.MustCompile(`^client .* is credited (.*) across projects summing to (.*); a ` +
-	`roll-up is the union of its projects' spans and can never exceed their sum$`)
+// It is the check as it stands since 2026-08-13. The one it replaced compared
+// EVERY client against the SUM of its projects and refused the interleaving this
+// tool measures; that invariant was false, and a window that refuses now is a
+// defect in the clustering rather than an ordinary day.
+var refusal = regexp.MustCompile(`^client .* is credited (.*) against the (.*) held by its only ` +
+	`project .*; a client with one project is that project's own evidence clustered again and ` +
+	`can never exceed it$`)
 
 // parseRefusal recovers the two durations the roll-up guard refused over.
 //
@@ -406,8 +422,10 @@ var refusal = regexp.MustCompile(`^client .* is credited (.*) across projects su
 // value, so the error text is the only surviving record of how far apart the
 // two levels were. The second return says whether this was the roll-up guard at
 // all, and a false there means the window failed for some OTHER reason and has
-// measured nothing about the roll-up.
-func parseRefusal(err error) (credited, summed time.Duration, ok bool) {
+// measured nothing about the roll-up — the sweep then aborts with that error
+// rather than counting a refusal it did not understand, which is also what
+// happens if this pattern and internal/metrics ever drift apart.
+func parseRefusal(err error) (credited, held time.Duration, ok bool) {
 	if err == nil {
 		return 0, 0, false
 	}
@@ -418,8 +436,8 @@ func parseRefusal(err error) (credited, summed time.Duration, ok bool) {
 	if credited, err = time.ParseDuration(m[1]); err != nil {
 		return 0, 0, false
 	}
-	if summed, err = time.ParseDuration(m[2]); err != nil {
+	if held, err = time.ParseDuration(m[2]); err != nil {
 		return 0, 0, false
 	}
-	return credited, summed, true
+	return credited, held, true
 }

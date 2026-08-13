@@ -4,6 +4,29 @@
 It does not make it.** Nothing in `internal/metrics` is changed by the commit
 that carries this file, beyond two tests that pin what was measured.
 
+> **SETTLED LATER THE SAME DAY, and one recommendation below is wrong.** Ben took
+> **A** — keep the re-clustering, replace the guard — on the reasoning that
+> switching between two of a client's projects has a cost neither project's
+> evidence records, so the bridged stretch is work and 19m13s is likely an
+> undercount. See `project/2026-08-13-rollup-reclustering-resolved.md` for the
+> decision and its acceptance figures.
+>
+> The correction is to the closing recommendation that the replacement be *"a
+> client with exactly one project equals that project to the nanosecond"*. That
+> equality is **not true by construction** and this repository's own corpus
+> already refutes it: a project worked for one client in the morning and another
+> in the afternoon (`TestAClientAndAProjectSharingANameAreNotMerged`, which
+> predates this document) gives the afternoon client 10m against its only
+> project's 20m, and a directory registered to a client partway through its life
+> does the same — the project holds clock its client does not, which the report
+> calls `Clientless`. Applied as a mutation, the equality passes the whole live
+> store byte-identically while refusing two legitimate reports in the cold
+> suite: silent on real data, refusing on ordinary shapes, which is the exact
+> latency profile of the guard it would replace. What shipped is the same
+> sentence as an **inequality** — a one-project client can never *exceed* its
+> project — which catches the mutation this document proved the old guard for,
+> at the same 3h38m2.96s. — `unionist`, 2026-08-13
+
 ## The short version, and it corrects the record
 
 Three things were believed about the contradiction between the roll-up's
