@@ -90,40 +90,64 @@ DATA="$HOME/.timetattle"
 # job that is not loaded cannot have missed an interval, so nothing is owed on
 # load. RunAtLoad below is what covers that, and it is why it stays.
 
-# CADENCE: every 4 hours, six slots a day.
+# CADENCE: every hour, twenty-four slots a day.
 #
 # The argument is sampling, and it follows from the mtime decay above. Only a
 # scan taken while a file still carries a given day's mtime can ever record
 # that day, so what matters is how many harvests land inside a working
 # session. Twice a day at 00:00 and 12:00 puts one inside an ordinary day and
-# can put none inside a short one. Six puts three or four inside any session
-# long enough to be worth measuring.
+# can put none inside a short one. Every four hours puts three or four inside
+# any session long enough to be worth measuring. Hourly puts one in every hour
+# of it, which is as close as a sampled measurement of a decaying signal can
+# get without watching the filesystem continuously.
 #
-# The ceiling is storage, and it is not a scheduling problem. A knowledgeC
-# snapshot is ~1.54 MB (measured: 57 MB across 37 snapshots) and a fresh one
-# is written under a new timestamped name on EVERY run — unlike Biome
-# segments, which are skipped when their digest is already on disk.
-# Undeduplicated, and for now unpruned because a retention policy is
-# deliberately deferred until ingestion is trusted, that is roughly 1.1 GB a
-# year at twice a day, 3.3 GB at every 4h, and 13 GB at hourly.
+# WHY THIS WAS NOT HOURLY BEFORE 2026-08-13, AND WHAT CHANGED. Storage, and it
+# was never a scheduling problem. A knowledgeC snapshot is ~1.5 MB and used to
+# be written under a fresh timestamped name on EVERY run, so the schedule and
+# the snapshot count were the same number: roughly 1.1 GB a year at twice a
+# day, 3.3 GB at every 4h, and 13 GB at hourly. Every four hours was a
+# compromise between the mtime sources, which wanted hourly, and knowledgeC,
+# which was paying for it.
 #
-# Hourly is otherwise the better schedule and, contrary to the obvious guess,
-# the SIMPLER plist: omitted keys are wildcards, so hourly is a single dict
-# with Minute 0 and no Hour at all, where 4-hourly needs six dicts. macOS
-# ships com.apple.newsyslog written exactly that way. Hourly is rejected on
-# the 13 GB alone. If snapshot deduplication or a retention policy lands,
-# revisit this line and go hourly; nothing else about the schedule argues
-# against it.
+# Two changes broke that coupling, in this order.
+#
+#   Snapshots became content-addressed, so a run whose extracted rows are
+#   byte-identical to a snapshot already on disk writes nothing. Measured with
+#   `go run ./scripts/snapchurn -cadence 1h`: 89 of 336 hourly windows (26.5%)
+#   would write nothing, taking hourly from 13.1 to 9.85 GB/yr. Real, and not
+#   nearly enough on its own.
+#
+#   The snapshot then got a cadence OF ITS OWN, independent of this schedule:
+#   `timetattle harvest -snapshot-every`, four hours by default. knowledgeC
+#   prunes by VOLUME — /app/usage is capped near 10,000 rows — so everything
+#   still inside that window comes back whole on the next harvest whenever it
+#   runs, and a denser snapshot cadence buys it essentially nothing. The mtime
+#   sources are the ones that need frequency, and they cost nothing to scan.
+#
+# So this schedule is now about the mtime sources and the Biome segments, both
+# of which are content-addressed or free, and knowledgeC keeps the four-hourly
+# cadence it had: about 3.2 GB/yr, unchanged, while mtime evidence is scanned
+# 24 times a day instead of 6.
+#
+# WHY TWENTY-FOUR DICTS AND NOT ONE. Omitted keys are wildcards, so hourly can
+# be written as a single dict with Minute 0 and no Hour at all, which is how
+# macOS ships com.apple.newsyslog. The generator below validates each hour it
+# is given and produces one dict per hour, and the explicit form is kept for
+# two reasons: TIMETATTLE_HOURS stays meaningful for anyone who wants a
+# different set, and `timetattle status`, which derives its staleness bound by
+# enumerating this schedule, reads both forms identically. Verified: against
+# the 24-dict plist it reports "every 1h00m, from StartCalendarInterval" and a
+# bound of 1h30m.
 #
 # What no cadence buys is safety against the perishable floors, because those
 # are VOLUME-based rather than time-based: /app/usage is capped near 10,000
 # rows and Biome fills fixed 512 KB segments. "Under 10 days" describes
 # typical activity, and a heavy stretch shortens the real deadline by an
 # amount nobody has measured — segment roll rate against activity has never
-# been put on a graph. Every 4h is a cost judgement made under that
-# uncertainty. It is not a proven margin, and "no loss yet" is an observation
-# rather than a guarantee.
-HOURS="${TIMETATTLE_HOURS:-0,4,8,12,16,20}"
+# been put on a graph. Hourly harvests with four-hourly snapshots is a cost
+# judgement made under that uncertainty. It is not a proven margin, and "no
+# loss yet" is an observation rather than a guarantee.
+HOURS="${TIMETATTLE_HOURS:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23}"
 
 if [ ! -x "$BIN" ]; then
 	echo "error: $BIN is not executable." >&2
@@ -216,7 +240,16 @@ launchctl bootstrap "gui/$UID" "$PLIST"
 echo "installed $LABEL"
 echo "  binary:    $BIN"
 echo "  schedule:  ${HOURS//,/:00, }:00 local, plus once at load"
+# The snapshot's own cadence is NOT in the plist and cannot be read out of it,
+# so it is printed here or it is invisible. It is the harvest's default rather
+# than anything this script sets; overriding it means adding -snapshot-every to
+# ProgramArguments above.
 echo "  snapshots: $DATA/snapshots"
+echo "             Biome and the Motion vault follow this schedule. knowledgeC"
+echo "             does not: it is preserved at most every 4h whatever the"
+echo "             harvest cadence, because it prunes by volume and a snapshot"
+echo "             of it is the most expensive thing in the run. Override with"
+echo "             'harvest -snapshot-every'; 0 takes one on every run."
 echo "  logs:      $DATA/harvest.log, $DATA/harvest.err"
 echo
 echo "To confirm what launchd actually loaded, rather than what this script"

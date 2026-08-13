@@ -20,6 +20,49 @@ import (
 
 func harvest(args []string) error { return executeSubcommand(harvestCmd(), args) }
 
+// defaultSnapshotEvery is how often knowledgeC is preserved, whatever the
+// harvest cadence is.
+//
+// Four hours, which is what the schedule delivered before the harvest cadence
+// and the snapshot cadence were separated. Nothing about knowledgeC changed; the
+// harvest around it did.
+//
+// # Why the two cadences are no longer the same number
+//
+// They protect against different losses and only one of them is helped by
+// frequency.
+//
+// The mtime sources DECAY. A file records only its last modification, so work
+// done today on a file last touched three weeks ago does not add evidence for
+// that day — it MOVES it. internal/filedays carries the measurement: one
+// repository scan found 1,773 files bearing a given day and the same scan hours
+// later found 513. Nothing recovers the difference afterwards, so for those
+// sources frequency IS the protection.
+//
+// knowledgeC PRUNES BY VOLUME, and what is still inside its window comes back
+// whole on the next harvest whenever that is. Its binding floor is /app/usage,
+// capped near 10,000 rows; a four-hourly schedule already puts about sixty
+// captures inside it. So a denser snapshot cadence buys knowledgeC almost
+// nothing — and costs the most of anything in the phase, because a snapshot is
+// about 1.5 MB written afresh whenever the extracted rows differ at all.
+// Measured 2026-08-12 with `go run ./scripts/snapchurn -cadence 1h` and
+// `-cadence 4h`, after write-time deduplication: 9.85 GB/yr at hourly against
+// 3.23 GB/yr at four-hourly. Both are upper bounds on what the content check
+// saves, because a row can also age out of retention inside an otherwise quiet
+// window.
+//
+// Biome and the Motion vault are deliberately not throttled. Both are already
+// content-addressed, so a run over an unchanged source writes nothing at all;
+// they cost a read and never a write, and a throttle would delay evidence to
+// save nothing.
+//
+// This is a cost judgement made under a real uncertainty and not a proven
+// margin. The perishable floors are VOLUME-based rather than time-based, so a
+// heavy stretch shortens the real deadline by an amount nobody has measured —
+// segment roll rate against activity has never been put on a graph. "No loss
+// yet" is an observation, not a guarantee.
+const defaultSnapshotEvery = 4 * time.Hour
+
 func harvestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "harvest",
@@ -45,6 +88,10 @@ error names every source that failed; the macOS stores need Full Disk Access.`,
 		"comma-separated directory names to skip whole when scanning filedays roots")
 	indexPath := fs.String("index", "",
 		"registry index of registered directories to read (default: ~/.timetattle/registered-directories.json)")
+	// The knowledgeC snapshot's own cadence, independent of how often the
+	// harvest runs. defaultSnapshotEvery carries the argument for why it has one.
+	snapshotEvery := fs.Duration("snapshot-every", defaultSnapshotEvery,
+		"smallest interval between knowledgeC snapshots, whatever the harvest cadence (0 takes one every run)")
 	quiet := fs.Bool("quiet", false, "print nothing on success; for scheduled runs")
 	cmd.RunE = func(*cobra.Command, []string) error {
 		var err error
@@ -123,26 +170,20 @@ error names every source that failed; the macOS stores need Full Disk Access.`,
 		)
 
 		// knowledgeC goes first. It is the source with the hardest deadline.
-		kc := captureBegun(captureKindKnowledgeC, *sourcePath)
-		res, kcErr := snapshot.Take(*sourcePath, *dir, time.Now())
-		kc = kc.captureEnded(kcErr == nil, kcErr)
-		if kcErr != nil {
-			lost = append(lost, fmt.Errorf("knowledgeC capture: %w", kcErr))
-			fmt.Fprintf(out, "knowledgeC: capture lost (%v)\n", kcErr)
-		} else {
-			// knowledgeC snapshots are content-addressed like Biome segments and
-			// vault files, so a run over an unchanged source writes nothing and
-			// reports the snapshot already holding those bytes. Ingestion below
-			// reads that path either way, which is why a held run still names a
-			// file rather than nothing.
-			kc = kc.capturedSnapshot(res)
-			if res.Held {
-				fmt.Fprintf(out, "%s\n%d rows, already held\n", res.Path, res.Rows)
-			} else {
-				fmt.Fprintf(out, "%s\n%d rows, %.1f MB\n", res.Path, res.Rows, float64(res.Bytes)/(1<<20))
-			}
+		//
+		// It is also the only capture with a cadence of its own. The harvest runs
+		// often for the sake of the mtime sources, which decay continuously and
+		// are recovered by no later run; knowledgeC prunes by volume instead, so
+		// what is still inside its window comes back whole on the next harvest,
+		// and a 1.5 MB snapshot on every run is the most expensive thing in the
+		// phase. capture.go's captureKnowledgeC holds the decision, and its three
+		// outcomes — took, held, throttled — are three different facts.
+		kc := captureKnowledgeC(*sourcePath, *dir, time.Now(), *snapshotEvery)
+		kc.report(out)
+		if kc.err != nil {
+			lost = append(lost, fmt.Errorf("knowledgeC capture: %w", kc.err))
 		}
-		captures = append(captures, kc)
+		captures = append(captures, kc.outcome)
 
 		// TakeStreams returns what it captured alongside whatever it could not, so
 		// the results are printed whether or not a stream failed.
@@ -254,11 +295,18 @@ error names every source that failed; the macOS stores need Full Disk Access.`,
 			plan    []ingestion
 			planErr error
 		)
-		if kcErr != nil {
+		if kc.err != nil {
 			plan, planErr = registeredIngestions()
-			plan = append(plan, lostSnapshotIngestions(*sourcePath, kcErr)...)
+			plan = append(plan, lostSnapshotIngestions(*sourcePath, kc.err)...)
 		} else {
-			plan, planErr = harvestIngestions(res.Path)
+			// kc.snapshot is the file this run wrote, the file it found already
+			// holding those bytes, or — when the throttle declined — the file the
+			// last capture left. All three are read, so the four streams get a
+			// harvest_run row on every harvest whatever the snapshot's own
+			// cadence did. Re-reading adds nothing, because the store
+			// deduplicates by content; not reading would make a throttled run
+			// indistinguishable from a source that stopped reporting.
+			plan, planErr = harvestIngestions(kc.snapshot)
 		}
 		// A directory can be registered and then have its marker deleted or
 		// corrected between one harvest and the next; List re-verifies each

@@ -37,7 +37,37 @@ const (
 	// indistinguishable from a harvest that died before reaching this capture,
 	// and those two call for opposite actions.
 	CaptureAbsent CaptureStatus = "absent"
+	// CaptureSkipped is a capture the harvest DECLINED to make, because the
+	// source has a cadence of its own and it is not due yet.
+	//
+	// Only knowledgeC has one. The harvest runs hourly for the mtime sources,
+	// which decay continuously and are recovered by no later run; knowledgeC
+	// prunes by volume instead, so everything still inside its window comes back
+	// whole on the next harvest, and a snapshot of it is the most expensive
+	// thing in the phase. internal/snapshot.Due holds the schedule and migration
+	// 0015 holds the measurement.
+	//
+	// It is a fifth fact and not a spelling of any of the four above. The
+	// nearest miss is not even a status: FilesNew 0 with FilesHeld 1 is a run
+	// that read the source through, extracted it, digested it and found a
+	// snapshot already holding those exact bytes — an observation ABOUT THE
+	// SOURCE. This is a decision about the SCHEDULE, taken before anything was
+	// read. "knowledgeC has not changed in four hours" and "we have not looked
+	// in four hours" must never render alike.
+	CaptureSkipped CaptureStatus = "skipped"
 )
+
+// captureStatuses is every value a capture may be recorded as, in the order a
+// refusal names them.
+//
+// The list a message quotes is derived from the list the code checks, rather
+// than typed out beside it, because a message naming four values while the code
+// accepts five is exactly the stale-copy failure this project keeps finding: it
+// tells a caller what is wrong without telling them what is right, and it reads
+// as correct for ever.
+var captureStatuses = []CaptureStatus{
+	CaptureOK, CapturePartial, CaptureFailed, CaptureAbsent, CaptureSkipped,
+}
 
 // Capture is one preservation attempt: what a harvest did with one perishable
 // source on one invocation.
@@ -135,9 +165,28 @@ func (c Capture) validate() error {
 			return fmt.Errorf("the %s capture succeeded (%s) but carries the error %q; the record would argue with itself",
 				c.Kind, c.Status, c.Error)
 		}
+	case CaptureSkipped:
+		if c.Error != "" {
+			return fmt.Errorf("the %s capture was %s by policy but carries the error %q; "+
+				"a schedule saying not yet and a source that could not be read are opposite readings",
+				c.Kind, c.Status, c.Error)
+		}
+		// A run that declined to read the source cannot have preserved anything
+		// from it. Without this the fifth status could be stamped over a row
+		// that really did write a snapshot, and every file and byte total in the
+		// store would silently disagree with the directory.
+		if c.FilesNew != 0 || c.FilesHeld != 0 || c.Bytes != 0 {
+			return fmt.Errorf("the %s capture was %s by policy but reports %d files written, %d held and %d bytes; "+
+				"a capture that did not read its source preserved nothing from it",
+				c.Kind, c.Status, c.FilesNew, c.FilesHeld, c.Bytes)
+		}
 	default:
-		return fmt.Errorf("the %s capture has status %q, which is not one of ok, partial, failed or absent",
-			c.Kind, c.Status)
+		names := make([]string, len(captureStatuses))
+		for i, s := range captureStatuses {
+			names[i] = string(s)
+		}
+		return fmt.Errorf("the %s capture has status %q, which is not one of %s",
+			c.Kind, c.Status, strings.Join(names, ", "))
 	}
 	return nil
 }

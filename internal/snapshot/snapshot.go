@@ -223,6 +223,20 @@ func Take(src, dir string, now time.Time) (Result, error) {
 	return Result{Path: out, Rows: rows, Bytes: info.Size()}, nil
 }
 
+// Readable reports whether knowledgeC can be opened at all. It reads no rows,
+// stages nothing and writes nothing.
+//
+// It is exported for one caller and one reason: a harvest that has DECLINED to
+// take a snapshot, because Due said the next one is not due yet, must still find
+// out that it could not have taken one. macOS pins Full Disk Access to a
+// binary's code signature and revokes it silently on rebuild, and that
+// revocation is invisible until something opens the database. A throttled run
+// that skipped the open as well would hold the news for a whole interval,
+// ingest the snapshot it already had, and print a clean harvest throughout —
+// which is the failure that ran for 44 hours on 2026-07-30, arriving by a new
+// route. One os.Open closes it.
+func Readable(src string) error { return checkReadable(src) }
+
 // checkReadable turns macOS's opaque permission errors into something an
 // operator can act on. A denied read of knowledgeC almost always means Full
 // Disk Access was never granted to the binary doing the reading.
@@ -445,7 +459,7 @@ func compress(compact, dir string, now time.Time, digest string) (string, error)
 // looking at a file another process is still writing, and a duplicate file is
 // a cost while a half-written one reported as preserved is a loss.
 func createUnique(dir string, now time.Time, digest string) (string, *os.File, error) {
-	base := filepath.Join(dir, snapshotPrefix+now.Format("20060102T150405")+"-"+digest)
+	base := filepath.Join(dir, snapshotPrefix+now.Format(snapshotTimeLayout)+"-"+digest)
 	for n := range 1000 {
 		path := base + ".db.gz"
 		if n > 0 {

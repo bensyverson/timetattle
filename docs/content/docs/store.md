@@ -233,8 +233,8 @@ reasons, argued in full in the header of `internal/migrations/0007_capture_run.s
    answers *is it still being preserved?*, and is asked once the answer to the
    first is known to be no.
 
-`capture_run` carries `kind`, `input`, a span, one of four statuses, and
-`files_new` / `files_held` / `bytes`. Two details are load-bearing:
+`capture_run` carries `kind`, `input`, a span, one of five statuses, and
+`files_new` / `files_held` / `bytes`. Three details are load-bearing:
 
 - **`finished_at` is `NOT NULL` and there is no `running` status.** A capture
   row is written *after* the capture returns, so both endpoints are known facts
@@ -248,6 +248,17 @@ reasons, argued in full in the header of `internal/migrations/0007_capture_run.s
   *nothing was recorded*, which is the standing distinction this whole store is
   built to keep. An `absent` row means: on this run, we looked, and there was
   nothing there.
+- **`skipped` is a status too, added by migration `0015`.** The `knowledgeC`
+  snapshot has a cadence of its own — four hours, whatever the harvest cadence —
+  so a run can finish having deliberately not preserved it. That is neither
+  `ok`, which claims a preservation that did not happen, nor `absent`, which
+  would say there is no `knowledgeC` on this machine. It is also not the
+  content-addressed reading of *nothing new*, which is `files_new` 0 with
+  `files_held` 1 and means the source **was** read through and has not changed.
+  *`knowledgeC` has not changed in four hours* and *we have not looked in four
+  hours* are different facts. A `skipped` row is forbidden by `CHECK` from
+  claiming any file, any held file or any byte: a run that did not read its
+  source preserved nothing from it.
 
 ## Timestamps are text, and the text has to sort
 
