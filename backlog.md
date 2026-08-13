@@ -43,6 +43,39 @@ build it from source.
 
 ---
 
+## Somewhere persistent to keep the publication gate's cleared findings
+
+**Parked 2026-08-13.** Came out of closing `np0ON`.
+
+`scripts/confidential -dir .` reports 16 findings over the whole tree, all of
+them invented money in fictional-client documentation and fixtures, all judged
+legitimate and recorded on `np0ON`. Because it reports them it exits non-zero, so
+the whole-tree audit can never come back clean.
+
+**Why that is tolerable today:** the gate that actually runs is a different one.
+The pre-commit hook invokes `-staged -gate` — "does this commit *add* anything
+new" — and that passes. The always-non-zero result belongs to the manual
+whole-tree audit, which is answering "what does the repository contain overall"
+and answering it truthfully.
+
+**The mechanism already exists and has no home.** `-skip path:line:anchor` clears
+a site a human has reviewed, and `-gate` requires the anchor — a digest of the
+line, so editing that line revokes the clearance and a real rate pasted onto a
+cleared line is still caught. What is missing is somewhere to keep those anchors,
+read the way `publication-gate.json` is read. Sixteen anchors on a command line
+is not somewhere.
+
+**What was considered and rejected:** extending the `// gate:fixture` marker.
+It is recognised in exactly one file, `scripts/confidential/main_test.go`, and
+the tool's own doc comment argues that narrowing at length — a general-purpose
+bypass comment is precisely the hole the gate exists to close. Do not widen it.
+
+**What would un-park it:** the whole-tree audit becoming something run routinely
+rather than occasionally — most likely a pre-publication step, when "clean" has
+to mean clean.
+
+---
+
 ## Carry the reasoning out of `project/private/` and into what ships
 
 **Parked 2026-08-13.** Never filed as a task.
