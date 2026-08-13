@@ -1012,22 +1012,6 @@ func statusCaptureAge(s captureState, now time.Time) string {
 	return short(now.Sub(s.last.StartedAt)) + " ago"
 }
 
-// captureSkipped is a capture that passed over its source BY POLICY — the
-// throttled knowledgeC snapshot, whose cadence is deliberately no longer welded
-// to the harvest cadence. It is defined by migration 0015 and belongs to
-// internal/store.
-//
-// IT IS SPELLED HERE AS A STRING RATHER THAN IMPORTED, and that is a compromise
-// with a shelf life rather than a design. The migration and the store constant
-// landed on a parallel branch; this file needed the arm below before the two
-// trees met, and a second copy of a string is exactly the kind of thing this
-// project has watched go stale. It is safe only because of the default arm
-// below: if this spelling and the store's ever diverge, a `skipped` row falls
-// into "a status this report does not recognise" and says so, which is a loud
-// failure rather than a silent one. Replace it with store.CaptureSkipped at the
-// first opportunity.
-const captureSkipped store.CaptureStatus = "skipped"
-
 // statusCaptureOutcome is what the last capture did, in words.
 //
 // Every case below is a different fact and none of them may be printed as
@@ -1061,7 +1045,7 @@ func statusCaptureOutcome(s captureState) string {
 		return "failed"
 	case store.CapturePartial:
 		return fmt.Sprintf("partial, %s preserved and some lost", plural(s.last.FilesNew, "file"))
-	case captureSkipped:
+	case store.CaptureSkipped:
 		// A DECISION, NOT A READING. Nothing was looked at, so nothing about the
 		// source was observed, and the files on disk are from whenever the last
 		// capture that did run put them there.
