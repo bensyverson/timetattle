@@ -37,7 +37,7 @@
 // actually measured.
 //
 //	go run ./scripts/sittingcheck -store /path/to/copy.db \
-//	  -add '/Users/ben/git/assistant/.venv/'
+//	  -add '/Users/you/git/assistant/.venv/'
 package main
 
 import (

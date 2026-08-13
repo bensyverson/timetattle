@@ -23,8 +23,8 @@ func TestLocatorCountsReconcilesUnattributedObservations(t *testing.T) {
 	f := newStore(t)
 	run := f.run(t)
 
-	locatorA := "/Users/ben/git/acorn/holiday/dark-crystal-v2.motn"
-	locatorB := "/Users/ben/git/theaitrellis/README.md"
+	locatorA := "/Users/you/git/acorn/holiday/dark-crystal-v2.motn"
+	locatorB := "/Users/you/git/theaitrellis/README.md"
 	attributed := focus(nine, tenish, "com.apple.motionapp")
 	attributed.Locator = locatorA // will be attributed below
 
@@ -71,7 +71,7 @@ func TestLocatorCountsExcludesAttributedEvents(t *testing.T) {
 	f := newStore(t)
 	run := f.run(t)
 
-	locator := "/Users/ben/git/acorn/holiday/dark-crystal-v2.motn"
+	locator := "/Users/you/git/acorn/holiday/dark-crystal-v2.motn"
 	e := source.NewPoint(nine, source.Identity{App: "com.apple.motionapp"}, sourceID)
 	e.Locator = locator
 	f.write(t, run, e)
@@ -106,7 +106,7 @@ func TestLocatorCountsObservationsAndSpanCoverAttributedEventsToo(t *testing.T) 
 	f := newStore(t)
 	run := f.run(t)
 
-	locator := "/Users/ben/git/acorn/holiday/dark-crystal-v2.motn"
+	locator := "/Users/you/git/acorn/holiday/dark-crystal-v2.motn"
 	attributedEvent := source.NewPoint(nine, source.Identity{App: "com.apple.motionapp"}, sourceID)
 	attributedEvent.Locator = locator
 	f.write(t, run, attributedEvent, focus(tenish, tenish.Add(time.Hour), "com.apple.Safari"))

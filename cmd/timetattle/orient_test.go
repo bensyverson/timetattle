@@ -188,7 +188,7 @@ func TestOrientRollsAnUnregisteredSubdirectoryIntoTheDirectoryThatWouldBeRegiste
 }
 
 // A3D, and the case that has real data behind it. On the live store the
-// vanished /Users/ben/git/theaitrellis carries 9,924 observations at the
+// vanished /Users/you/git/theaitrellis carries 9,924 observations at the
 // directory itself and 4,294 at theaitrellis/stacktrace; one
 // `consolidate -former` recovers 14,218 because a former path matches by
 // prefix, and naming the subdirectory separately would be two declarations for
@@ -388,17 +388,17 @@ func TestOrientNeverRecommendsADirectoryAboveOneAlreadyRegistered(t *testing.T) 
 // `timetattle register -path /` as the highest-value action on the machine —
 // a marker that would have claimed every unregistered directory on the volume.
 func TestOrientNeverRecommendsTheFilesystemRoot(t *testing.T) {
-	if !orientContains("/", "/Users/ben/git/acorn") {
-		t.Error(`orientContains("/", "/Users/ben/git/acorn") = false; the root contains everything`)
+	if !orientContains("/", "/Users/you/git/acorn") {
+		t.Error(`orientContains("/", "/Users/you/git/acorn") = false; the root contains everything`)
 	}
 	if orientContains("/", "/") {
 		t.Error(`orientContains("/", "/") = true; a directory does not contain itself`)
 	}
-	if !orientContains("/Users", "/Users/ben") {
-		t.Error(`orientContains("/Users", "/Users/ben") = false`)
+	if !orientContains("/Users", "/Users/you") {
+		t.Error(`orientContains("/Users", "/Users/you") = false`)
 	}
-	if orientContains("/Users/be", "/Users/ben") {
-		t.Error(`orientContains("/Users/be", "/Users/ben") = true; a string prefix is not a path prefix`)
+	if orientContains("/Users/you/git/ac", "/Users/you/git/acorn") {
+		t.Error(`orientContains("/Users/you/git/ac", "/Users/you/git/acorn") = true; a string prefix is not a path prefix`)
 	}
 }
 

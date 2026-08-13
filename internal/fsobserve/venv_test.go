@@ -39,7 +39,7 @@ func TestCollectSkipsVirtualenvs(t *testing.T) {
 
 // TestCollectKeepsDirectoriesMerelyNamedLikeAVirtualenv is the narrowness half,
 // and it is not hypothetical. The live store holds
-// /Users/ben/git/timetattle/scripts/spike/env/main.go — this repository's own
+// /Users/you/git/timetattle/scripts/spike/env/main.go — this repository's own
 // source, in a directory called `env`. Excluding `env`, or `venv` without its
 // dot, to catch "virtualenvs are sometimes called that" would delete it.
 //
@@ -53,9 +53,9 @@ func TestCollectSkipsVirtualenvs(t *testing.T) {
 // MUTATION rather than by the red stage. Replacing the exact base-name lookup
 // with `strings.Contains(d.Name(), "env")` makes all four of these files vanish
 // and fails this test on all four. Against the real tree the same widening
-// costs /Users/ben/git/timetattle exactly one file — scripts/spike/env/main.go,
+// costs /Users/you/git/timetattle exactly one file — scripts/spike/env/main.go,
 // 289 filtered files down to 288 under `go run ./scripts/filedays -root
-// /Users/ben/git/timetattle -exclude '...,env,venv,...'`.
+// /Users/you/git/timetattle -exclude '...,env,venv,...'`.
 func TestCollectKeepsDirectoriesMerelyNamedLikeAVirtualenv(t *testing.T) {
 	dir := t.TempDir()
 	var want []string

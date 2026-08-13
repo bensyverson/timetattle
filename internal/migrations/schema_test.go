@@ -247,9 +247,9 @@ func TestTwoObservationsDifferingOnlyInLocatorCollide(t *testing.T) {
 
 	base := row{Shape: "point", Started: at0901, Ended: at0901, Document: "dark-crystal-v2"}
 	live := base
-	live.Locator = "/Users/ben/Movies/dark-crystal-v2.motn"
+	live.Locator = "/Users/you/Movies/dark-crystal-v2.motn"
 	replay := base
-	replay.Locator = "/Users/ben/.timetattle/snapshots/dark-crystal-v2.motn"
+	replay.Locator = "/Users/you/.timetattle/snapshots/dark-crystal-v2.motn"
 
 	if err := insert(db, run, live); err != nil {
 		t.Fatalf("first locator: %v", err)

@@ -31,12 +31,12 @@ func excludes(t *testing.T, patterns ...string) sessions.Excludes {
 // without anything being deleted.
 func TestSidecarsAreExcludedWithNoConfigurationAtAll(t *testing.T) {
 	x := excludes(t)
-	for _, locator := range []string{"/Users/ben/git/acorn/.jobs.db-wal", "/Users/ben/git/kura/.jobs.db-shm"} {
+	for _, locator := range []string{"/Users/you/git/acorn/.jobs.db-wal", "/Users/you/git/kura/.jobs.db-shm"} {
 		if !x.Match(locator) {
 			t.Errorf("%s is a SQLite sidecar and survived an empty exclude list", locator)
 		}
 	}
-	if x.Match("/Users/ben/git/acorn/.jobs.db") {
+	if x.Match("/Users/you/git/acorn/.jobs.db") {
 		t.Error("the database itself was excluded; only its sidecars are never a deliverable")
 	}
 }
@@ -46,15 +46,15 @@ func TestSidecarsAreExcludedWithNoConfigurationAtAll(t *testing.T) {
 // file's base name with filepath.Match.
 func TestABasenameGlobMatchesTheFileNameAndNotThePath(t *testing.T) {
 	x := excludes(t, "*.log.bz2")
-	if !x.Match("/Users/ben/git/Easley/logs/access-2026-03-22.log.bz2") {
+	if !x.Match("/Users/you/git/Easley/logs/access-2026-03-22.log.bz2") {
 		t.Error("*.log.bz2 did not match a rotated log")
 	}
-	if x.Match("/Users/ben/git/Easley/viewer/js/ui.js") {
+	if x.Match("/Users/you/git/Easley/viewer/js/ui.js") {
 		t.Error("*.log.bz2 matched a file that is not one")
 	}
 	// A glob with no slash must not be tempted into matching path segments:
 	// "logs" names a directory here and the pattern is about file names.
-	if excludes(t, "logs").Match("/Users/ben/git/Easley/logs/access.log") {
+	if excludes(t, "logs").Match("/Users/you/git/Easley/logs/access.log") {
 		t.Error("a basename glob matched a directory component of the path")
 	}
 }
@@ -63,27 +63,27 @@ func TestABasenameGlobMatchesTheFileNameAndNotThePath(t *testing.T) {
 // containing a slash is an absolute path prefix, which is what names a
 // directory whose whole contents are machine output.
 func TestAPatternWithASlashIsAPathPrefix(t *testing.T) {
-	x := excludes(t, "/Users/ben/git/Easley/reports/")
-	if !x.Match("/Users/ben/git/Easley/reports/2024-12-09.json") {
+	x := excludes(t, "/Users/you/git/Easley/reports/")
+	if !x.Match("/Users/you/git/Easley/reports/2024-12-09.json") {
 		t.Error("the prefix did not match a file inside the directory it names")
 	}
-	if x.Match("/Users/ben/git/Easley/viewer/stats-server.py") {
+	if x.Match("/Users/you/git/Easley/viewer/stats-server.py") {
 		t.Error("the prefix matched a file outside the directory it names")
 	}
 }
 
 // TestAPrefixStopsAtAPathBoundary is the foot-gun a literal prefix comparison
-// would leave open: "/Users/ben/git/Ea" must not swallow "/Users/ben/git/Easley".
+// would leave open: "/Users/you/git/Ea" must not swallow "/Users/you/git/Easley".
 func TestAPrefixStopsAtAPathBoundary(t *testing.T) {
-	x := excludes(t, "/Users/ben/git/Ea")
-	if x.Match("/Users/ben/git/Easley/logs/access.log") {
-		t.Error("a prefix matched across a path boundary; /Users/ben/git/Ea is not /Users/ben/git/Easley")
+	x := excludes(t, "/Users/you/git/Ea")
+	if x.Match("/Users/you/git/Easley/logs/access.log") {
+		t.Error("a prefix matched across a path boundary; /Users/you/git/Ea is not /Users/you/git/Easley")
 	}
 	// The directory itself, written with or without a trailing slash, is the
 	// same instruction. A silent difference between the two would be a
 	// configuration that appears to be set and is not.
-	for _, pattern := range []string{"/Users/ben/git/Easley/logs", "/Users/ben/git/Easley/logs/"} {
-		if !excludes(t, pattern).Match("/Users/ben/git/Easley/logs/access.log") {
+	for _, pattern := range []string{"/Users/you/git/Easley/logs", "/Users/you/git/Easley/logs/"} {
+		if !excludes(t, pattern).Match("/Users/you/git/Easley/logs/access.log") {
 			t.Errorf("%q did not match a file inside the directory it names", pattern)
 		}
 	}
@@ -138,14 +138,14 @@ func TestAnEmptyPatternIsRefused(t *testing.T) {
 // cannot be reconciled with the store it came from.
 func TestRetainCountsWhatItDroppedAndSumsToTheInput(t *testing.T) {
 	events := []source.Event{
-		located("/Users/ben/git/Easley/logs/access-2026-03-22.log.bz2"),
-		located("/Users/ben/git/Easley/logs/error-2026-03-22.log.bz2"),
-		located("/Users/ben/git/Easley/reports/2024-12-09.json"),
-		located("/Users/ben/git/acorn/.jobs.db-wal"),
-		located("/Users/ben/git/Easley/viewer/stats-server.py"),
+		located("/Users/you/git/Easley/logs/access-2026-03-22.log.bz2"),
+		located("/Users/you/git/Easley/logs/error-2026-03-22.log.bz2"),
+		located("/Users/you/git/Easley/reports/2024-12-09.json"),
+		located("/Users/you/git/acorn/.jobs.db-wal"),
+		located("/Users/you/git/Easley/viewer/stats-server.py"),
 		backlit(0, time.Hour, "on"),
 	}
-	kept, drop := sessions.Retain(events, excludes(t, "*.log.bz2", "/Users/ben/git/Easley/reports/"))
+	kept, drop := sessions.Retain(events, excludes(t, "*.log.bz2", "/Users/you/git/Easley/reports/"))
 
 	if len(kept)+drop.Total != len(events) {
 		t.Errorf("kept %d and dropped %d out of %d; the accounting does not sum to the input",
@@ -160,7 +160,7 @@ func TestRetainCountsWhatItDroppedAndSumsToTheInput(t *testing.T) {
 	if got := drop.ByPattern["*.log.bz2"]; got != 2 {
 		t.Errorf("*.log.bz2 dropped %d, want 2", got)
 	}
-	if got := drop.ByPattern["/Users/ben/git/Easley/reports/"]; got != 1 {
+	if got := drop.ByPattern["/Users/you/git/Easley/reports/"]; got != 1 {
 		t.Errorf("the reports prefix dropped %d, want 1", got)
 	}
 	if len(kept) != 2 {
@@ -172,7 +172,7 @@ func TestRetainCountsWhatItDroppedAndSumsToTheInput(t *testing.T) {
 // a person having said something the tool did nothing with, and silence there is
 // the same failure as a config key quietly ignored.
 func TestRetainReportsAPatternThatMatchedNothing(t *testing.T) {
-	_, drop := sessions.Retain([]source.Event{located("/Users/ben/git/acorn/main.go")},
+	_, drop := sessions.Retain([]source.Event{located("/Users/you/git/acorn/main.go")},
 		excludes(t, "*.log.bz2"))
 	count, named := drop.ByPattern["*.log.bz2"]
 	if !named {

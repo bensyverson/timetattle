@@ -320,7 +320,7 @@ func TestEveryFieldTheSourceReportedSurvivesTheRoundTrip(t *testing.T) {
 		App:      "com.apple.motionapp",
 		Document: "dark-crystal-v2",
 	}, "motion-autosave")
-	point.Locator = "/Users/ben/Movies/Motion Projects/Autosave Vault/dark-crystal/v2.motn"
+	point.Locator = "/Users/you/Movies/Motion Projects/Autosave Vault/dark-crystal/v2.motn"
 	// A Motion autosave is written by a wall-clock timer, which is the whole of
 	// what makes it weaker evidence than a save. Nothing can recover that from
 	// the row afterwards, so it has to survive the write.
@@ -402,7 +402,7 @@ func TestASourceSuppliedProjectIsNotStored(t *testing.T) {
 		Document: "v2",
 		Project:  "dark-crystal",
 	}, "motion-autosave")
-	e.Locator = "/Users/ben/Movies/Motion Projects/Autosave Vault/dark-crystal/v2.motn"
+	e.Locator = "/Users/you/Movies/Motion Projects/Autosave Vault/dark-crystal/v2.motn"
 	f.write(t, run, e)
 
 	got := f.all(t)
@@ -425,9 +425,9 @@ func TestTheSameObservationReadFromTwoPathsIsOneEvent(t *testing.T) {
 	run := f.run(t)
 
 	live := source.NewPoint(nine, source.Identity{App: "com.apple.motionapp", Document: "v2"}, "motion-autosave")
-	live.Locator = "/Users/ben/Movies/Motion Projects/Autosave Vault/dark-crystal/v2.motn"
+	live.Locator = "/Users/you/Movies/Motion Projects/Autosave Vault/dark-crystal/v2.motn"
 	replayed := live
-	replayed.Locator = "/Users/ben/.timetattle/snapshots/2026-07-29/dark-crystal/v2.motn"
+	replayed.Locator = "/Users/you/.timetattle/snapshots/2026-07-29/dark-crystal/v2.motn"
 
 	if n := f.write(t, run, live, replayed); n != 1 {
 		t.Errorf("the same autosave read from two paths inserted %d rows, want 1", n)

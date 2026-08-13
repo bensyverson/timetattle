@@ -12,7 +12,7 @@
 //   - A former path matches by PREFIX. Evidence recorded one or more levels
 //     below the renamed directory comes with it, and a count of the exact path
 //     alone understates the recovery. Measured on the live store 2026-08-01,
-//     /Users/ben/git/theaitrellis carries 9,924 observations at the directory
+//     /Users/you/git/theaitrellis carries 9,924 observations at the directory
 //     itself and 4,294 at theaitrellis/stacktrace: 30% of the total sits below
 //     the name anyone would type.
 //   - A prefix is not a string prefix. theaitrellis-old is a different
@@ -35,7 +35,7 @@
 //
 // # Usage
 //
-//	go run ./scripts/consolidatecheck -path /Users/ben/git/nobedan -former /Users/ben/git/theaitrellis
+//	go run ./scripts/consolidatecheck -path /Users/you/git/nobedan -former /Users/you/git/theaitrellis
 //	go run ./scripts/consolidatecheck -path DIR -former OLD -store /path/to/copy.db
 package main
 

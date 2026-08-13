@@ -18,7 +18,7 @@ import (
 func TestLocatorRecordsWhereTheEvidenceWasFound(t *testing.T) {
 	e := source.NewPoint(at(14, 1, 0),
 		source.Identity{App: "com.apple.motionapp", Document: "dark-crystal-v2"}, "motion-autosave")
-	e.Locator = "/Users/ben/Movies/Motion Projects/Autosave Vault/dark-crystal-v2/dark-crystal-v2_2026-07-28_1401.motn"
+	e.Locator = "/Users/you/Movies/Motion Projects/Autosave Vault/dark-crystal-v2/dark-crystal-v2_2026-07-28_1401.motn"
 
 	if err := e.Validate(); err != nil {
 		t.Fatalf("Validate() = %v, want an event carrying its path to be valid", err)
@@ -72,11 +72,11 @@ func TestValidateRejectsARelativeLocator(t *testing.T) {
 func TestIdentityIsUnaffectedByWhereTheEvidenceWasFound(t *testing.T) {
 	vault := source.NewPoint(at(14, 1, 0),
 		source.Identity{App: "com.apple.motionapp", Document: "dark-crystal-v2"}, "motion-autosave")
-	vault.Locator = "/Users/ben/Movies/Motion Projects/Autosave Vault/dark-crystal-v2_2026-07-28_1401.motn"
+	vault.Locator = "/Users/you/Movies/Motion Projects/Autosave Vault/dark-crystal-v2_2026-07-28_1401.motn"
 
 	repo := source.NewPoint(at(14, 30, 0),
 		source.Identity{App: "com.apple.motionapp", Document: "dark-crystal-v2"}, "motion-autosave")
-	repo.Locator = "/Users/ben/git/acorn/motion/dark-crystal-v2.motn"
+	repo.Locator = "/Users/you/git/acorn/motion/dark-crystal-v2.motn"
 
 	if vault.Identity != repo.Identity {
 		t.Fatalf("identities differ across locations:\n vault %+v\n repo  %+v\n"+
@@ -120,8 +120,8 @@ func TestDuplicateLocatorCollisionKeepsWhicheverWasInsertedFirst(t *testing.T) {
 	// registry.Register blesses. Same instant, same everything Identity
 	// carries, because that equality is the premise under test.
 	const (
-		vaultLocator = "/Users/ben/Movies/Motion Projects/Autosave Vault/dark-crystal-v2/dark-crystal-v2_2026-07-28_1401.motn"
-		repoLocator  = "/Users/ben/git/acorn/motion/dark-crystal-v2.motn"
+		vaultLocator = "/Users/you/Movies/Motion Projects/Autosave Vault/dark-crystal-v2/dark-crystal-v2_2026-07-28_1401.motn"
+		repoLocator  = "/Users/you/git/acorn/motion/dark-crystal-v2.motn"
 	)
 
 	// insertEvent is internal/store/run.go's own statement, copied rather than

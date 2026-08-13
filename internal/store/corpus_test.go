@@ -25,7 +25,7 @@ import (
 
 func sitCorpus() sittings.Corpus {
 	return sittings.Corpus{
-		Exclude: []string{"*.bz2", "*.gz", "*.log", "/Users/ben/git/Easley/reports/"},
+		Exclude: []string{"*.bz2", "*.gz", "*.log", "/Users/you/git/Easley/reports/"},
 		From:    sitAt(-600),
 	}
 }

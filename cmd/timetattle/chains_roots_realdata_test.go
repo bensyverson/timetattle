@@ -21,7 +21,7 @@ import (
 
 // realAcorn is the reference project, or a skip.
 //
-// This used to hardcode "/Users/ben/git/acorn" — wrong on two counts, not
+// This used to hardcode "/Users/you/git/acorn" — wrong on two counts, not
 // one. TestMain points HOME at an empty temp directory for the whole binary,
 // which is why the path could not simply be resolved through it; but the
 // pseudonym scrub (task 5nCl4)

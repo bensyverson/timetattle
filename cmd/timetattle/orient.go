@@ -301,8 +301,8 @@ func orientCensusOf(counts store.LocatorCounts, registered []*registry.Marker) o
 //     declared former paths, and knows about git worktrees.
 //  2. THE PATH IS GONE. Checked before anything else about the directory,
 //     because attributionDirOf cannot tell a vanished directory from a file and
-//     strips a level from it — so a vanished /Users/ben/git/theaitrellis would
-//     otherwise be classified against /Users/ben/git, which is the container
+//     strips a level from it — so a vanished /Users/you/git/theaitrellis would
+//     otherwise be classified against /Users/you/git, which is the container
 //     above nearly every registered directory on this machine. Consolidate is
 //     the remedy and it takes the UNSTRIPPED path, for the same reason
 //     ResolveAmong does.
@@ -395,7 +395,7 @@ func orientContains(outer, inner string) bool {
 //     unattributed and costs a second registration to fix.
 //   - For a consolidation, a declared former path matches by PREFIX, so
 //     `-former` on the vanished root recovers everything recorded beneath it.
-//     On the live store /Users/ben/git/theaitrellis carries 9,924 observations
+//     On the live store /Users/you/git/theaitrellis carries 9,924 observations
 //     and theaitrellis/stacktrace another 4,294; naming them separately would
 //     be two declarations for one rename, and the second would be refused
 //     because the first already claims the prefix.

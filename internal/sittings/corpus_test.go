@@ -12,7 +12,7 @@ import (
 // and none of the corpus: the events were already narrowed before it saw them.
 
 func corpus() sittings.Corpus {
-	return sittings.Corpus{Exclude: []string{"*.bz2", "*.gz", "*.log", "/Users/ben/git/Easley/reports/"}}
+	return sittings.Corpus{Exclude: []string{"*.bz2", "*.gz", "*.log", "/Users/you/git/Easley/reports/"}}
 }
 
 // The defect this exists for. Adding four patterns moved total presence from
@@ -98,12 +98,12 @@ func TestCorporaDifferingOnlyInTheWindowAreNotEqual(t *testing.T) {
 // a path and a path may hold a comma. presence_sources can be comma-joined
 // because a source id cannot.
 func TestAPatternHoldingACommaSurvivesTheStoredForm(t *testing.T) {
-	c := sittings.Corpus{Exclude: []string{"/Users/ben/Documents/Smith, John/"}}
+	c := sittings.Corpus{Exclude: []string{"/Users/you/Documents/Smith, John/"}}
 	back, err := sittings.ParseExcludeJSON(c.ExcludeJSON())
 	if err != nil {
 		t.Fatalf("ParseExcludeJSON(%q): %v", c.ExcludeJSON(), err)
 	}
-	if len(back) != 1 || back[0] != "/Users/ben/Documents/Smith, John/" {
+	if len(back) != 1 || back[0] != "/Users/you/Documents/Smith, John/" {
 		t.Errorf("a pattern holding a comma read back as %q; splitting on commas would have "+
 			"invented two patterns, one of which excludes everything", back)
 	}

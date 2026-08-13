@@ -57,8 +57,8 @@ func count(t *testing.T, db *sql.DB, table string) int {
 // nothing, so that both halves of the derivation are exercised.
 func sampleResult(t *testing.T) Result {
 	t.Helper()
-	const blender = "/Users/ben/git/acorn/blender"
-	const scanline = "/Users/ben/git/acorn/scanline"
+	const blender = "/Users/you/git/acorn/blender"
+	const scanline = "/Users/you/git/acorn/scanline"
 	r := Reconstruct([]source.Event{
 		src(day(9, 19, 26), blender+"/lightbar.blend"),
 		src(day(9, 33, 38), blender+"/lightbar-top.blend"),
@@ -208,8 +208,8 @@ func TestRebuildReplacesRatherThanAccumulates(t *testing.T) {
 
 	// A narrower run must leave nothing of the wider one behind.
 	narrow := Reconstruct([]source.Event{
-		src(day(9, 19, 26), "/Users/ben/git/acorn/blender/lightbar.blend"),
-		src(day(9, 33, 38), "/Users/ben/git/acorn/blender/lightbar-top.blend"),
+		src(day(9, 19, 26), "/Users/you/git/acorn/blender/lightbar.blend"),
+		src(day(9, 33, 38), "/Users/you/git/acorn/blender/lightbar-top.blend"),
 	}, Options{})
 	if err := rebuild(st, narrow, computedAt()); err != nil {
 		t.Fatalf("narrow Rebuild: %v", err)
@@ -229,12 +229,12 @@ func TestRebuildNeverTouchesTheEventStore(t *testing.T) {
 	st, db := testDB(t)
 
 	if _, err := db.Exec(`INSERT INTO harvest_run (id, source_id, started_at, input, status)
-		VALUES (1, 'fs-observations', '2026-07-31T00:00:00.000000Z', '/Users/ben/git/acorn', 'ok')`); err != nil {
+		VALUES (1, 'fs-observations', '2026-07-31T00:00:00.000000Z', '/Users/you/git/acorn', 'ok')`); err != nil {
 		t.Fatalf("seed harvest_run: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO event (first_seen_run, source_id, shape, started_at, ended_at, document, state, locator, cause)
 		VALUES (1, 'fs-observations', 'point', '2026-07-11T14:19:26.000000Z', '2026-07-11T14:19:26.000000Z',
-		        'lightbar', 'source', '/Users/ben/git/acorn/blender/lightbar.blend', 'user-action')`); err != nil {
+		        'lightbar', 'source', '/Users/you/git/acorn/blender/lightbar.blend', 'user-action')`); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 
@@ -283,7 +283,7 @@ func TestSchemaRefusesRowsTheModelCannotProduce(t *testing.T) {
 	// there doing nothing.
 	if _, err := db.Exec(`INSERT INTO derived_chain
 		(id, run_id, directory, root, started_at, ended_at, step_count, document_count)
-		VALUES (999, 1, '/Users/ben/git/acorn/spare', 'spare',
+		VALUES (999, 1, '/Users/you/git/acorn/spare', 'spare',
 		        '2026-07-11T14:00:00.000000Z', '2026-07-11T15:00:00.000000Z', 2, 2)`); err != nil {
 		t.Fatalf("seed the spare chain: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestSchemaRefusesRowsTheModelCannotProduce(t *testing.T) {
 			// the document count and the whole measure vacuous.
 			"a chain with one step",
 			`INSERT INTO derived_chain (run_id, directory, root, started_at, ended_at, step_count, document_count)
-			 VALUES (1, '/Users/ben/git/acorn/blender', 'solo', '2026-07-11T14:00:00.000000Z',
+			 VALUES (1, '/Users/you/git/acorn/blender', 'solo', '2026-07-11T14:00:00.000000Z',
 			         '2026-07-11T15:00:00.000000Z', 1, 1)`,
 		},
 		{
@@ -313,7 +313,7 @@ func TestSchemaRefusesRowsTheModelCannotProduce(t *testing.T) {
 			// least one.
 			"more steps than documents",
 			`INSERT INTO derived_chain (run_id, directory, root, started_at, ended_at, step_count, document_count)
-			 VALUES (1, '/Users/ben/git/acorn/blender', 'thin', '2026-07-11T14:00:00.000000Z',
+			 VALUES (1, '/Users/you/git/acorn/blender', 'thin', '2026-07-11T14:00:00.000000Z',
 			         '2026-07-11T15:00:00.000000Z', 3, 2)`,
 		},
 		{
@@ -321,7 +321,7 @@ func TestSchemaRefusesRowsTheModelCannotProduce(t *testing.T) {
 			// burst that the collapse rule failed to collapse.
 			"a chain of zero width",
 			`INSERT INTO derived_chain (run_id, directory, root, started_at, ended_at, step_count, document_count)
-			 VALUES (1, '/Users/ben/git/acorn/blender', 'flat', '2026-07-11T14:00:00.000000Z',
+			 VALUES (1, '/Users/you/git/acorn/blender', 'flat', '2026-07-11T14:00:00.000000Z',
 			         '2026-07-11T14:00:00.000000Z', 2, 2)`,
 		},
 		{
@@ -335,7 +335,7 @@ func TestSchemaRefusesRowsTheModelCannotProduce(t *testing.T) {
 			// not converge.
 			"a duplicate chain identity",
 			`INSERT INTO derived_chain (run_id, directory, root, started_at, ended_at, step_count, document_count)
-			 VALUES (1, '/Users/ben/git/acorn/blender', 'lightbar', '2026-07-11T14:00:00.000000Z',
+			 VALUES (1, '/Users/you/git/acorn/blender', 'lightbar', '2026-07-11T14:00:00.000000Z',
 			         '2026-07-11T15:00:00.000000Z', 2, 2)`,
 		},
 		{

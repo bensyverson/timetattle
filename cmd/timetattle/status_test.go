@@ -272,7 +272,7 @@ func statusMidHarvest(t *testing.T) (string, time.Time) {
 	st, path := newStore(t)
 	ctx := context.Background()
 
-	const projects = "/Users/ben/.claude/projects"
+	const projects = "/Users/you/.claude/projects"
 	done, err := st.BeginRun(ctx, store.RunSpec{SourceID: claudeTranscripts, Input: projects})
 	if err != nil {
 		t.Fatalf("BeginRun: %v", err)
@@ -362,7 +362,7 @@ func TestStatusStillReportsAHarvestThatDiedPartway(t *testing.T) {
 func TestStatusStaleCatchesARunNothingCanJudge(t *testing.T) {
 	st, path := newStore(t)
 	ctx := context.Background()
-	begun, err := st.BeginRun(ctx, store.RunSpec{SourceID: claudeTranscripts, Input: "/Users/ben/.claude/projects"})
+	begun, err := st.BeginRun(ctx, store.RunSpec{SourceID: claudeTranscripts, Input: "/Users/you/.claude/projects"})
 	if err != nil {
 		t.Fatalf("BeginRun: %v", err)
 	}

@@ -225,7 +225,7 @@ func TestReadRootsFileParsesCommentsBlanksAndTilde(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	path := filepath.Join(t.TempDir(), "roots.txt")
-	contents := "# roots to scan\n\n   \n~/git/acorn\n/Users/ben/git/timetattle\n"
+	contents := "# roots to scan\n\n   \n~/git/acorn\n/Users/you/git/timetattle\n"
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -234,7 +234,7 @@ func TestReadRootsFileParsesCommentsBlanksAndTilde(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadRootsFile: %v", err)
 	}
-	want := []string{filepath.Join(home, "git", "acorn"), "/Users/ben/git/timetattle"}
+	want := []string{filepath.Join(home, "git", "acorn"), "/Users/you/git/timetattle"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ReadRootsFile = %v, want %v", got, want)
 	}

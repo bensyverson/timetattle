@@ -51,7 +51,7 @@ func realProject(t *testing.T) string {
 // fixture built to already agree with the claim.
 //
 // The real files behind every assertion below (see
-// /Users/ben/git/acorn/scanline, read with `stat -f "%SB %Sm"`, local zone):
+// /Users/you/git/acorn/scanline, read with `stat -f "%SB %Sm"`, local zone):
 //
 //	scanline2-face-granted.motn  born 06:00:14.913427472  mtime 06:50:34.742495669
 //	scanline3-face-granted.motn  born 06:00:14.913427472  mtime 2026-07-29 13:17:56 (a day later — mtime alone would have lost this morning entirely)

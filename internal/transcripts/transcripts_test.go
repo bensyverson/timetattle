@@ -111,8 +111,8 @@ func TestRegisteredReaderResolvesHomeAtCollectTimeNotInit(t *testing.T) {
 func TestCollectEmitsAPointEventPerTimedRecord(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1", `"do the thing"`),
-		assistantLine("a1", "2026-07-28T10:00:05.000Z", "/Users/ben/git/acorn", "s1"),
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1", `"do the thing"`),
+		assistantLine("a1", "2026-07-28T10:00:05.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -132,7 +132,7 @@ func TestCollectEmitsAPointEventPerTimedRecord(t *testing.T) {
 		if e.Source != ID {
 			t.Errorf("event %+v has source %q, want %q", e, e.Source, ID)
 		}
-		if e.Locator != "/Users/ben/git/acorn" {
+		if e.Locator != "/Users/you/git/acorn" {
 			t.Errorf("event %+v has locator %q, want the record's own cwd", e, e.Locator)
 		}
 		if err := e.Validate(); err != nil {
@@ -145,11 +145,11 @@ func TestAttributionUsesEachRecordsOwnCWDNotTheDirectoryName(t *testing.T) {
 	root := t.TempDir()
 	// The project directory name is the dash-encoded form of an entirely
 	// different path than the cwd the record actually carries -- e.g. this
-	// project directory would naively decode to "/Users/ben/git/other", but
+	// project directory would naively decode to "/Users/you/git/other", but
 	// every record says the real work happened in a path containing a dash of
 	// its own, which the naive decode could never reconstruct.
 	writeFile(t, filepath.Join(root, "-Users-ben-git-other", "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/dark-crystal-v2", "s1", `"hello"`),
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/dark-crystal-v2", "s1", `"hello"`),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -159,7 +159,7 @@ func TestAttributionUsesEachRecordsOwnCWDNotTheDirectoryName(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1", len(events))
 	}
-	if events[0].Locator != "/Users/ben/git/dark-crystal-v2" {
+	if events[0].Locator != "/Users/you/git/dark-crystal-v2" {
 		t.Errorf("locator = %q, want the record's own cwd (a path the directory name cannot decode to)", events[0].Locator)
 	}
 }
@@ -168,11 +168,11 @@ func TestSubagentTranscriptsAreCollected(t *testing.T) {
 	root := t.TempDir()
 	proj := filepath.Join(root, "-Users-ben-git-acorn")
 	writeFile(t, filepath.Join(proj, "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1", `"start work"`),
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1", `"start work"`),
 	})
 	writeFile(t, filepath.Join(proj, "s1", "subagents", "agent-1.jsonl"), []string{
-		userLine("sub1", "2026-07-28T10:00:01.000Z", "/Users/ben/git/acorn", "s1", `"dispatched task"`),
-		assistantLine("sub2", "2026-07-28T10:00:02.000Z", "/Users/ben/git/acorn", "s1"),
+		userLine("sub1", "2026-07-28T10:00:01.000Z", "/Users/you/git/acorn", "s1", `"dispatched task"`),
+		assistantLine("sub2", "2026-07-28T10:00:02.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -188,10 +188,10 @@ func TestSubagentEventsFoldIntoTheirParentsLocatorNotASeparateOne(t *testing.T) 
 	root := t.TempDir()
 	proj := filepath.Join(root, "-Users-ben-git-acorn")
 	writeFile(t, filepath.Join(proj, "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1", `"start work"`),
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1", `"start work"`),
 	})
 	writeFile(t, filepath.Join(proj, "s1", "subagents", "agent-1.jsonl"), []string{
-		assistantLine("sub1", "2026-07-28T10:00:01.000Z", "/Users/ben/git/acorn", "s1"),
+		assistantLine("sub1", "2026-07-28T10:00:01.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -211,13 +211,13 @@ func TestSubagentDispatchPromptIsNotCountedAsAHumanTurn(t *testing.T) {
 	root := t.TempDir()
 	proj := filepath.Join(root, "-Users-ben-git-acorn")
 	writeFile(t, filepath.Join(proj, "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1", `"real human prompt"`),
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1", `"real human prompt"`),
 	})
 	// A subagent's first record is a plain-string "user" message too -- it is
 	// the orchestrating agent's dispatch, not a human at a keyboard, and the
 	// only signal that tells the two apart is the subagents/ path.
 	writeFile(t, filepath.Join(proj, "s1", "subagents", "agent-1.jsonl"), []string{
-		userLine("sub1", "2026-07-28T10:00:01.000Z", "/Users/ben/git/acorn", "s1", `"go do this task unattended"`),
+		userLine("sub1", "2026-07-28T10:00:01.000Z", "/Users/you/git/acorn", "s1", `"go do this task unattended"`),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -239,7 +239,7 @@ func TestSubagentDispatchPromptIsNotCountedAsAHumanTurn(t *testing.T) {
 func TestToolResultFedBackAsAUserRecordIsMachineNotHuman(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1",
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1",
 			`[{"tool_use_id":"t1","type":"tool_result","content":[{"type":"text","text":"ok"}]}]`),
 	})
 
@@ -259,7 +259,7 @@ func TestToolResultFedBackAsAUserRecordIsMachineNotHuman(t *testing.T) {
 func TestUserTextBlockContentIsAHumanTurn(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1",
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1",
 			`[{"type":"text","text":"can you explain this"}]`),
 	})
 
@@ -278,7 +278,7 @@ func TestMixedToolResultAndTextContentIsStillMachine(t *testing.T) {
 	// the presence of any tool_result block means the harness produced it.
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1",
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1",
 			`[{"tool_use_id":"t1","type":"tool_result","content":"..."},{"type":"text","text":"Tool loaded."}]`),
 	})
 
@@ -294,7 +294,7 @@ func TestMixedToolResultAndTextContentIsStillMachine(t *testing.T) {
 func TestAssistantRecordsAreMachine(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
-		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1"),
+		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -310,7 +310,7 @@ func TestRecordsWithNoTimestampAreSkipped(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
 		`{"type":"last-prompt","sessionId":"s1"}`,
-		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1"),
+		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -326,7 +326,7 @@ func TestRecordsWithNoUUIDAreSkipped(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
 		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-07-28T10:00:00.000Z","sessionId":"s1"}`,
-		assistantLine("a1", "2026-07-28T10:00:01.000Z", "/Users/ben/git/acorn", "s1"),
+		assistantLine("a1", "2026-07-28T10:00:01.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -363,7 +363,7 @@ func TestMalformedLineIsSkippedNotFatal(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
 		`{not valid json`,
-		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1"),
+		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -379,9 +379,9 @@ func TestOutOfOrderRecordsAreSortedOnOutput(t *testing.T) {
 	root := t.TempDir()
 	// Written out of chronological order, exactly as real transcripts are.
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
-		assistantLine("a2", "2026-07-28T10:00:10.000Z", "/Users/ben/git/acorn", "s1"),
-		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1"),
-		assistantLine("a3", "2026-07-28T10:00:20.000Z", "/Users/ben/git/acorn", "s1"),
+		assistantLine("a2", "2026-07-28T10:00:10.000Z", "/Users/you/git/acorn", "s1"),
+		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1"),
+		assistantLine("a3", "2026-07-28T10:00:20.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})
@@ -396,8 +396,8 @@ func TestOutOfOrderRecordsAreSortedOnOutput(t *testing.T) {
 func TestSinceFiltersOutEventsThatFinishedBeforeIt(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
-		assistantLine("a1", "2026-07-28T09:00:00.000Z", "/Users/ben/git/acorn", "s1"),
-		assistantLine("a2", "2026-07-28T11:00:00.000Z", "/Users/ben/git/acorn", "s1"),
+		assistantLine("a1", "2026-07-28T09:00:00.000Z", "/Users/you/git/acorn", "s1"),
+		assistantLine("a2", "2026-07-28T11:00:00.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	since := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
@@ -427,10 +427,10 @@ func TestMissingRootIsNotAnError(t *testing.T) {
 func TestOneUnreadableFileDoesNotLoseTheOthers(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "-Users-ben-git-acorn", "s1.jsonl"), []string{
-		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1"),
+		assistantLine("a1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1"),
 	})
 	bad := filepath.Join(root, "-Users-ben-git-other", "s2.jsonl")
-	writeFile(t, bad, []string{assistantLine("a2", "2026-07-28T10:00:00.000Z", "/Users/ben/git/other", "s2")})
+	writeFile(t, bad, []string{assistantLine("a2", "2026-07-28T10:00:00.000Z", "/Users/you/git/other", "s2")})
 	if err := os.Chmod(bad, 0o000); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
@@ -456,12 +456,12 @@ func TestCompactionReplayOfAHumanTurnStaysHuman(t *testing.T) {
 	root := t.TempDir()
 	proj := filepath.Join(root, "-Users-ben-git-acorn")
 	writeFile(t, filepath.Join(proj, "s1.jsonl"), []string{
-		userLine("h1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1", `"implement the thing"`),
+		userLine("h1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1", `"implement the thing"`),
 	})
 	writeFile(t, filepath.Join(proj, "s1", "subagents", "agent-acompact-1.jsonl"), []string{
 		// Identical uuid and timestamp to the record above -- the replay.
-		userLine("h1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1", `"implement the thing"`),
-		assistantLine("c1", "2026-07-28T10:00:05.000Z", "/Users/ben/git/acorn", "s1"),
+		userLine("h1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1", `"implement the thing"`),
+		assistantLine("c1", "2026-07-28T10:00:05.000Z", "/Users/you/git/acorn", "s1"),
 	})
 
 	events, err := NewReader(root).Collect(context.Background(), time.Time{})

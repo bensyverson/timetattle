@@ -90,10 +90,10 @@ func TestStripRemovesGitRepoEnv(t *testing.T) {
 		"GIT_ALTERNATE_OBJECT_DIRECTORIES=/other",
 		"GIT_PREFIX=sub/",
 		"GIT_NAMESPACE=ns",
-		"HOME=/home/x",
+		"HOME=/home/you",
 	}
 	out := gitenv.Strip(in)
-	want := []string{"PATH=/usr/bin", "HOME=/home/x"}
+	want := []string{"PATH=/usr/bin", "HOME=/home/you"}
 	if len(out) != len(want) {
 		t.Fatalf("Strip(%v) = %v, want %v", in, out, want)
 	}
