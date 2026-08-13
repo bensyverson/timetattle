@@ -191,6 +191,17 @@ the spacing:
 | 12 min | 46m | 40m | **refused** |
 | 14 min | 52m | 40m | **refused** |
 
+> **CORRECTED 2026-08-13 by `interleave`, task qAkml, later the same day.** The
+> paragraph below says the refusal "has never fired on the live store". That is
+> true of the UNWINDOWED run and false in general: `timetattle metrics -all -from
+> 2026-04-24 -to 2026-04-24` exits 1 and prints no report on this store today.
+> One of the 82 day-windows holding a client with more than one project is
+> refused, and the phenomenon behind it — clock a client holds that no project of
+> its own holds — is present in the unwindowed report too, at 19m13s across 11
+> stretches. It is not latent. See
+> `project/2026-08-13-rollup-union-or-reclustering.md`, which reproduces every
+> figure with `go run ./scripts/rollupunion`.
+
 The refusal is a whole failed command, not a wrong row: `Compute` returns
 `client X is credited 46m0s across projects summing to 40m0s; a roll-up is the
 union of its projects' spans and can never exceed their sum`, and there is no

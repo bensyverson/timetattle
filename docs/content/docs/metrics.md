@@ -115,10 +115,12 @@ ENGAGED, per client
   timetattle          30.8h     0.2h       8.5h         28.4h       20.7h     1.9%         1
 ```
 
-**A client's hours are the union of its projects' spans and never their sum.**
-Absolute engaged time overlaps by design — that is what makes it the invoice
-figure — so a minute two of a client's projects were both active in bills to
-each of them and to the client *once*.
+**A client's hours are never the sum of its projects'.** Absolute engaged time
+overlaps by design — that is what makes it the invoice figure — so a minute two
+of a client's projects were both active in bills to each of them and to the
+client *once*. It is close to the union of their spans, and not exactly it; see
+[A client is re-clustered](#a-client-is-re-clustered-so-it-can-hold-a-little-clock-no-project-holds)
+below for the difference and how large it is.
 
 The difference is not small, and it is invisible on a client with one project.
 On the corpus above, `personal`'s 33 project rows sum to **701.7h** absolute
@@ -131,6 +133,33 @@ Reproduce both figures with:
 ```console
 $ timetattle metrics -client personal      # the "shown" row totals its 33 projects
 ```
+
+### A client is re-clustered, so it can hold a little clock no project holds
+
+A client's hours are **not** assembled from the project rows. Its own evidence —
+every one of its projects' observations at once — is clustered again under the
+same parameters, exactly as a project's own evidence is. That matters wherever
+one client's projects are worked alternately: a silence too wide for any single
+project to bridge can be narrow enough to bridge once the client's evidence is
+taken together, and the client is then credited a stretch that none of its
+projects is credited.
+
+It is small and it is real. On the corpus above, measured with
+`go run ./scripts/rollupunion`, the 33-project client holds **19m13s** — 11
+stretches, the longest 4m19s — that no project of its own holds, out of 617.7h.
+The same minutes also appear under UNATTRIBUTED PRESENCE as bridged silence,
+because a stretch no project covers is a stretch nothing was attributed in.
+
+**This can refuse a whole report.** A closing check in the roll-up rejects any
+report in which a client exceeds its projects' *sum*, and where a client's
+projects run one after another rather than concurrently that sum has no slack to
+absorb the bridged clock. `timetattle metrics -from 2026-04-24 -to 2026-04-24`
+on the corpus above exits non-zero and prints nothing at all for exactly that
+reason. Which of the two — the re-clustered figure or the check — is the one to
+keep is an open question recorded in
+`project/2026-08-13-rollup-union-or-reclustering.md`; until it is settled, a
+window that refuses can be widened, since concurrency elsewhere in the span
+restores the slack.
 
 Allocation divides by client at the client level and by project at the project
 level, so they are different splits rather than the same one re-added. A minute
