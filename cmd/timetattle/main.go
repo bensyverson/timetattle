@@ -166,7 +166,7 @@ func rootCommand() *cobra.Command {
 		consolidateCmd(),
 		sessionizeCmd(os.Stdout),
 		chainsCmd(),
-		metricsCmd(os.Stdout),
+		metricsCmd(os.Stdout, os.Stderr),
 		dashboardCmd(os.Stdout),
 		reviewCmd(os.Stdout, os.Stdin),
 		fitCmd(os.Stdout),

@@ -107,7 +107,9 @@ func Against(name string, events []source.Event, presence []timespan.Span,
 	}
 
 	// One name through the same reduction every group in a report goes through.
-	level, err := reduce(map[string][]source.Event{name: mine}, bounds, global, p)
+	// Unwatched: this is one group over a window, not the pass whose cost a
+	// progress display exists to explain.
+	level, err := reduce(map[string][]source.Event{name: mine}, bounds, global, p, watch{}, PhaseProjects)
 	if err != nil {
 		return Windowed{}, err
 	}

@@ -491,7 +491,21 @@ func Compute(events []source.Event, p sessions.Params) (Report, error) {
 // anyway: a person can reattribute a stretch of bridged silence, where there is
 // no event to rewrite.
 func Corrected(events []source.Event, p sessions.Params, said []Attribution) (Report, error) {
+	return Watched(events, p, said, nil)
+}
+
+// Watched is Corrected, saying which phase it is in as it goes.
+//
+// It is the same computation and returns the same report — see Corrected for
+// what any of it means, and watch.go for why the instrument lives inside this
+// package rather than in a stopwatch around the call. A nil Watcher makes this
+// Corrected exactly.
+func Watched(events []source.Event, p sessions.Params, said []Attribution, w Watcher) (Report, error) {
+	v := watch{w}
+
+	v.begin(PhaseCluster, 0)
 	global, err := sessions.Cluster(events, p)
+	v.done(PhaseCluster)
 	if err != nil {
 		return Report{}, err
 	}
@@ -507,6 +521,8 @@ func Corrected(events []source.Event, p sessions.Params, said []Attribution) (Re
 	}
 
 	roles := rolesOf(p)
+
+	v.begin(PhaseGroup, 0)
 
 	// EVERY BUCKET IS SIZED BEFORE ANYTHING IS PUT IN IT. Growing a
 	// map-of-slices by append costs roughly five times the bytes it ends up
@@ -621,19 +637,32 @@ func Corrected(events []source.Event, p sessions.Params, said []Attribution) (Re
 	unregCover := intersect(union(unregResponse), presence)
 	unlocCover := intersect(union(unlocResponse), presence)
 
+	v.done(PhaseGroup)
+
 	// Both levels of attribution are reduced the same way, by the same code.
 	// The client roll-up is NOT the project rows re-added: it re-clusters each
 	// client's own evidence and intersects that with presence, exactly as a
 	// project's is derived, because absolute engaged time overlaps and a sum of
 	// overlapping spans credits shared clock more than once. See Client.
-	projects, err := reduce(byProject, bounds, presence, p)
+	projects, err := reduce(byProject, bounds, presence, p, v, PhaseProjects)
 	if err != nil {
 		return Report{}, err
 	}
-	clients, err := reduce(byClient, bounds, presence, p)
+	clients, err := reduce(byClient, bounds, presence, p, v, PhaseClients)
 	if err != nil {
 		return Report{}, err
 	}
+
+	// Opened HERE rather than at the carve below, so that the phases account
+	// for the whole of this function and a timing table built from them adds up
+	// to the run. The human correction layer is part of the same pass by more
+	// than bookkeeping: an assertion that a span belonged to nobody contributes
+	// a cut, so the corrections have to be resolved before presence can be
+	// carved at all. Closed by defer, because everything from here to the
+	// return is one phase and several of the arithmetic checks below return
+	// early.
+	v.begin(PhaseSegments, 0)
+	defer v.done(PhaseSegments)
 
 	// THE HUMAN CORRECTION LAYER, applied here and nowhere earlier.
 	//
@@ -986,7 +1015,7 @@ type level struct {
 // — and re-clustering is what fixed it. A client is reduced the same way for
 // the same reason, one level up.
 func reduce(by map[string][]source.Event, bounds []source.Event, presence []span,
-	p sessions.Params) (level, error) {
+	p sessions.Params, v watch, ph Phase) (level, error) {
 	l := level{
 		names:     make([]string, 0, len(by)),
 		active:    make(map[string][]span, len(by)),
@@ -999,7 +1028,13 @@ func reduce(by map[string][]source.Event, bounds []source.Event, presence []span
 	}
 	slices.Sort(l.names)
 
-	for _, name := range l.names {
+	// Announced AFTER the names are known and sorted, so the total is the real
+	// one rather than an estimate, and so the steps below count up in the order
+	// a reader watching the display sees them.
+	v.begin(ph, len(l.names))
+	defer v.done(ph)
+
+	for i, name := range l.names {
 		// The presence readings travel with the group's own evidence, so its
 		// sittings are split and trimmed by observed darkness exactly as the
 		// global ones were rather than being trimmed only by the intersection
@@ -1035,6 +1070,7 @@ func reduce(by map[string][]source.Event, bounds []source.Event, presence []span
 		l.evidenced[name] = intersect(union(raw), l.active[name])
 		l.attested[name] = intersect(union(acts), l.active[name])
 		l.weak[name] = intersect(union(stamps), l.active[name])
+		v.step(ph, i+1)
 	}
 	return l, nil
 }
