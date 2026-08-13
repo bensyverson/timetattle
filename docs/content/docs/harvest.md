@@ -252,11 +252,16 @@ $ go install ./cmd/timetattle
 $ ./scripts/install-agent.sh
 ```
 
-That installs a launchd agent that harvests at 00:00, 04:00, 08:00, 12:00,
-16:00 and 20:00 local time, plus once when it is loaded.
+That installs a launchd agent that harvests **on the hour, every hour**, local
+time, plus once when it is loaded.
 
 Override with `TIMETATTLE_HOURS` (a comma-separated list of hours) or
 `TIMETATTLE_BIN`.
+
+The `knowledgeC` snapshot does **not** follow that schedule. It has a cadence of
+its own — four hours by default — set by `harvest -snapshot-every` rather than by
+the plist. See [The snapshot has its own
+cadence](#the-snapshot-has-its-own-cadence).
 
 > **Corrected on 2026-08-12, and anyone who installed the earlier agent should
 > re-run the installer.** Until this date the agent was `StartInterval=43200`,
@@ -297,11 +302,10 @@ So the cadence is a sampling question. Only a scan taken while a file still
 carries a day's `mtime` can record that day, and what matters is how many
 harvests land inside a working session. Twice a day puts one inside an ordinary
 day and can put none inside a short one; six puts three or four inside any
-session long enough to be worth measuring.
+session long enough to be worth measuring; twenty-four puts one in every hour of
+it.
 
-The ceiling is storage rather than anything about scheduling. Hourly would be
-the better schedule and is the simpler plist — omitted keys are wildcards, so
-hourly is a single entry where four-hourly is six.
+The ceiling used to be storage, and it was never a scheduling problem.
 
 > **Partly lifted, 2026-08-12, and the arithmetic is worth keeping.** The
 > sentence that stood here said a `knowledgeC` snapshot "is written afresh on
@@ -319,11 +323,76 @@ hourly is a single entry where four-hourly is six.
 > waste; it does not by itself make hourly cheap. See
 > [Why snapshots stopped accumulating](#why-snapshots-stopped-accumulating).
 
+> **Lifted for good on 2026-08-13, by separating the two cadences rather than by
+> making the snapshot cheaper.** The paragraph above is still true and is still
+> why deduplication alone did not settle it. What settled it is that the harvest
+> and the snapshot no longer share a number: the schedule went hourly and
+> `knowledgeC` kept four-hourly, so `mtime` evidence is scanned 24 times a day
+> while snapshot storage stays at about **3.2 GB/yr** rather than 9.85. See
+> below.
+
+### The snapshot has its own cadence
+
+The harvest runs hourly. The `knowledgeC` snapshot is taken **at most every four
+hours**, whatever the harvest cadence is, and `harvest -snapshot-every` sets that
+interval. `0` disables the throttle and takes one on every run.
+
+The reason is the same split as above, read the other way round. Frequency
+protects the `mtime` sources and nothing else. `knowledgeC` prunes by **volume**
+— `/app/usage` is capped near 10,000 rows, and a four-hourly schedule already
+puts about sixty captures inside that window — so everything still inside it
+comes back whole on the next harvest whenever that is. A denser snapshot cadence
+therefore buys `knowledgeC` almost nothing, while costing more than anything
+else in the phase: about 1.5 MB written afresh whenever the extracted rows
+differ at all.
+
+Biome and the Motion vault are **not** throttled and follow the harvest. Both
+are already content-addressed segment by segment and file by file, so a run over
+an unchanged source writes nothing at all. They cost a read, never a write, and
+throttling them would delay evidence to save nothing.
+
+A throttled run still opens `knowledgeC`, even though it reads nothing out of
+it. macOS pins Full Disk Access to a binary's code signature and revokes it
+silently on rebuild, and that revocation is invisible until something opens the
+database — so skipping the open along with the snapshot would hold the news for
+a whole interval while the harvest printed success. One `open(2)` closes that,
+and a source that cannot be opened is recorded as a **failed** capture rather
+than a throttled one.
+
+A throttled run also still **ingests**. It reads the snapshot the last capture
+left, so the four `knowledgeC` streams get a `harvest_run` row on every harvest
+rather than on one in four. Re-reading adds nothing — the store deduplicates by
+content, so `seen` is non-zero beside `new` of 0 — and the alternative is a
+source with no row at all, which cannot be told apart from a source that ran and
+found nothing.
+
+#### The third outcome, and why it needed a schema change
+
+A run that declined to take a snapshot is not any of the four capture outcomes
+that existed before it:
+
+| what happened | how it is recorded |
+| --- | --- |
+| a snapshot was written | `ok`, `files_new` 1 |
+| the source was read through and its bytes were already on disk | `ok`, `files_held` 1 |
+| the schedule said the next one is not due | `skipped` |
+| the source could not be read | `failed`, with the reason |
+| there is no such source on this machine | `absent` |
+
+The second and third are the pair it would be easiest to collapse and the pair
+that must not be. `files_held` 1 is an observation **about the source**:
+`knowledgeC` was opened, extracted and digested, and has not changed. `skipped`
+is a decision about the **schedule**, taken before anything was opened, and says
+nothing whatever about what `knowledgeC` holds. Migration `0015` adds the fifth
+status and forbids a `skipped` row from claiming any file, any held file or any
+byte — a run that did not read its source preserved nothing from it.
+
 None of this makes the perishable floors safe, because they are **volume**-based
 rather than time-based: `/app/usage` is capped near 10,000 rows and Biome fills
 fixed 512 KB segments, so "under 10 days" describes typical activity and a busy
-stretch shortens the real deadline by an amount nobody has measured. Every four
-hours is a cost judgement made under that uncertainty, not a proven margin.
+stretch shortens the real deadline by an amount nobody has measured. Hourly
+harvests with four-hourly snapshots is a cost judgement made under that
+uncertainty, not a proven margin.
 
 ### What the calendar schedule does and does not guarantee
 
@@ -348,7 +417,7 @@ $ log show --last 8h --predicate 'eventMessage CONTAINS "newsyslog"' --style com
 Read the guarantee for exactly what it says: it bounds the delay after **wake**,
 not the gap in wall-clock time. A laptop closed on Friday and opened on Monday
 still has a three-day hole. What changes is that it harvests within seconds of
-the lid opening instead of somewhere in the next four hours, and that it
+the lid opening instead of somewhere in the next hour, and that it
 harvests once rather than eighteen times in a row.
 
 Boot and logout are a separate case the key does not cover, because a job that
@@ -367,9 +436,9 @@ $ launchctl print gui/$UID/com.bensyverson.timetattle.harvest | grep -A 8 calend
 ```console
 $ timetattle status
 store:     /Users/you/.timetattle/timetattle.db
-schema:    0007_capture_run.sql, applied 2026-08-01T15:04:08.783000Z
-schedule:  every 4h00m, from StartCalendarInterval in /Users/you/Library/LaunchAgents/com.example.harvest.plist
-stale:     6h00m, an interval and a half of that schedule
+schema:    0015_capture_skipped.sql, applied 2026-08-01T15:04:08.783000Z
+schedule:  every 1h00m, from StartCalendarInterval in /Users/you/Library/LaunchAgents/com.example.harvest.plist
+stale:     1h30m, an interval and a half of that schedule
 last run:  2026-08-01 08:30:08, 55m ago
 
 source                 last run  status  inputs    seen    new  last ok
@@ -528,9 +597,11 @@ store was recorded on a machine that was never wedged, and **a store cannot
 measure a stall it never had**. The floor is a margin against a variance that has
 not been sampled, chosen from the schedule instead: four times the longest whole
 harvest ever recorded here (76.17s) and, when it was chosen, 1/144th of the
-then-current 12-hour interval. The schedule became four-hourly on 2026-08-12,
-which makes the same five minutes 1/48th of an interval. The floor was not
-re-derived; it is recorded here so that the fraction is not read as current.
+then-current 12-hour interval. The schedule became four-hourly on 2026-08-12
+and hourly on 2026-08-13, which makes the same five minutes 1/12th of an
+interval. The floor was not re-derived; it is recorded here so that the fraction
+is not read as current — and 1/12th is close enough to the cadence that it
+should be re-derived before it is quoted as a margin again.
 
 On the one real stranded row in the store — `harvest_run` 28,
 `claude-transcripts`, begun `2026-08-01T13:07:13Z` and never finished — the rule
@@ -540,8 +611,8 @@ defaulted to a flat 24h). Erring generous is cheap here and erring tight is not:
 calling a live harvest dead is a lie that exits non-zero and discredits the whole
 report, while calling a dead harvest live only delays the news, and that delay is
 backstopped twice, by the next scheduled harvest within one interval and by the
-staleness bound within one and a half — 4 and 6 hours on the schedule installed
-today, though neither is bounded at all across a sleep.
+staleness bound within one and a half — 1 hour and 1h30m on the schedule
+installed today, though neither is bounded at all across a sleep.
 
 A source part-way through its repositories is `running` too, not `partial`: three
 read and a fourth in flight is not a fourth that was lost. But a repository that
@@ -660,8 +731,17 @@ nothing else is wrong: every source that has finished succeeded within the last 
 installed launchd plist** — the same file `install-agent.sh` writes — and takes
 the bound from whichever scheduling key is there: `StartInterval` directly, or
 the widest gap between consecutive fires of a `StartCalendarInterval`. The bound
-is that interval **and a half**: on the six slots four hours apart installed
-today, six hours.
+is that interval **and a half**: on the twenty-four hourly slots installed
+today, an hour and a half. Verified against a hand-written 24-entry plist —
+`timetattle status -schedule <plist>` reports `every 1h00m, from
+StartCalendarInterval` and `stale: 1h30m`.
+
+The bound is derived from the **harvest** schedule, and the `knowledgeC`
+snapshot no longer follows it. That does not make the four `knowledgeC` streams
+stale, because a throttled harvest still ingests the snapshot it already holds
+and so still records a `harvest_run` row for each of them. What a throttled run
+does not write is a `capture_run` row saying `ok`: it writes one saying
+`skipped`, on time, which is the distinction worth having.
 
 The plist rather than a copy of the cadence in a config file, because it cannot
 go stale. A number in a config is a record of what someone meant to install; the
@@ -1030,9 +1110,16 @@ Removing the check and running the same capture twice over an unchanged real
 for ever. That is the whole of what the check recovers per redundant run, and
 the number to weigh against a schedule.
 
-At the six runs a day the agent schedules, `knowledgeC` was about 3.3 GB a
-year, against 1.1 GB at the twice-daily schedule it replaced, plus up to
-150 MB a year for Biome.
+At six snapshots a day, `knowledgeC` was about 3.3 GB a year, against 1.1 GB at
+the twice-daily schedule it replaced, plus up to 150 MB a year for Biome.
+
+> **Read the table below as snapshot cadence, not harvest cadence, from
+> 2026-08-13.** When it was measured the two were the same number. They are not
+> any more: the agent harvests hourly and `-snapshot-every` holds `knowledgeC` at
+> four hours, so the row that describes today's storage is the **four-hourly**
+> one, at about 3.2 GB/yr, while the harvest itself runs on the hourly row's
+> schedule and costs nothing extra. The hourly row is now what would happen with
+> `-snapshot-every 0`.
 
 Deduplication does **not** scale that down by a fixed factor, and assuming it
 does is the easiest way to be wrong here by a wide margin. What it recovers is
@@ -1048,10 +1135,11 @@ write rate. Measured over a trailing 14 days with
 | hourly | 336 | 89 (26.5%) | 9.85 GB/yr, against 13.1 |
 
 Each skip figure is an upper bound: a row can also age out of retention inside
-an otherwise quiet window, and that changes a snapshot too. So at the schedule
-installed today this recovers almost nothing. What it does is stop the cost
-growing in proportion to the cadence, which is the only reason a denser
-schedule is arguable at all.
+an otherwise quiet window, and that changes a snapshot too. So at the snapshot
+cadence installed today this recovers almost nothing. What it does is stop the
+cost growing in proportion to the cadence — and, in the event, it was not enough
+on its own. Hourly snapshots still projected to 9.85 GB/yr with the check in
+place, which is what led to giving the snapshot a cadence of its own instead.
 
 The remaining redundancy is at a finer grain than a file. Across the 38
 snapshots the corpus stores 890,104 `ZOBJECT` row-instances and holds 38,966

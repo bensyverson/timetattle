@@ -56,6 +56,12 @@ type captureOutcome struct {
 	// file": a Biome stream every one of whose segments was already held has
 	// preserved its stream and written nothing.
 	preserved bool
+	// throttled is whether this capture was DECLINED rather than attempted,
+	// because the source has a cadence of its own and it is not due yet. It is
+	// separate from preserved and from err on purpose: a throttled capture has
+	// neither, and the two fields together read as "absent", which about a
+	// working laptop would be a machine reporting knowledgeC is not installed.
+	throttled bool
 	err       error
 	filesNew  int
 	filesHeld int
@@ -93,8 +99,148 @@ func (c captureOutcome) captureEnded(preserved bool, err error) captureOutcome {
 	return c
 }
 
-// captureVerdict is the four-way reading of one capture, and the reason the
-// third and fourth values exist at all.
+// captureThrottled closes the span of a capture the harvest declined to make.
+//
+// Only knowledgeC has a cadence of its own, and it has one because the two
+// halves of a harvest protect against different losses. The mtime sources decay
+// continuously — a file records only its LAST modification, so evidence not
+// scanned before the file is touched again is gone and no later run recovers it
+// — which is why the harvest runs hourly. knowledgeC prunes by volume instead,
+// so everything still inside its window comes back whole on the next harvest,
+// while a snapshot of it is about 1.5 MB and the most expensive thing in the
+// phase. internal/snapshot.Due holds the schedule and the measurement.
+//
+// The span is still closed and the row still written. That is the whole point:
+// the throttle must be visible as a DECISION taken on time, not as a capture
+// that quietly stopped happening. Biome and the Motion vault are never
+// throttled — both are content-addressed already, so a run over an unchanged
+// source writes nothing anyway — and neither is the filedays scan, which is the
+// source frequency exists to protect.
+func (c captureOutcome) captureThrottled() captureOutcome {
+	c.finishedAt = time.Now()
+	c.throttled = true
+	return c
+}
+
+// knowledgeCCapture is what the knowledgeC capture did, and which snapshot the
+// rest of the harvest should read.
+type knowledgeCCapture struct {
+	outcome captureOutcome
+	// snapshot is the file the four knowledgeC streams are ingested from: the
+	// one this run wrote, the one it found already holding those bytes, or —
+	// when the throttle declined — the one an earlier run left. It is empty only
+	// when the capture failed, and then nothing is read at all.
+	snapshot string
+	// rows is what the source held, and is reported on a taken capture only. A
+	// throttled run did not count anything, and a zero here would otherwise be
+	// indistinguishable from a source that had gone empty.
+	rows int
+	err  error
+}
+
+// captureKnowledgeC preserves knowledgeC unless its own schedule says not yet.
+//
+// # Why this is a function rather than six lines in harvest
+//
+// Because it is the one place in the harvest that makes a scheduling DECISION,
+// and a decision that cannot be tested against a clock the test controls is a
+// decision nobody has checked. now is a parameter for exactly that reason.
+//
+// # The three outcomes, and why the third is not either of the other two
+//
+//	took       a snapshot was written. files_new = 1.
+//	held       the source was read through, extracted and digested, and a
+//	           snapshot already on disk holds those exact bytes. files_held = 1.
+//	           This is an observation ABOUT THE SOURCE: knowledgeC has not
+//	           changed.
+//	throttled  the source was not read at all, because its own cadence says the
+//	           next snapshot is not due. This is a decision about the SCHEDULE,
+//	           taken before anything was opened. It says nothing whatever about
+//	           what knowledgeC holds.
+//
+// The last two are the pair that would be easiest to collapse and the pair that
+// must not be. "knowledgeC has not changed in four hours" and "we have not
+// looked in four hours" are different facts, and a status report that printed
+// them alike would be reporting a healthy source it had stopped watching.
+// store.CaptureSkipped and migration 0015 are what let the third be written
+// down.
+//
+// # Why a throttled run still names a snapshot
+//
+// So the four knowledgeC streams keep getting a harvest_run row on every
+// harvest. Ingestion is idempotent — the store deduplicates by content, and
+// re-reading a snapshot adds nothing — so reading the held one costs a parse and
+// buys the property that a source which reported nothing new and a source that
+// was never read do not render alike. It is also honest in the strict sense
+// ingest.go asks for: the run really did read the file it records as its input.
+//
+// The failure case is deliberately different. lostSnapshotIngestions does NOT
+// reach for the snapshot an earlier run left, because a capture that FAILED
+// would then report ok for every stream and the day it lost would be invisible.
+// A throttle is not a loss, so the two get opposite treatment.
+func captureKnowledgeC(src, dir string, now time.Time, every time.Duration) knowledgeCCapture {
+	c := captureBegun(captureKindKnowledgeC, src)
+
+	// A snapshot directory that cannot be read fails the capture; it never
+	// throttles it. Read as "not due", a permissions problem would stop
+	// preserving the one source no later run can recover, for ever, while
+	// reporting a healthy throttled harvest. snapshot.Due takes the same
+	// position and says why.
+	due, err := snapshot.Due(dir, now, every)
+	if err != nil {
+		return knowledgeCCapture{outcome: c.captureEnded(false, err), err: err}
+	}
+	if !due.Take {
+		// A throttled run still OPENS knowledgeC, even though it will read
+		// nothing out of it. macOS pins Full Disk Access to a binary's code
+		// signature and revokes it silently on rebuild, and that revocation is
+		// invisible until something opens the database. Skipping the open with
+		// the snapshot would hold the news for a whole interval, ingest the
+		// snapshot already on disk, and print a clean harvest the whole time —
+		// which is the outage of 2026-07-30 arriving by a new route. One
+		// os.Open closes that, and a source that cannot be opened is a failed
+		// capture rather than a throttled one.
+		if err := snapshot.Readable(src); err != nil {
+			return knowledgeCCapture{outcome: c.captureEnded(false, err), err: err}
+		}
+		return knowledgeCCapture{outcome: c.captureThrottled(), snapshot: due.Newest}
+	}
+
+	res, err := snapshot.Take(src, dir, now)
+	if err != nil {
+		return knowledgeCCapture{outcome: c.captureEnded(false, err), err: err}
+	}
+	return knowledgeCCapture{
+		outcome:  c.capturedSnapshot(res).captureEnded(true, nil),
+		snapshot: res.Path,
+		rows:     res.Rows,
+	}
+}
+
+// report writes one line about what the knowledgeC capture did, in the three
+// shapes it can take. The throttled line names the snapshot that is being read
+// instead, so that a reader of ~/.timetattle/harvest.log can see the decision
+// rather than an unexplained gap where a capture used to be.
+func (k knowledgeCCapture) report(out io.Writer) {
+	switch {
+	case k.err != nil:
+		fmt.Fprintf(out, "knowledgeC: capture lost (%v)\n", k.err)
+	case k.outcome.throttled:
+		fmt.Fprintf(out, "%s\nnot due yet, reading the snapshot already held\n", k.snapshot)
+	case k.outcome.filesHeld > 0:
+		fmt.Fprintf(out, "%s\n%d rows, already held\n", k.snapshot, k.rows)
+	default:
+		fmt.Fprintf(out, "%s\n%d rows, %.1f MB\n", k.snapshot, k.rows, float64(k.outcome.bytes)/(1<<20))
+	}
+}
+
+// captureVerdict is the five-way reading of one capture, and the reason the
+// last three values exist at all.
+//
+// Throttled is tested FIRST, and the order is load-bearing. A capture the
+// harvest declined has no error and preserved nothing, which is precisely the
+// shape the absent arm below reads — so a verdict that checked absent first
+// would record "there is no knowledgeC on this machine" three runs in four.
 //
 // An error with something preserved is partial, not failed: the Biome capture
 // takes one stream at a time and the filedays scan one root at a time, and both
@@ -108,6 +254,8 @@ func (c captureOutcome) captureEnded(preserved bool, err error) captureOutcome {
 // it indistinguishable from a harvest that died before it got this far.
 func (c captureOutcome) captureVerdict() store.CaptureStatus {
 	switch {
+	case c.throttled:
+		return store.CaptureSkipped
 	case c.err != nil && c.preserved:
 		return store.CapturePartial
 	case c.err != nil:
