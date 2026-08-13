@@ -513,6 +513,65 @@ Every figure is what the derivation says with no human overlay on it, and the
 report says so instead of quietly looking like an uncorrected one. It is the
 comparison the fitting rests on, so it stays reachable.
 
+## What a run is doing, and what it cost
+
+An unwindowed run reads every event in the store, and that is not instant. While
+it works, each phase names itself on a single line that rewrites itself and then
+erases itself:
+
+```
+client roll-up 4 of 6
+```
+
+**It goes to stderr, and only when stderr is a terminal.** Stdout carries the
+report and nothing else, because the primary reader of this command is a program
+capturing it; a pipe or a log file gets no progress at all, since redrawing a
+line into one writes carriage returns nobody reads.
+
+### `-timings` says where the run went
+
+```console
+$ timetattle metrics -timings
+
+timings for this run, by phase; a count in brackets is what the phase worked through:
+  reading events (1069011)                2.872s   54.2%
+  dropping machine activity (1067254)     0.637s   12.0%
+  stamping clients                        0.036s    0.7%
+  reading corrections                     0.011s    0.2%
+  clustering                              0.280s    5.3%
+  grouping evidence                       0.183s    3.5%
+  per-project time (38)                   0.850s   16.0%
+  client roll-up (6)                      0.398s    7.5%
+  segmenting                              0.013s    0.3%
+  formatting                              0.012s    0.2%
+  elsewhere                               0.010s    0.2%
+  total                                   5.303s  100.0%
+```
+
+The table also goes to stderr, so `-timings` changes not one byte of the report.
+`elsewhere` is whatever the phases failed to account for — opening the store,
+reading the config, process startup — printed as its own row rather than left as
+a difference a reader has to notice and subtract.
+
+The two attribution phases are the ones worth understanding. `per-project time`
+re-clusters each project's *own* evidence, and `client roll-up` does the same
+one level up, once per client; neither is a sum over the other, for the reason
+[Two levels: client and project](#two-levels-client-and-project) gives. So the
+cost of both scales with the number of *groups*, not only with the number of
+events, and
+a client costs more per group than a project does because a client's evidence is
+every one of its projects' evidence at once.
+
+**A single run is a noisy sample.** The store read varies by a factor of two
+between a cold page cache and a warm one, and it is the largest phase. Use
+`scripts/metricsphases` when a figure is going to be written down: it builds a
+fresh binary, runs the command several times, and prints the min, mean and max
+of every phase, with the population — windowed or not — printed above the table.
+
+**A windowed run and an unwindowed one are different populations.** `-from`/`-to`
+narrows what is read, so its timings cannot be compared with an unwindowed run's;
+say which one a figure came from, every time.
+
 ## A series: day, week and month
 
 `-by day`, `-by week` and `-by month` cut the span into periods and print them

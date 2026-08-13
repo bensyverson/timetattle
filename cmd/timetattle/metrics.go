@@ -26,15 +26,29 @@ import (
 // rather than a third stored derivation, so there is no table to rebuild and no
 // way for a figure to be stale relative to the events it came from — which is
 // also why this opens the store read-only.
-func metricsCommand(args []string) error { return metricsTo(os.Stdout, args) }
+func metricsCommand(args []string) error { return metricsWatching(os.Stdout, os.Stderr, args) }
 
 // metricsTo is metricsCommand with the report redirected, so that what the
 // command prints can be asserted on rather than merely not crashing.
+//
+// Its stderr is discarded, which also means the progress display is off: a
+// discarded writer is not a terminal. A test that wants the commentary uses
+// metricsWatching and hands it a writer that reports a width.
 func metricsTo(stdout io.Writer, args []string) error {
-	return executeSubcommand(metricsCmd(stdout), args)
+	return metricsWatching(stdout, io.Discard, args)
 }
 
-func metricsCmd(stdout io.Writer) *cobra.Command {
+// metricsWatching is metricsCommand with BOTH streams redirected.
+//
+// The two are separate because they carry different things and only one of them
+// is a contract. Stdout is the report, and the primary reader of this CLI is an
+// agent capturing it; stderr is commentary about a run that takes long enough
+// for a person to wonder whether it has hung. Nothing may cross between them.
+func metricsWatching(stdout, stderr io.Writer, args []string) error {
+	return executeSubcommand(metricsCmd(stdout, stderr), args)
+}
+
+func metricsCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "metrics",
 		Short: "Report engaged time per project, and presence",
@@ -68,8 +82,17 @@ never double-counted, and is the capacity denominator. Parameters come from
 	timezone := fs.String("timezone", "", "IANA zone the working day is local to, as America/Chicago")
 	uncorrected := fs.Bool("uncorrected", false,
 		"report the machine's answer alone, ignoring every attribution correction in the store")
+	timings := fs.Bool("timings", false,
+		"print how long each phase of the run took, to stderr, after the report")
 	cmd.RunE = func(*cobra.Command, []string) error {
 		set := flagsSet(fs)
+		// Opened before anything is read, so the total the timings are shares of
+		// is the whole command and not the part somebody remembered to wrap.
+		watch := newMetricsWatch(stderr, *timings)
+		// A run that fails part-way must not leave a half-drawn phase on the
+		// screen above the error. finish is idempotent, so the explicit call
+		// before the report is printed is not undone by this one.
+		defer watch.finish()
 
 		var err error
 		if *storePath == "" {
@@ -185,14 +208,20 @@ never double-counted, and is the capacity denominator. Parameters come from
 		}
 		defer st.Close()
 
+		watch.Begin(metricsPhaseRead, 0)
 		events, err := st.Events(context.Background(), filter)
+		watch.Done(metricsPhaseRead)
 		if err != nil {
 			return err
 		}
+		watch.count(metricsPhaseRead, len(events))
 		// Machine activity is removed before anything is clustered or attributed,
 		// so a project whose only trace on a day was a log rotation does not
 		// appear on it at all rather than appearing with an unexplained hour.
+		watch.Begin(metricsPhaseRetain, 0)
 		events, drop := sessions.Retain(events, excludes)
+		watch.Done(metricsPhaseRetain)
+		watch.count(metricsPhaseRetain, len(events))
 
 		// THE CLIENT IS STAMPED HERE, not read from a column, because no column
 		// holds it: the client-project log (migration 0012) is folded and each
@@ -204,6 +233,7 @@ never double-counted, and is the capacity denominator. Parameters come from
 		// else. The log lives in the same database as the events, so the command's
 		// designed property of consulting neither the registry nor the filesystem
 		// is untouched.
+		watch.Begin(metricsPhaseStamp, 0)
 		cm, err := st.ClientMap(context.Background(), time.Time{})
 		if err != nil {
 			return err
@@ -216,6 +246,7 @@ never double-counted, and is the capacity denominator. Parameters come from
 				events[i].Identity.Client = client
 			}
 		}
+		watch.Done(metricsPhaseStamp)
 
 		// THE HUMAN CORRECTION LAYER, read here rather than merely stored.
 		//
@@ -241,18 +272,21 @@ never double-counted, and is the capacity denominator. Parameters come from
 		// and nothing else.
 		var said []metrics.Attribution
 		if !*uncorrected {
+			watch.Begin(metricsPhaseCorrections, 0)
 			recorded, err := st.Adjustments(context.Background(), filter.From, filter.To)
 			if err != nil {
 				return err
 			}
 			said = adjustments.Fold(nil, recorded).Attributions()
+			watch.Done(metricsPhaseCorrections)
 		}
 
-		report, err := metrics.Corrected(events, p, said)
+		report, err := metrics.Watched(events, p, said, watch)
 		if err != nil {
 			return err
 		}
 
+		watch.Begin(metricsPhaseFormat, 0)
 		// What the store recorded about collection, read once and asked per period.
 		// It is what stops a 0.0h row from being a confident nothing.
 		log, err := readCollectionLog(context.Background(), st)
@@ -277,8 +311,18 @@ never double-counted, and is the capacity denominator. Parameters come from
 		// with prose in it is neither, and every caveat the report carries is
 		// carried in the CSV as a column instead — the collection state, whether a
 		// period was only partly covered, and which level each figure belongs to.
+		// THE PROGRESS LINE IS ERASED BEFORE A SINGLE BYTE REACHES STDOUT. If the
+		// two streams share a terminal, a half-drawn "segmenting" left standing
+		// would sit above a finished report saying the run had not finished.
+		watch.finish()
+
 		if *asCSV {
-			return csvSeries(stdout, cal, unit, rows, scope, report.Clients)
+			if err := csvSeries(stdout, cal, unit, rows, scope, report.Clients); err != nil {
+				return err
+			}
+			watch.Done(metricsPhaseFormat)
+			watch.report()
+			return nil
 		}
 
 		// The report is laid out for the terminal it is going into, and clipped as a
@@ -290,9 +334,188 @@ never double-counted, and is the capacity denominator. Parameters come from
 		if set["by"] && reported {
 			reportSeries(out, report, cal, unit, rows, log, scope, cols)
 		}
+		watch.Done(metricsPhaseFormat)
+		watch.report()
 		return nil
 	}
 	return cmd
+}
+
+// The stages of a metrics run that internal/metrics cannot see, named in the
+// same open vocabulary its own phases use so that one table covers the whole
+// command. See internal/metrics/watch.go for why Phase is a bare string.
+const (
+	metricsPhaseRead        metrics.Phase = "reading events"
+	metricsPhaseRetain      metrics.Phase = "dropping machine activity"
+	metricsPhaseStamp       metrics.Phase = "stamping clients"
+	metricsPhaseCorrections metrics.Phase = "reading corrections"
+	metricsPhaseFormat      metrics.Phase = "formatting"
+)
+
+// metricsWatch says what a metrics run is doing while it does it, and what each
+// part of it cost afterwards.
+//
+// # Why a run says anything at all
+//
+// An unwindowed run over a real store is not instant, and a silent command is
+// indistinguishable from a hung one — which is exactly how this came to be
+// written, from a run read as a hang. So each phase names itself on the way
+// past, on a single line that rewrites itself and then erases itself, leaving
+// the terminal as it found it.
+//
+// # Why it is a terminal-only display and a flag-only table
+//
+// The commentary is for a person watching a run, and there is no person on the
+// other end of a pipe. Redrawing a line into a log file writes carriage returns
+// nobody reads, and scripts/profile captures precisely that stream. So the live
+// display is on only when stderr is a terminal, and the timings table only when
+// it was asked for.
+//
+// NEITHER EVER TOUCHES STDOUT. The primary consumer of this CLI is an agent
+// capturing the report, and a run's speed is not part of the report.
+//
+// # Why the timings ship rather than being re-instrumented each time
+//
+// Every figure this project has recorded about where a metrics run goes came
+// from an agent temporarily editing internal/metrics and throwing the edit
+// away, which is a measurement nobody else can reproduce and nobody can re-run
+// after a change. One such figure — that the client roll-up was about two
+// fifths of a run — stood for a week and was wrong by the time anybody looked,
+// because four optimisations had landed underneath it. This is the instrument
+// that replaces it: the same table, from the shipped binary, at any time.
+type metricsWatch struct {
+	out io.Writer
+	// live says stderr is a terminal, so the phase line may be drawn.
+	live bool
+	// timings says the reader asked for the table.
+	timings bool
+	width   int
+
+	started time.Time
+	begun   map[metrics.Phase]time.Time
+	took    map[metrics.Phase]time.Duration
+	steps   map[metrics.Phase]int
+	// order is the phases in the order they first began, which is the order the
+	// table prints them: the run's own order is the one a reader is looking for
+	// and it cannot go stale the way a hand-written list would.
+	order []metrics.Phase
+	drawn bool
+}
+
+func newMetricsWatch(stderr io.Writer, timings bool) *metricsWatch {
+	cols := columnsOf(stderr)
+	return &metricsWatch{
+		out:     stderr,
+		live:    cols > 0,
+		timings: timings,
+		width:   cols,
+		started: time.Now(),
+		begun:   map[metrics.Phase]time.Time{},
+		took:    map[metrics.Phase]time.Duration{},
+		steps:   map[metrics.Phase]int{},
+	}
+}
+
+func (w *metricsWatch) Begin(p metrics.Phase, steps int) {
+	if _, seen := w.begun[p]; !seen {
+		w.order = append(w.order, p)
+	}
+	w.begun[p] = time.Now()
+	w.steps[p] = steps
+	w.draw(p, 0)
+}
+
+func (w *metricsWatch) Step(p metrics.Phase, done int) { w.draw(p, done) }
+
+// count says how much a phase turned out to have worked through, for a phase
+// that could not know before it ran. The store read is the case: how many rows
+// come back is the answer, not the question, and it is the one number that
+// makes a recorded timing comparable across a harvest.
+func (w *metricsWatch) count(p metrics.Phase, n int) { w.steps[p] = n }
+
+func (w *metricsWatch) Done(p metrics.Phase) {
+	if at, ok := w.begun[p]; ok {
+		// Accumulated rather than assigned: a phase entered twice is one phase
+		// costing the sum of both, which is what a reader of the table wants.
+		w.took[p] += time.Since(at)
+		delete(w.begun, p)
+	}
+}
+
+// draw rewrites the single progress line. A phase that announced how many units
+// it has counts itself, because "client roll-up" alone cannot tell a slow
+// client from a stuck one.
+func (w *metricsWatch) draw(p metrics.Phase, done int) {
+	if !w.live {
+		return
+	}
+	line := string(p)
+	if total := w.steps[p]; total > 0 {
+		line = fmt.Sprintf("%s %d of %d", p, done, total)
+	}
+	line = clip(line, w.width-1)
+	// Padded to the previous line's width so that a shorter phase name does not
+	// leave the tail of a longer one behind it.
+	fmt.Fprintf(w.out, "\r%-*s", w.width-1, line)
+	w.drawn = true
+}
+
+// finish erases the progress line, and is safe to call more than once. It has
+// to run before anything reaches stdout, and again on the way out of a failed
+// run, so idempotence is the property rather than a convenience.
+func (w *metricsWatch) finish() {
+	if !w.drawn {
+		return
+	}
+	fmt.Fprintf(w.out, "\r%-*s\r", w.width-1, "")
+	w.drawn = false
+}
+
+// report prints the per-phase table, if it was asked for.
+//
+// A TABLE THAT DOES NOT ADD UP IS WORSE THAN NO TABLE, so whatever the phases
+// failed to account for — opening the store, reading the config, resolving the
+// working directory's scope, and the process's own startup — is printed as its
+// own row rather than left as a difference a reader has to notice and subtract.
+func (w *metricsWatch) report() {
+	if !w.timings {
+		return
+	}
+	total := time.Since(w.started)
+
+	rows := make([][2]string, 0, len(w.order)+2)
+	var accounted time.Duration
+	for _, p := range w.order {
+		took := w.took[p]
+		accounted += took
+		name := string(p)
+		if n := w.steps[p]; n > 0 {
+			name = fmt.Sprintf("%s (%d)", p, n)
+		}
+		rows = append(rows, [2]string{name, metricsTiming(took, total)})
+	}
+	rows = append(rows,
+		[2]string{"elsewhere", metricsTiming(total-accounted, total)},
+		[2]string{"total", metricsTiming(total, total)})
+
+	var widest int
+	for _, r := range rows {
+		widest = max(widest, len(r[0]))
+	}
+	fmt.Fprintf(w.out, "\ntimings for this run, by phase; a count in brackets is what the phase "+
+		"worked through:\n")
+	for _, r := range rows {
+		fmt.Fprintf(w.out, "  %-*s  %s\n", widest, r[0], r[1])
+	}
+}
+
+// metricsTiming is one cell of the table: how long, and what share of the run.
+func metricsTiming(d, total time.Duration) string {
+	var share float64
+	if total > 0 {
+		share = 100 * d.Seconds() / total.Seconds()
+	}
+	return fmt.Sprintf("%8.3fs  %5.1f%%", d.Seconds(), share)
 }
 
 // metricsScope is which rows the reader asked to see. It is NOT which events

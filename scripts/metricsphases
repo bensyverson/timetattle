@@ -1,0 +1,112 @@
+#!/bin/bash
+# Run `timetattle metrics -timings` several times and report the SPREAD of each
+# phase, not one sample of it.
+#
+# WHY THIS EXISTS, on top of the -timings flag itself. A single timed run of
+# this command varies by 50% between a cold page cache and a warm one — 6.9s and
+# 4.5s were measured minutes apart on the same binary and the same store — and
+# the store read is the phase that moves. Quoting one run's percentages as "the"
+# breakdown is therefore quoting a number that will not reproduce, which is the
+# exact failure this task was raised to correct: a one-off instrumented figure
+# stood for a week and was wrong by the time anybody re-read it.
+#
+# ALWAYS BUILDS FRESH, for the same reason scripts/profile does: a stale
+# installed binary silently measures yesterday's code.
+#
+# STATE THE POPULATION. An unwindowed run and a windowed one are different
+# populations and this repository has been caught comparing them before. This
+# script prints the -from/-to it was given, or the word "unwindowed", above
+# every table it produces, so a pasted capture carries its own population.
+#
+# The subcommand's own stdout is DISCARDED, never printed: `metrics` names real
+# clients. Only the timings table, which is phase names and durations, is shown.
+#
+# Usage:
+#   scripts/metricsphases                       # 5 unwindowed runs
+#   scripts/metricsphases -n 3                  # 3 of them
+#   scripts/metricsphases -- -from 2026-07-30 -to 2026-08-12
+#
+# Everything after -- is passed to `timetattle metrics` unchanged.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUNS=5
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-n)
+		RUNS="$2"
+		shift 2
+		;;
+	--)
+		shift
+		break
+		;;
+	*)
+		echo "usage: scripts/metricsphases [-n runs] [-- <metrics flags>]" >&2
+		exit 2
+		;;
+	esac
+done
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+echo "==> building a fresh binary (never an installed one)"
+go build -o "$WORK/timetattle" "$REPO_ROOT/cmd/timetattle"
+
+POPULATION="unwindowed (the whole store)"
+for arg in "$@"; do
+	case "$arg" in
+	-from | -to | --from | --to) POPULATION="WINDOWED: $*" ;;
+	esac
+done
+
+echo "==> population: $POPULATION"
+echo "==> $RUNS runs of: timetattle metrics -all $*"
+echo
+
+for i in $(seq 1 "$RUNS"); do
+	"$WORK/timetattle" metrics -all -timings "$@" >/dev/null 2>>"$WORK/timings.txt"
+	printf '    run %d of %d\n' "$i" "$RUNS"
+done
+
+# Fold the tables into one. A phase's name may contain spaces and a bracketed
+# count, so the split is on the run of spaces before the duration column, which
+# is the only place two or more spaces precede a digit-and-'s'.
+awk -v pop="$POPULATION" -v runs="$RUNS" '
+/^  [^ ]/ {
+	line = $0
+	sub(/^  /, "", line)
+	if (match(line, /  +[0-9.]+s /)) {
+		name = substr(line, 1, RSTART - 1)
+		rest = substr(line, RSTART)
+		gsub(/^ +/, "", rest)
+		sub(/s .*/, "", rest)
+		secs = rest + 0
+		# The bracketed count is dropped from the key so that runs which read a
+		# different number of events still fold together, and reported once.
+		key = name
+		sub(/ \(.*\)$/, "", key)
+		if (!(key in n)) { order[++k] = key }
+		n[key]++
+		sum[key] += secs
+		if (!(key in lo) || secs < lo[key]) lo[key] = secs
+		if (!(key in hi) || secs > hi[key]) hi[key] = secs
+		if (name ~ /\(/) { count[key] = name; sub(/^[^(]*/, "", count[key]) }
+	}
+}
+END {
+	printf "\n%s, %d runs\n\n", pop, runs
+	printf "  %-36s %9s %9s %9s %7s\n", "phase", "min", "mean", "max", "mean%"
+	total = sum["total"] / n["total"]
+	for (i = 1; i <= k; i++) {
+		key = order[i]
+		label = key
+		if (key in count) label = key " " count[key]
+		mean = sum[key] / n[key]
+		printf "  %-36s %8.3fs %8.3fs %8.3fs %6.1f%%\n", label, lo[key], mean, hi[key], 100 * mean / total
+	}
+	print "\nEvery figure above: scripts/metricsphases, which drives timetattle metrics -all -timings."
+}
+' "$WORK/timings.txt"
