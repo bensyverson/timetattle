@@ -11,7 +11,7 @@
 //
 // # The threshold is not a constant and must never become one
 //
-// Total engaged time ranges from 530.4h at a two-minute gap to 1199.9h at two
+// Total presence ranges from 530.4h at a two-minute gap to 1199.9h at two
 // hours — a 2.3x spread, measured in project/private/2026-07-28-spike-findings.md. The
 // gap distribution is sharply bimodal, with 93.5% of gaps under ten seconds and
 // only 0.22% falling between five minutes and two hours, and the intuition that

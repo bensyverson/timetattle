@@ -12,7 +12,7 @@ by block, and each block can be trimmed, extended, deleted or reattributed
 without leaving the keyboard.
 
 It exists because nothing downstream is believable until the clustering
-parameters are fitted. **75.7% of the engaged time in the live store is margin
+parameters are fitted. **75.7% of the presence in the live store is margin
 that unfitted parameters invented** — 901.8h of 1191.8h, from `timetattle
 sessionize` on 2026-08-01. Fitting them needs ground truth, and this is where
 ground truth comes from.
@@ -363,7 +363,7 @@ so at the moment of choice rather than in this page.
 
 Every blind screen reports the day's distance from now, and **no threshold acts
 on it**. The corpus needs labels most exactly where memory is weakest — the
-pre-July regime holds 75.7% of all engaged time — so a warning that discourages
+pre-July regime holds 75.7% of all presence — so a warning that discourages
 old days would starve the thing it is trying to protect.
 
 The number can be measured instead of guessed. Every review row already carries
@@ -448,7 +448,7 @@ Every review row now says what the reviewer was **shown**: `derivation` or
 it has not got, and this is what lets it refuse to.
 
 **Aim `-blind` at pre-July days.** The points-only regime holds 75.7% of all
-engaged time across 175 days with two caveated reviewed days and zero job claims
+presence across 175 days with two caveated reviewed days and zero job claims
 behind it, and it is also the regime in which the census is complete.
 `knowledgec-backlit` — the only stream read as presence — has no row before
 2026-07-02, so before then there is no observed darkness to place a boundary the

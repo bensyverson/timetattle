@@ -237,7 +237,7 @@ lands where it belongs rather than where its date says.
 The split matters because the two regimes are not equally represented. On the
 live store, fourteen of sixteen usable reviewed days sit in the presence-covered
 regime at a median margin near 5%, where the parameters have almost nothing to
-decide. The regime that holds 75.7% of all engaged time is represented by **two**
+decide. The regime that holds 75.7% of all presence is represented by **two**
 days, both of which lost some evidence to the exclude list. Pooling the sixteen
 gives a precise-looking answer dominated by the fourteen that cannot
 discriminate, so the report does not pool them, and it says outright when a
