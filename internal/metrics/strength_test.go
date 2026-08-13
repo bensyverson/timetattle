@@ -20,7 +20,7 @@ import (
 // that wrote it.
 func mtime(when time.Time, project string) source.Event {
 	e := source.NewPoint(when, source.Identity{Project: project}, "fs-observations")
-	e.Locator = "/Users/ben/git/" + project
+	e.Locator = "/Users/you/git/" + project
 	return e
 }
 

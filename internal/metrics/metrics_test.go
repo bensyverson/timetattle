@@ -37,14 +37,14 @@ func testParams() sessions.Params {
 // else, which is why margin matters so much here.
 func point(when time.Time, project string) source.Event {
 	e := source.NewPoint(when, source.Identity{Project: project}, "claude-transcripts")
-	e.Locator = "/Users/ben/git/" + project
+	e.Locator = "/Users/you/git/" + project
 	return e
 }
 
 // unregistered is evidence carrying a path that resolved to no project.
 func unregistered(when time.Time) source.Event {
 	e := source.NewPoint(when, source.Identity{}, "claude-transcripts")
-	e.Locator = "/Users/ben/git/somebody-elses-repo"
+	e.Locator = "/Users/you/git/somebody-elses-repo"
 	return e
 }
 
@@ -59,7 +59,7 @@ func unlocatable(start, end time.Time) source.Event {
 // half of a Span is exercised by something.
 func interval(start, end time.Time, project string) source.Event {
 	e := source.NewInterval(start, end, source.Identity{Project: project}, "biome-appusage")
-	e.Locator = "/Users/ben/git/" + project
+	e.Locator = "/Users/you/git/" + project
 	return e
 }
 

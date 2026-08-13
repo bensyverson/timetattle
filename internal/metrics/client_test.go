@@ -26,7 +26,7 @@ import (
 // one project, together, in one call.
 func clientPoint(when time.Time, client, project string) source.Event {
 	e := source.NewPoint(when, source.Identity{Client: client, Project: project}, "claude-transcripts")
-	e.Locator = "/Users/ben/git/" + project
+	e.Locator = "/Users/you/git/" + project
 	return e
 }
 
