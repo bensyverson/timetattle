@@ -97,7 +97,7 @@ func (c Corpus) Validate() error {
 //
 // JSON rather than the comma-joined form the source lists use, because a
 // pattern is a path and a path may hold a comma —
-// "/Users/ben/Documents/Smith, John/" is an ordinary directory. Splitting that
+// "/Users/you/Documents/Smith, John/" is an ordinary directory. Splitting that
 // on commas invents two patterns, one of which is " John/" and the other of
 // which is a prefix that matches far more than was written. A source id cannot
 // hold a comma, which is why the older columns can get away with it.

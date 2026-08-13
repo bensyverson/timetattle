@@ -81,17 +81,17 @@ func TestCacheConflictAnswersForACallerThatIsNotAboutToRegister(t *testing.T) {
 // a hypothetical locator — 1,311 Claude transcript observations on this machine
 // carry "/" as the cwd they were recorded at.
 func TestIsAncestorOrSameAnswersForTheFilesystemRoot(t *testing.T) {
-	if !isAncestorOrSame("/", "/Users/ben/git/acorn") {
-		t.Error(`isAncestorOrSame("/", "/Users/ben/git/acorn") = false; the root is above everything`)
+	if !isAncestorOrSame("/", "/Users/you/git/acorn") {
+		t.Error(`isAncestorOrSame("/", "/Users/you/git/acorn") = false; the root is above everything`)
 	}
 	if !isAncestorOrSame("/", "/") {
 		t.Error(`isAncestorOrSame("/", "/") = false; the "OrSame" half must still hold`)
 	}
-	if isAncestorOrSame("/Users/ben/git/acorn", "/") {
-		t.Error(`isAncestorOrSame("/Users/ben/git/acorn", "/") = true; nothing is above the root`)
+	if isAncestorOrSame("/Users/you/git/acorn", "/") {
+		t.Error(`isAncestorOrSame("/Users/you/git/acorn", "/") = true; nothing is above the root`)
 	}
-	if isAncestorOrSame("/Users/be", "/Users/ben") {
-		t.Error(`isAncestorOrSame("/Users/be", "/Users/ben") = true; a string prefix is not a path prefix`)
+	if isAncestorOrSame("/Users/you/git/ac", "/Users/you/git/acorn") {
+		t.Error(`isAncestorOrSame("/Users/you/git/ac", "/Users/you/git/acorn") = true; a string prefix is not a path prefix`)
 	}
 
 	// The consequence that matters, exercised through the caller it was found

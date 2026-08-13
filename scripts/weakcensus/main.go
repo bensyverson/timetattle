@@ -22,7 +22,7 @@
 // because the queue only offers days the stored derivation gave a sitting.
 //
 //	go run ./scripts/weakcensus -store ~/.timetattle/timetattle.db \
-//	  -exclude '*.bz2,*.gz,*.log,/Users/ben/git/Easley/reports/'
+//	  -exclude '*.bz2,*.gz,*.log,/Users/you/git/Easley/reports/'
 package main
 
 import (

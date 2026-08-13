@@ -13,7 +13,7 @@ import (
 // goneDir returns a path under a temporary directory that is guaranteed not to
 // exist, standing in for a directory that was renamed away — the whole reason
 // Consolidate exists. Measured on the live store 2026-08-01: 14,218 events name
-// /Users/ben/git/theaitrellis, which was renamed to nobedan and is gone.
+// /Users/you/git/theaitrellis, which was renamed to nobedan and is gone.
 func goneDir(t *testing.T, name string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)

@@ -2,7 +2,7 @@
 --
 -- Blender and Motion are used by branching rather than editing. Every .blend in
 -- the reference project has a birthtime equal to its mtime to the second (25 of
--- 25, `stat -f '%B %m %N' /Users/ben/git/acorn/blender/*.blend*`), so no file
+-- 25, `stat -f '%B %m %N' /Users/you/git/acorn/blender/*.blend*`), so no file
 -- carries a span and the iteration history lives across sibling filenames.
 -- internal/chains clusters those names and derives the intervals between them.
 --

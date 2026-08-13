@@ -35,7 +35,7 @@ const (
 // okCapture is the ordinary row: a capture that ran and read its source through.
 func okCapture(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if err := insertCapture(db, "knowledgec", "/Users/x/knowledgeC.db",
+	if err := insertCapture(db, "knowledgec", "/Users/you/knowledgeC.db",
 		captureStart, captureEnd, "ok", nil, 1, 0, 4_100_000); err != nil {
 		t.Fatalf("an ordinary successful capture was refused: %v", err)
 	}
@@ -44,11 +44,11 @@ func okCapture(t *testing.T, db *sql.DB) {
 func TestCaptureRunAcceptsTheFourOutcomes(t *testing.T) {
 	db := migrated(t)
 	okCapture(t, db)
-	if err := insertCapture(db, "biome", "/Users/x/Library/Biome",
+	if err := insertCapture(db, "biome", "/Users/you/Library/Biome",
 		captureStart, captureEnd, "partial", "cannot read stream: operation not permitted", 3, 2, 900); err != nil {
 		t.Errorf("a partial capture was refused: %v", err)
 	}
-	if err := insertCapture(db, "motion-vault", "/Users/x/Autosave Vault",
+	if err := insertCapture(db, "motion-vault", "/Users/you/Autosave Vault",
 		captureStart, captureEnd, "failed", "cannot read vault: operation not permitted", 0, 0, 0); err != nil {
 		t.Errorf("a failed capture was refused: %v", err)
 	}

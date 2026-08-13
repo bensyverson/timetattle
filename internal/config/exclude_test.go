@@ -19,13 +19,13 @@ func TestExcludeShipsEmpty(t *testing.T) {
 
 // TestExcludeIsReadFromTheFile.
 func TestExcludeIsReadFromTheFile(t *testing.T) {
-	path := write(t, `{"sessions": {"exclude": ["*.log.bz2", "/Users/ben/git/Easley/reports/"]}}`)
+	path := write(t, `{"sessions": {"exclude": ["*.log.bz2", "/Users/you/git/Easley/reports/"]}}`)
 
 	got, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := []string{"*.log.bz2", "/Users/ben/git/Easley/reports/"}
+	want := []string{"*.log.bz2", "/Users/you/git/Easley/reports/"}
 	if len(got.Sessions.Exclude) != len(want) {
 		t.Fatalf("read %q, want %q", got.Sessions.Exclude, want)
 	}

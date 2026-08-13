@@ -91,7 +91,7 @@ CREATE TABLE derived_session (
     -- sorted and deduplicated by internal/sittings.Corpus.Canonical so that two
     -- spellings of one instruction store one value. JSON and not the
     -- comma-joined form the source columns use, because a pattern is a path and
-    -- a path may hold a comma: "/Users/ben/Documents/Smith, John/" is an
+    -- a path may hold a comma: "/Users/you/Documents/Smith, John/" is an
     -- ordinary directory, and splitting it on commas invents two patterns, one
     -- of which excludes a great deal more than was written. A source id cannot
     -- hold a comma, which is why presence_sources can get away with it.

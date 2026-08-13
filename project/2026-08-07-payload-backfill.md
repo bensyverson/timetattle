@@ -308,8 +308,8 @@ go run ./scripts/payloadbackfill
 ```
 
 ```
-root:  /Users/ben/.claude/projects
-store: /Users/ben/.timetattle/timetattle.db
+root:  /Users/you/.claude/projects
+store: /Users/you/.timetattle/timetattle.db
 mode:  DRY RUN, through a read-only connection; nothing can be written
 
 RECORDS OFFERED (internal/transcripts, after its own replay resolution)

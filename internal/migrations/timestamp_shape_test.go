@@ -89,7 +89,7 @@ func tsChain(t *testing.T, d *sql.DB) int64 {
 	}
 	res, err := d.Exec(`INSERT INTO derived_chain
 		(run_id, directory, root, started_at, ended_at, step_count, document_count)
-		VALUES (1, '/Users/x/blender', 'animation_final', ?, ?, 2, 2)`, tsFloor, tsCeil)
+		VALUES (1, '/Users/you/blender', 'animation_final', ?, ?, 2, 2)`, tsFloor, tsCeil)
 	if err != nil {
 		t.Fatalf("insert derived_chain: %v", err)
 	}
@@ -213,7 +213,7 @@ var tsColumns = []tsColumn{
 			tsChain(t, d)
 			_, err := d.Exec(`INSERT INTO derived_chain
 				(run_id, directory, root, started_at, ended_at, step_count, document_count)
-				VALUES (1, '/Users/x/blender', 'other_root', ?, ?, 2, 2)`, v, tsCeil)
+				VALUES (1, '/Users/you/blender', 'other_root', ?, ?, 2, 2)`, v, tsCeil)
 			return err
 		},
 	},
@@ -223,7 +223,7 @@ var tsColumns = []tsColumn{
 			tsChain(t, d)
 			_, err := d.Exec(`INSERT INTO derived_chain
 				(run_id, directory, root, started_at, ended_at, step_count, document_count)
-				VALUES (1, '/Users/x/blender', 'other_root', ?, ?, 2, 2)`, tsFloor, v)
+				VALUES (1, '/Users/you/blender', 'other_root', ?, ?, 2, 2)`, tsFloor, v)
 			return err
 		},
 	},

@@ -31,9 +31,9 @@ import (
 //
 // Every figure asserted below was taken with:
 //
-//	stat -f '%SB | %Sm | %N' -t '%Y-%m-%d %H:%M:%S' /Users/ben/git/acorn/blender/*lightbar*
-//	stat -f '%SB | %Sm | %N' -t '%Y-%m-%d %H:%M:%S' /Users/ben/git/acorn/scanline/*
-//	stat -f '%SB | %Sm | %N' -t '%Y-%m-%d %H:%M:%S' /Users/ben/git/acorn/local/*.motn /Users/ben/git/acorn/local/*.psd
+//	stat -f '%SB | %Sm | %N' -t '%Y-%m-%d %H:%M:%S' /Users/you/git/acorn/blender/*lightbar*
+//	stat -f '%SB | %Sm | %N' -t '%Y-%m-%d %H:%M:%S' /Users/you/git/acorn/scanline/*
+//	stat -f '%SB | %Sm | %N' -t '%Y-%m-%d %H:%M:%S' /Users/you/git/acorn/local/*.motn /Users/you/git/acorn/local/*.psd
 //
 // If one starts failing, the likely cause is that a file was touched again or
 // a new sibling was saved. Re-derive with the commands above rather than
@@ -105,8 +105,8 @@ func sec(t time.Time) time.Time { return t.Truncate(time.Second) }
 // lightbar chain on the next, and the task calls the chain a Blender chain.
 // Both are right, about two different files:
 //
-//	/Users/ben/git/acorn/blender/lightbar.blend  born 2026-07-11 09:19:26, mtime identical
-//	/Users/ben/git/acorn/scanline/lightbar.psd   born 2026-07-11 09:55:54, mtime 23:41:06
+//	/Users/you/git/acorn/blender/lightbar.blend  born 2026-07-11 09:19:26, mtime identical
+//	/Users/you/git/acorn/scanline/lightbar.psd   born 2026-07-11 09:55:54, mtime 23:41:06
 //
 // The chain is Blender. The .psd is the separate birth-to-mtime observation the
 // same document cites to argue that gap is not a duration. They share a stem,
@@ -253,10 +253,10 @@ func TestRealLightbarChainWithBlenderBackups(t *testing.T) {
 // exist on this machine right now — this is an observation of not-split, not an
 // absence of evidence:
 //
-//	/Users/ben/git/acorn/local/dark-crystal.motn       born 2026-07-10 12:57:23
-//	/Users/ben/git/acorn/local/dark-crystal-v2.motn    born 2026-07-10 12:57:23
-//	/Users/ben/git/acorn/local/dark-crystal.psd        born 2026-07-10 14:09:54
-//	/Users/ben/git/acorn/local/dark-crystal-apex.motn  born 2026-07-10 14:46:10
+//	/Users/you/git/acorn/local/dark-crystal.motn       born 2026-07-10 12:57:23
+//	/Users/you/git/acorn/local/dark-crystal-v2.motn    born 2026-07-10 12:57:23
+//	/Users/you/git/acorn/local/dark-crystal.psd        born 2026-07-10 14:09:54
+//	/Users/you/git/acorn/local/dark-crystal-apex.motn  born 2026-07-10 14:46:10
 func TestRealDarkCrystalIsNotSplit(t *testing.T) {
 	dir := filepath.Join(realProject(t), "local")
 	r := Reconstruct(realEvents(t), Options{})
@@ -298,7 +298,7 @@ func TestRealDarkCrystalIsNotSplit(t *testing.T) {
 // TestRealScanlineSimultaneousBirthsAreOneAction is criterion QN2.
 //
 // The record says six scanline files share a 16:15 timestamp. Seven do, all in
-// /Users/ben/git/acorn/scanline, all born 2026-07-11 16:15:22: scanline-native,
+// /Users/you/git/acorn/scanline, all born 2026-07-11 16:15:22: scanline-native,
 // scanline-card-granted, scanline-card-denied, scanline-face-granted,
 // scanline-face-denied, scanline2-face-denied, scanline3-face-denied.
 func TestRealScanlineSimultaneousBirthsAreOneAction(t *testing.T) {

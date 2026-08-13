@@ -29,14 +29,14 @@ func dcRow(d *sql.DB, exclude, from, to any) error {
 // differ by 126.2h of presence over the live corpus.
 func TestADerivedSessionRecordsTheExcludeListItWasDrawnUnder(t *testing.T) {
 	d := migrated(t)
-	if err := dcRow(d, `["*.bz2","*.gz","*.log","/Users/ben/git/Easley/reports/"]`, "", ""); err != nil {
+	if err := dcRow(d, `["*.bz2","*.gz","*.log","/Users/you/git/Easley/reports/"]`, "", ""); err != nil {
 		t.Fatalf("write a derivation with an exclude list: %v", err)
 	}
 	var stored string
 	if err := d.QueryRow(`SELECT exclude_patterns FROM derived_session`).Scan(&stored); err != nil {
 		t.Fatalf("read exclude_patterns back: %v", err)
 	}
-	if stored != `["*.bz2","*.gz","*.log","/Users/ben/git/Easley/reports/"]` {
+	if stored != `["*.bz2","*.gz","*.log","/Users/you/git/Easley/reports/"]` {
 		t.Errorf("exclude_patterns read back as %q", stored)
 	}
 }
@@ -74,7 +74,7 @@ func TestTheStoredExcludeListMustBeAJSONArray(t *testing.T) {
 			t.Errorf("exclude_patterns accepted %q", bad)
 		}
 	}
-	for _, good := range []string{"[]", `["*.log"]`, `["/Users/ben/Documents/Smith, John/"]`} {
+	for _, good := range []string{"[]", `["*.log"]`, `["/Users/you/Documents/Smith, John/"]`} {
 		if err := dcRow(d, good, "", ""); err != nil {
 			t.Errorf("exclude_patterns refused %q: %v", good, err)
 		}

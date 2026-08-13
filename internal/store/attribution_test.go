@@ -12,7 +12,7 @@ import (
 func TestResolveProjectsAttributesEventsSharingALocatorInOneCall(t *testing.T) {
 	f := newStore(t)
 	run := f.run(t)
-	locator := "/Users/ben/Movies/ACORN/holiday/dark-crystal-v2.motn"
+	locator := "/Users/you/Movies/ACORN/holiday/dark-crystal-v2.motn"
 	e1 := focus(nine, tenish, "com.apple.motionapp")
 	e1.Locator = locator
 	e2 := source.NewPoint(nine, source.Identity{App: "com.apple.motionapp"}, sourceID)
@@ -49,7 +49,7 @@ func TestResolveProjectsLeavesAnUnregisteredLocatorUnattributed(t *testing.T) {
 	f := newStore(t)
 	run := f.run(t)
 	e := focus(nine, tenish, "com.apple.motionapp")
-	e.Locator = "/Users/ben/scratch/render.motn"
+	e.Locator = "/Users/you/scratch/render.motn"
 	f.write(t, run, e)
 
 	resolve := func(string) (store.Attributed, bool, error) { return store.Attributed{}, false, nil }
@@ -86,7 +86,7 @@ func TestResolveProjectsIsRerunnableAndRepairsAStaleAttribution(t *testing.T) {
 	f := newStore(t)
 	run := f.run(t)
 	e := focus(nine, tenish, "com.apple.motionapp")
-	e.Locator = "/Users/ben/git/acorn/holiday/dark-crystal-v2.motn"
+	e.Locator = "/Users/you/git/acorn/holiday/dark-crystal-v2.motn"
 	f.write(t, run, e)
 
 	if _, err := f.ResolveProjects(context.Background(), func(string) (store.Attributed, bool, error) {
@@ -126,7 +126,7 @@ func TestResolveProjectsUnattributesARowWhoseMarkerWasRemoved(t *testing.T) {
 	f := newStore(t)
 	run := f.run(t)
 	e := focus(nine, tenish, "com.apple.motionapp")
-	e.Locator = "/Users/ben/git/acorn/holiday/dark-crystal-v2.motn"
+	e.Locator = "/Users/you/git/acorn/holiday/dark-crystal-v2.motn"
 	f.write(t, run, e)
 
 	if _, err := f.ResolveProjects(context.Background(), func(string) (store.Attributed, bool, error) {
@@ -163,9 +163,9 @@ func TestResolveProjectsUnattributesARowWhoseMarkerWasRemoved(t *testing.T) {
 func TestResolveProjectsSkipsAnUnreadableLocatorAndAttributesTheRest(t *testing.T) {
 	f := newStore(t)
 	run := f.run(t)
-	readable := "/Users/ben/git/acorn/holiday/dark-crystal-v2.motn"
-	unreadable := "/Users/ben/git/acorn/locked/render.motn"
-	elsewhere := "/Users/ben/scratch/render.motn"
+	readable := "/Users/you/git/acorn/holiday/dark-crystal-v2.motn"
+	unreadable := "/Users/you/git/acorn/locked/render.motn"
+	elsewhere := "/Users/you/scratch/render.motn"
 
 	e1 := focus(nine, tenish, "com.apple.motionapp")
 	e1.Locator = readable
@@ -240,7 +240,7 @@ func TestResolveProjectsLeavesASkippedLocatorsPreviousAttributionAlone(t *testin
 	f := newStore(t)
 	run := f.run(t)
 	e := focus(nine, tenish, "com.apple.motionapp")
-	e.Locator = "/Users/ben/git/acorn/holiday/dark-crystal-v2.motn"
+	e.Locator = "/Users/you/git/acorn/holiday/dark-crystal-v2.motn"
 	f.write(t, run, e)
 
 	if _, err := f.ResolveProjects(context.Background(), func(string) (store.Attributed, bool, error) {
@@ -273,7 +273,7 @@ func TestResolveProjectsReportsZeroSkippedRatherThanNotReportingSkips(t *testing
 	f := newStore(t)
 	run := f.run(t)
 	e := focus(nine, tenish, "com.apple.motionapp")
-	e.Locator = "/Users/ben/git/acorn/holiday/dark-crystal-v2.motn"
+	e.Locator = "/Users/you/git/acorn/holiday/dark-crystal-v2.motn"
 	f.write(t, run, e)
 
 	att, err := f.ResolveProjects(context.Background(), func(string) (store.Attributed, bool, error) {
@@ -306,9 +306,9 @@ func TestResolveProjectsStillAbortsWholeOnAStoreFailure(t *testing.T) {
 	f := newStore(t)
 	run := f.run(t)
 	first := focus(nine, tenish, "com.apple.motionapp")
-	first.Locator = "/Users/ben/git/acorn/a.motn"
+	first.Locator = "/Users/you/git/acorn/a.motn"
 	second := source.NewPoint(nine, source.Identity{App: "com.apple.motionapp"}, sourceID)
-	second.Locator = "/Users/ben/git/acorn/b.motn"
+	second.Locator = "/Users/you/git/acorn/b.motn"
 	f.write(t, run, first, second)
 
 	ctx, cancel := context.WithCancel(context.Background())

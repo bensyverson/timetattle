@@ -74,7 +74,7 @@ func names(c Chain) []string {
 // touches a file on this machine. The real-data version is in realdata_test.go
 // and neither substitutes for the other.
 func TestChainRecoversOrderAndIntervals(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/blender"
+	const dir = "/Users/you/git/acorn/blender"
 	r := Reconstruct([]source.Event{
 		// Deliberately out of order: events arrive in store order, and a
 		// model that only works on pre-sorted input would pass by accident.
@@ -127,7 +127,7 @@ func TestChainRecoversOrderAndIntervals(t *testing.T) {
 // the failure this guards against is a model that reads it as a "dark" family
 // and then adopts anything else beginning dark-.
 func TestDashedNameIsNotSplit(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/local"
+	const dir = "/Users/you/git/acorn/local"
 	r := Reconstruct([]source.Event{
 		src(day(12, 57, 23), dir+"/dark-crystal.motn"),
 		src(day(14, 46, 10), dir+"/dark-crystal-apex.motn"),
@@ -163,7 +163,7 @@ func contains(hay []string, needle string) bool {
 // together are one gesture; scoring them as seven steps produces six intervals
 // of zero and reads as a burst of decisions that never happened.
 func TestSimultaneousBirthsAreOneAction(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/scanline"
+	const dir = "/Users/you/git/acorn/scanline"
 	together := day(16, 15, 22)
 	events := []source.Event{src(day(15, 58, 57), dir+"/scanline.motn")}
 	for _, n := range []string{
@@ -199,7 +199,7 @@ func TestSimultaneousBirthsAreOneAction(t *testing.T) {
 // the second, so this constructed case is the one that actually exercises
 // Coincidence rather than exact equality.
 func TestNearSimultaneousBirthsCollapseToo(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/scanline"
+	const dir = "/Users/you/git/acorn/scanline"
 	base := day(16, 15, 22)
 	c := only(t, Reconstruct([]source.Event{
 		src(day(15, 58, 57), dir+"/scanline.motn"),
@@ -222,7 +222,7 @@ func TestNearSimultaneousBirthsCollapseToo(t *testing.T) {
 // Beyond Coincidence they are separate decisions, or the rule would swallow
 // genuine fast iteration.
 func TestBirthsBeyondCoincidenceStaySeparate(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/scanline"
+	const dir = "/Users/you/git/acorn/scanline"
 	base := day(16, 15, 22)
 	c := only(t, Reconstruct([]source.Event{
 		src(base, dir+"/scanline.motn"),
@@ -241,10 +241,10 @@ func TestBirthsBeyondCoincidenceStaySeparate(t *testing.T) {
 // iteration rhythm belonging to neither.
 func TestChainsDoNotCrossDirectories(t *testing.T) {
 	r := Reconstruct([]source.Event{
-		src(day(9, 19, 26), "/Users/ben/git/acorn/blender/lightbar.blend"),
-		src(day(9, 33, 38), "/Users/ben/git/acorn/blender/lightbar-top.blend"),
-		src(day(9, 55, 54), "/Users/ben/git/acorn/scanline/lightbar.psd"),
-		src(day(13, 20, 26), "/Users/ben/git/acorn/scanline/lightbar-beat2.psd"),
+		src(day(9, 19, 26), "/Users/you/git/acorn/blender/lightbar.blend"),
+		src(day(9, 33, 38), "/Users/you/git/acorn/blender/lightbar-top.blend"),
+		src(day(9, 55, 54), "/Users/you/git/acorn/scanline/lightbar.psd"),
+		src(day(13, 20, 26), "/Users/you/git/acorn/scanline/lightbar-beat2.psd"),
 	}, Options{})
 
 	if len(r.Chains) != 2 {
@@ -264,7 +264,7 @@ func TestChainsDoNotCrossDirectories(t *testing.T) {
 // A thousand rendered frames are one export. Chaining output would report the
 // largest chain in the corpus for the action that took the least thought.
 func TestRenderedOutputIsNotChained(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/test-renders"
+	const dir = "/Users/you/git/acorn/test-renders"
 	var events []source.Event
 	base := day(11, 0, 0)
 	for i := range 1000 {
@@ -311,7 +311,7 @@ func TestRenderedOutputIsNotChained(t *testing.T) {
 // store they are read from, and a Biome focus interval has no filename to
 // cluster on at all.
 func TestOtherSourcesAreIgnored(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/blender"
+	const dir = "/Users/you/git/acorn/blender"
 	foreign := source.NewInterval(day(9, 0, 0), day(10, 0, 0),
 		source.Identity{App: "org.blenderfoundation.blender"}, "biome-appusage")
 	r := Reconstruct([]source.Event{
@@ -332,7 +332,7 @@ func TestOtherSourcesAreIgnored(t *testing.T) {
 // long-lived document acquires a phantom second step at the moment it was last
 // touched — which for lightbar.psd is 23:41, thirteen hours after its birth.
 func TestASecondObservationOfTheSameFileIsNotASecondStep(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/scanline"
+	const dir = "/Users/you/git/acorn/scanline"
 	r := Reconstruct([]source.Event{
 		src(day(9, 55, 54), dir+"/lightbar.psd"),
 		src(day(23, 41, 6), dir+"/lightbar.psd"), // same file, its mtime
@@ -355,7 +355,7 @@ func TestASecondObservationOfTheSameFileIsNotASecondStep(t *testing.T) {
 // internal/fsobserve classifies both as source on purpose. Two steps would
 // double the apparent branch count of every Blender directory on this machine.
 func TestOneDocumentUnderTwoExtensionsIsOneStep(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/blender"
+	const dir = "/Users/you/git/acorn/blender"
 	r := Reconstruct([]source.Event{
 		src(day(9, 19, 26), dir+"/lightbar.blend"),
 		src(day(13, 33, 27), dir+"/lightbar-top-filmic-rect.blend1"),
@@ -390,11 +390,11 @@ func TestOneDocumentUnderTwoExtensionsIsOneStep(t *testing.T) {
 }
 
 // The brief's hardest question: a family whose earliest member was deleted.
-// This is not hypothetical — /Users/ben/git/acorn/blender holds seven
+// This is not hypothetical — /Users/you/git/acorn/blender holds seven
 // animation_final-* documents and no animation_final. Without a rule for it the
 // whole family fragments into singletons and disappears from the corpus.
 func TestFamilySurvivesAMissingAncestor(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/blender"
+	const dir = "/Users/you/git/acorn/blender"
 	r := Reconstruct([]source.Event{
 		src(day(9, 0, 0), dir+"/animation_final-preround.blend"),
 		src(day(9, 30, 0), dir+"/animation_final-rotating.blend"),
@@ -423,7 +423,7 @@ func TestFamilySurvivesAMissingAncestor(t *testing.T) {
 // The floor that makes the missing-ancestor rule safe. Four shared characters
 // is a coincidence; the rule must not adopt on it.
 func TestAShortSharedPrefixIsNotAFamily(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/local"
+	const dir = "/Users/you/git/acorn/local"
 	r := Reconstruct([]source.Event{
 		src(day(9, 0, 0), dir+"/dark-crystal-apex.motn"),
 		src(day(9, 30, 0), dir+"/dark-matter-halo.motn"),
@@ -443,7 +443,7 @@ func TestAShortSharedPrefixIsNotAFamily(t *testing.T) {
 // assertion passes against a model that does nothing at all, so the same call
 // has to also produce the chain that should be there.
 func TestPrefixMustLandOnANameBoundary(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/scanline"
+	const dir = "/Users/you/git/acorn/scanline"
 	r := Reconstruct([]source.Event{
 		src(day(15, 58, 57), dir+"/scanline.motn"),
 		src(day(21, 54, 40), dir+"/scanlines.psd"),
@@ -467,7 +467,7 @@ func TestPrefixMustLandOnANameBoundary(t *testing.T) {
 // A digit is a boundary only where the prefix does not already end in one.
 // Without that qualification a camera roll becomes a save-as chain.
 func TestSequentiallyNumberedFilesAreNotAFamily(t *testing.T) {
-	const dir = "/Users/ben/Pictures"
+	const dir = "/Users/you/Pictures"
 	var events []source.Event
 	for i := 1230; i < 1240; i++ {
 		events = append(events, src(day(9, 0, i-1230), fmt.Sprintf("%s/IMG_%d.psd", dir, i)))
@@ -480,8 +480,8 @@ func TestSequentiallyNumberedFilesAreNotAFamily(t *testing.T) {
 	// But a digit after a non-digit IS a version marker, and the same corpus
 	// depends on it: scanline2-face-denied descends from scanline.
 	versioned := Reconstruct([]source.Event{
-		src(day(9, 0, 0), "/Users/ben/git/acorn/scanline/scanline.motn"),
-		src(day(9, 30, 0), "/Users/ben/git/acorn/scanline/scanline2-face-denied.motn"),
+		src(day(9, 0, 0), "/Users/you/git/acorn/scanline/scanline.motn"),
+		src(day(9, 30, 0), "/Users/you/git/acorn/scanline/scanline2-face-denied.motn"),
 	}, Options{})
 	if len(versioned.Chains) != 1 {
 		t.Fatalf("got %d chains for scanline/scanline2, want 1", len(versioned.Chains))
@@ -491,7 +491,7 @@ func TestSequentiallyNumberedFilesAreNotAFamily(t *testing.T) {
 // One step is a file, not a chain. Reporting it would make every isolated
 // document in the corpus a "chain" and the chain count meaningless.
 func TestASingleStepIsNotAChain(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/blender"
+	const dir = "/Users/you/git/acorn/blender"
 	r := Reconstruct([]source.Event{
 		// tile.blend and tile.blend1 on this machine: one document, two files,
 		// born in the same minute.
@@ -521,7 +521,7 @@ func TestASingleStepIsNotAChain(t *testing.T) {
 // same call — otherwise "want 0 chains" is satisfied by a model that never
 // clusters anything.
 func TestABurstAloneIsNotAChain(t *testing.T) {
-	const dir = "/Users/ben/git/acorn/scanline"
+	const dir = "/Users/you/git/acorn/scanline"
 	at := day(16, 15, 22)
 	// All three agree on "scanline-card", which is over half of each name, so
 	// they are one family even with no scanline-card of their own on disk.
@@ -555,10 +555,10 @@ func TestABurstAloneIsNotAChain(t *testing.T) {
 // report reads them in and the order the derived table stores them in.
 func TestChainsAreOrderedByTheirFirstStep(t *testing.T) {
 	r := Reconstruct([]source.Event{
-		src(day(15, 0, 0), "/Users/ben/git/acorn/b/zebra.motn"),
-		src(day(15, 30, 0), "/Users/ben/git/acorn/b/zebra-two.motn"),
-		src(day(9, 0, 0), "/Users/ben/git/acorn/a/apple.motn"),
-		src(day(9, 30, 0), "/Users/ben/git/acorn/a/apple-two.motn"),
+		src(day(15, 0, 0), "/Users/you/git/acorn/b/zebra.motn"),
+		src(day(15, 30, 0), "/Users/you/git/acorn/b/zebra-two.motn"),
+		src(day(9, 0, 0), "/Users/you/git/acorn/a/apple.motn"),
+		src(day(9, 30, 0), "/Users/you/git/acorn/a/apple-two.motn"),
 	}, Options{})
 	if len(r.Chains) != 2 {
 		t.Fatalf("got %d chains, want 2", len(r.Chains))
@@ -573,8 +573,8 @@ func TestChainsAreOrderedByTheirFirstStep(t *testing.T) {
 // The parameters must survive a real run, not only the empty one.
 func TestOptionsComeBackResolved(t *testing.T) {
 	r := Reconstruct([]source.Event{
-		src(day(9, 19, 26), "/Users/ben/git/acorn/blender/lightbar.blend"),
-		src(day(9, 33, 38), "/Users/ben/git/acorn/blender/lightbar-top.blend"),
+		src(day(9, 19, 26), "/Users/you/git/acorn/blender/lightbar.blend"),
+		src(day(9, 33, 38), "/Users/you/git/acorn/blender/lightbar-top.blend"),
 	}, Options{})
 	if len(r.Chains) != 1 {
 		t.Fatalf("got %d chains, want 1; the options below would be recorded against a derivation that did nothing", len(r.Chains))
@@ -610,7 +610,7 @@ func TestNothingRecordedIsDistinguishableFromNothingChained(t *testing.T) {
 	}
 
 	observed := Reconstruct([]source.Event{
-		src(day(10, 0, 0), "/Users/ben/git/acorn/blender/backup.blend"),
+		src(day(10, 0, 0), "/Users/you/git/acorn/blender/backup.blend"),
 	}, Options{})
 	if len(observed.Chains) != 0 {
 		t.Fatalf("got %d chains from one file, want 0", len(observed.Chains))
@@ -621,7 +621,7 @@ func TestNothingRecordedIsDistinguishableFromNothingChained(t *testing.T) {
 	if len(observed.Unchained) != 1 {
 		t.Fatalf("Unchained = %v, want the one document named", observed.Unchained)
 	}
-	if observed.Unchained[0] != "/Users/ben/git/acorn/blender/backup" {
+	if observed.Unchained[0] != "/Users/you/git/acorn/blender/backup" {
 		t.Errorf("Unchained[0] = %q, want the directory and name so it can be found again", observed.Unchained[0])
 	}
 }

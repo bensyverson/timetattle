@@ -239,11 +239,11 @@ func TestIsCoEmitted(t *testing.T) {
 		locator string
 		want    bool
 	}{
-		{"/Users/ben/git/acorn/.jobs.db", true},
-		{"/Users/ben/git/acorn/.jobs.db-wal", true},
-		{"/Users/ben/git/acorn/.jobs.db-shm", true},
-		{"/Users/ben/git/acorn/internal/jobs.go", false},
-		{"/Users/ben/git/acorn/docs/jobs.dbdesign.md", false},
+		{"/Users/you/git/acorn/.jobs.db", true},
+		{"/Users/you/git/acorn/.jobs.db-wal", true},
+		{"/Users/you/git/acorn/.jobs.db-shm", true},
+		{"/Users/you/git/acorn/internal/jobs.go", false},
+		{"/Users/you/git/acorn/docs/jobs.dbdesign.md", false},
 		{"", false},
 	}
 	for _, tc := range cases {

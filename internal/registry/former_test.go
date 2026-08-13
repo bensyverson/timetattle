@@ -40,8 +40,8 @@ func TestResolveAmongMatchesAFormerPathExactly(t *testing.T) {
 
 // TestResolveAmongMatchesBeneathAFormerPath is the case an exact-match
 // implementation gets wrong while looking correct. Measured on the live store
-// 2026-08-01: of the 14,218 events under /Users/ben/git/theaitrellis, 4,294 sit
-// at /Users/ben/git/theaitrellis/stacktrace. Matching only the exact directory
+// 2026-08-01: of the 14,218 events under /Users/you/git/theaitrellis, 4,294 sit
+// at /Users/you/git/theaitrellis/stacktrace. Matching only the exact directory
 // recovers 9,924 of 14,218 — 70% — and reports success.
 func TestResolveAmongMatchesBeneathAFormerPath(t *testing.T) {
 	former := goneDir(t, "theaitrellis")
@@ -65,8 +65,8 @@ func TestResolveAmongMatchesBeneathAFormerPath(t *testing.T) {
 // file, so it strips a level off both — which is right for the climb and fatal
 // here, because the stripped path is the renamed directory's PARENT and the
 // former path does not cover it. Measured on the live store 2026-08-01: 9,924
-// of the 14,218 stranded observations name /Users/ben/git/theaitrellis exactly
-// and would have been stripped to /Users/ben/git, leaving only the 4,294 under
+// of the 14,218 stranded observations name /Users/you/git/theaitrellis exactly
+// and would have been stripped to /Users/you/git, leaving only the 4,294 under
 // theaitrellis/stacktrace to match — 30%, reported as success.
 func TestResolveAmongMatchesThePathNotTheDirectoryClimbedFrom(t *testing.T) {
 	former := goneDir(t, "theaitrellis")

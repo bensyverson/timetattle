@@ -46,7 +46,7 @@ func consolidateTestMarkers(t *testing.T) []*registry.Marker {
 
 // TestConsolidateCommandReattributesEvidenceUnderAVanishedPath is the
 // acceptance case, in the shape of the real one measured on 2026-08-01:
-// /Users/ben/git/theaitrellis was renamed to nobedan, leaving 14,218
+// /Users/you/git/theaitrellis was renamed to nobedan, leaving 14,218
 // observations at a path that no longer exists — 4,294 of them one level down,
 // at theaitrellis/stacktrace, which is why the alias has to match a prefix.
 func TestConsolidateCommandReattributesEvidenceUnderAVanishedPath(t *testing.T) {

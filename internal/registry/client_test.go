@@ -13,8 +13,8 @@ import (
 // a directory that already names a different client or project is refused
 // unless Force. It has never checked ACROSS directories, so nothing stopped
 //
-//	/Users/ben/git/a  ->  client=acme,   project=website
-//	/Users/ben/git/b  ->  client=globex, project=website
+//	/Users/you/git/a  ->  client=acme,   project=website
+//	/Users/you/git/b  ->  client=globex, project=website
 //
 // from both registering cleanly. Both then write project='website' onto their
 // events, and every report that groups by project — which is every report

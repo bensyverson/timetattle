@@ -2,7 +2,7 @@
 //
 // Blender and Motion are not used the way a text editor is used. A file is
 // created, worked on, and then *branched*: File > Save As to a new name beside
-// the old one. Every .blend in /Users/ben/git/acorn/blender has a birthtime equal
+// the old one. Every .blend in /Users/you/git/acorn/blender has a birthtime equal
 // to its mtime to the second — 25 of 25, measured with `stat -f '%B %m %N'` —
 // so no single file carries a span at all, and every source that reports one
 // file at a time reports a scatter of instants with no structure.
@@ -35,7 +35,7 @@
 //
 // The obvious implementation cuts each name at its dashes and calls the first
 // segment the stem. It fails immediately: dark-crystal is one real document in
-// /Users/ben/git/acorn/local, not a "dark" family with a "crystal" variant, and
+// /Users/you/git/acorn/local, not a "dark" family with a "crystal" variant, and
 // it sits in a directory that also holds dark-crystal-v2 and dark-crystal-apex,
 // which genuinely are its descendants. This is the same failure Claude Code's
 // project directories have, unable to tell a separator from a dash inside a
@@ -58,8 +58,8 @@
 //   - Within one directory only. Save As offers the current folder, so a branch
 //     lands beside its parent. Scoping to a directory is also what keeps two
 //     unrelated documents that happen to share a stem apart, and this machine
-//     has the case: /Users/ben/git/acorn/blender/lightbar.blend and
-//     /Users/ben/git/acorn/scanline/lightbar.psd are a Blender chain and a
+//     has the case: /Users/you/git/acorn/blender/lightbar.blend and
+//     /Users/you/git/acorn/scanline/lightbar.psd are a Blender chain and a
 //     Photoshop chain, on the same day, with nothing to do with each other.
 //     Merging them on the shared name "lightbar" would interleave two people's
 //     worth of iteration rhythm into one false sequence.
@@ -84,7 +84,7 @@
 //
 // # Simultaneous births are one action
 //
-// Seven .motn files in /Users/ben/git/acorn/scanline share a birthtime of
+// Seven .motn files in /Users/you/git/acorn/scanline share a birthtime of
 // 2026-07-11 16:15:22, because they were duplicated together in one gesture.
 // Seven steps would be six intervals of zero, which would read as furious
 // activity and is in fact one action. Steps within Coincidence of the first
@@ -126,7 +126,7 @@ import (
 // or wanted: a two-character document is as real as a twenty-character one.
 //
 // Six is chosen against the real corpus rather than by feel. The case it has to
-// admit is /Users/ben/git/acorn/blender/animation_final-*, seven documents with
+// admit is /Users/you/git/acorn/blender/animation_final-*, seven documents with
 // no animation_final of their own — the ancestor was never kept — agreeing on
 // 15 characters. The case it has to refuse is dark-crystal against a
 // hypothetical dark-matter, agreeing on 4. Anything from 5 to 15 separates
@@ -493,7 +493,7 @@ func root(members []*doc) string {
 // The walk backwards is not decoration. The longest common prefix routinely
 // overshoots into the component that differs: "Wall Switch+Keypad_1line_off"
 // and "Wall Switch+Keypad_1line_on" — two real files in
-// /Users/ben/git/acorn/demo/chrome — share "..._1line_o", the o of "on" and of
+// /Users/you/git/acorn/demo/chrome — share "..._1line_o", the o of "on" and of
 // "off", which is a boundary in neither. Trimming only trailing separators
 // leaves that o in place and refuses a real family; walking back to the last
 // point both names agree is a boundary recovers "Wall Switch+Keypad_1line".

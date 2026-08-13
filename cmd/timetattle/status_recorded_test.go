@@ -119,11 +119,11 @@ func statusHistory(invocations ...[]store.Run) []store.Run {
 // new column here, and status reported 81 seen and 79 new.
 func gitlogCommits() []statusInput {
 	return []statusInput{
-		{input: "/Users/ben/git/acorn", status: store.StatusOK, seen: 55, added: 55},
-		{input: "/Users/ben/git/birch", status: store.StatusOK, seen: 484, added: 484},
-		{input: "/Users/ben/git/cypress", status: store.StatusOK, seen: 294, added: 294},
-		{input: "/Users/ben/git/dogwood", status: store.StatusOK, seen: 18, added: 18},
-		{input: "/Users/ben/git/timetattle", status: store.StatusOK, seen: 81, added: 79},
+		{input: "/Users/you/git/acorn", status: store.StatusOK, seen: 55, added: 55},
+		{input: "/Users/you/git/birch", status: store.StatusOK, seen: 484, added: 484},
+		{input: "/Users/you/git/cypress", status: store.StatusOK, seen: 294, added: 294},
+		{input: "/Users/you/git/dogwood", status: store.StatusOK, seen: 18, added: 18},
+		{input: "/Users/you/git/timetattle", status: store.StatusOK, seen: 81, added: 79},
 	}
 }
 
@@ -186,9 +186,9 @@ func TestRecordedStatusTotalsEveryRepositoryASourceRead(t *testing.T) {
 func TestRecordedStatusIsPartialWhenOneRepositoryFailed(t *testing.T) {
 	inputs := gitlogCommits()
 	inputs[1] = statusInput{
-		input:   "/Users/ben/git/birch",
+		input:   "/Users/you/git/birch",
 		status:  store.StatusFailed,
-		failure: "cannot read /Users/ben/git/birch/.git: operation not permitted",
+		failure: "cannot read /Users/you/git/birch/.git: operation not permitted",
 	}
 	runs := statusHistory(statusInvocation("gitlog-commits", statusNoon, inputs...))
 
@@ -326,8 +326,8 @@ func TestRecordedStatusDoesNotCountAPartialHarvestAsASuccess(t *testing.T) {
 // both would double the seen count and report evidence that was never there.
 func TestRecordedStatusCountsARepositoryReadTwiceInOneHarvestOnce(t *testing.T) {
 	runs := statusHistory(statusInvocation("gitlog-commits", statusNoon,
-		statusInput{input: "/Users/ben/git/acorn", status: store.StatusOK, seen: 55, added: 55},
-		statusInput{input: "/Users/ben/git/acorn", status: store.StatusOK, seen: 55, added: 0},
+		statusInput{input: "/Users/you/git/acorn", status: store.StatusOK, seen: 55, added: 55},
+		statusInput{input: "/Users/you/git/acorn", status: store.StatusOK, seen: 55, added: 0},
 	))
 
 	got := recordedStatus(runs, statusLater)["gitlog-commits"]
@@ -399,8 +399,8 @@ func TestRecordedStatusIsPartialWhenAHarvestDiedPartwayThroughTheRepositories(t 
 func TestRecordedStatusTellsARunInFlightFromARunThatDied(t *testing.T) {
 	began := statusNoon.Add(time.Hour)
 	runs := statusHistory(
-		statusFinished(claudeTranscripts, "/Users/ben/.claude/projects", statusNoon, 75752*time.Millisecond),
-		statusUnfinished(claudeTranscripts, "/Users/ben/.claude/projects", began),
+		statusFinished(claudeTranscripts, "/Users/you/.claude/projects", statusNoon, 75752*time.Millisecond),
+		statusUnfinished(claudeTranscripts, "/Users/you/.claude/projects", began),
 	)
 
 	live := recordedStatus(runs, began.Add(12*time.Second))[claudeTranscripts]
@@ -426,9 +426,9 @@ func TestRecordedStatusTellsARunInFlightFromARunThatDied(t *testing.T) {
 func TestRecordedStatusDerivesTheToleranceFromTheSourcesOwnSlowestRun(t *testing.T) {
 	began := statusNoon.Add(time.Hour)
 	runs := statusHistory(
-		statusFinished(claudeTranscripts, "/Users/ben/.claude/projects", statusNoon, 12403*time.Millisecond),
-		statusFinished(claudeTranscripts, "/Users/ben/.claude/projects", statusNoon.Add(30*time.Minute), 75752*time.Millisecond),
-		statusUnfinished(claudeTranscripts, "/Users/ben/.claude/projects", began),
+		statusFinished(claudeTranscripts, "/Users/you/.claude/projects", statusNoon, 12403*time.Millisecond),
+		statusFinished(claudeTranscripts, "/Users/you/.claude/projects", statusNoon.Add(30*time.Minute), 75752*time.Millisecond),
+		statusUnfinished(claudeTranscripts, "/Users/you/.claude/projects", began),
 	)
 
 	if got := recordedStatus(runs, began.Add(12*time.Minute))[claudeTranscripts]; got.status != string(store.StatusRunning) {
@@ -476,7 +476,7 @@ func TestRecordedStatusWillNotPresumeARunDeadWithNothingToJudgeItBy(t *testing.T
 	runs := statusHistory(
 		statusFinished(kcAppUsage, "/snapshots/knowledgeC-20260801T130435.db.gz", statusNoon, 634*time.Millisecond),
 		statusUnfinished(kcAppUsage, "/snapshots/knowledgeC-20260801T140435.db.gz", began),
-		statusUnfinished(claudeTranscripts, "/Users/ben/.claude/projects", began),
+		statusUnfinished(claudeTranscripts, "/Users/you/.claude/projects", began),
 	)
 
 	got := recordedStatus(runs, began.Add(12*time.Hour))
@@ -554,7 +554,7 @@ func TestRecordedStatusStillReportsAFailureInsideAHarvestStillRunning(t *testing
 // something is broken, and it has to survive the aggregation to be printed.
 func TestRecordedStatusKeepsEachRepositorySeparately(t *testing.T) {
 	inputs := gitlogCommits()
-	inputs[1] = statusInput{input: "/Users/ben/git/birch", status: store.StatusFailed, failure: "operation not permitted"}
+	inputs[1] = statusInput{input: "/Users/you/git/birch", status: store.StatusFailed, failure: "operation not permitted"}
 	runs := statusHistory(statusInvocation("gitlog-commits", statusNoon, inputs...))
 
 	got := recordedStatus(runs, statusLater)["gitlog-commits"]
@@ -563,7 +563,7 @@ func TestRecordedStatusKeepsEachRepositorySeparately(t *testing.T) {
 	}
 	var broken statusInputStatus
 	for _, d := range got.detail {
-		if d.input == "/Users/ben/git/birch" {
+		if d.input == "/Users/you/git/birch" {
 			broken = d
 		}
 	}

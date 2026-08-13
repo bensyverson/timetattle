@@ -30,7 +30,7 @@ var captureStart = time.Date(2026, 8, 1, 13, 4, 35, 0, time.UTC)
 func aCapture() store.Capture {
 	return store.Capture{
 		Kind:       "knowledgec",
-		Input:      "/Users/x/Library/Application Support/Knowledge/knowledgeC.db",
+		Input:      "/Users/you/Library/Application Support/Knowledge/knowledgeC.db",
 		StartedAt:  captureStart,
 		FinishedAt: captureStart.Add(6 * time.Second),
 		Status:     store.CaptureOK,
@@ -117,7 +117,7 @@ func TestAbsentIsAnObservation(t *testing.T) {
 	f := newStore(t)
 	absent := aCapture()
 	absent.Kind = "motion-vault"
-	absent.Input = "/Users/x/Movies/Motion Projects/Autosave Vault"
+	absent.Input = "/Users/you/Movies/Motion Projects/Autosave Vault"
 	absent.Status = store.CaptureAbsent
 	absent.FilesNew, absent.Bytes = 0, 0
 	record(t, f, absent)

@@ -21,8 +21,8 @@ import (
 // the stored bytes must not differ either — the same rule joinSorted already
 // applies to the source lists, for the same reason.
 func TestTheExcludeListIsStoredInACanonicalForm(t *testing.T) {
-	written := sittings.Corpus{Exclude: []string{"/Users/ben/git/Easley/reports/", "*.log", "*.gz", "*.log"}}
-	sorted := sittings.Corpus{Exclude: []string{"*.gz", "*.log", "/Users/ben/git/Easley/reports/"}}
+	written := sittings.Corpus{Exclude: []string{"/Users/you/git/Easley/reports/", "*.log", "*.gz", "*.log"}}
+	sorted := sittings.Corpus{Exclude: []string{"*.gz", "*.log", "/Users/you/git/Easley/reports/"}}
 
 	st, db := open(t)
 	res := sample(t)
@@ -38,7 +38,7 @@ func TestTheExcludeListIsStoredInACanonicalForm(t *testing.T) {
 		t.Errorf("the same corpus written two ways stored different rows.\nfirst:  %s\nsecond: %s",
 			first, second)
 	}
-	if !strings.Contains(first, `["*.gz","*.log","/Users/ben/git/Easley/reports/"]`) {
+	if !strings.Contains(first, `["*.gz","*.log","/Users/you/git/Easley/reports/"]`) {
 		t.Errorf("the stored exclude list is not the canonical one: %s", first)
 	}
 }

@@ -18,11 +18,11 @@ func writeCorpus(t *testing.T, root string) int {
 	t.Helper()
 	proj := filepath.Join(root, "-Users-ben-git-acorn")
 	writeFile(t, filepath.Join(proj, "s1.jsonl"), []string{
-		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/ben/git/acorn", "s1", `"start work"`),
-		assistantLine("a1", "2026-07-28T10:00:05.000Z", "/Users/ben/git/acorn", "s1"),
+		userLine("u1", "2026-07-28T10:00:00.000Z", "/Users/you/git/acorn", "s1", `"start work"`),
+		assistantLine("a1", "2026-07-28T10:00:05.000Z", "/Users/you/git/acorn", "s1"),
 	})
 	writeFile(t, filepath.Join(proj, "s1", "subagents", "agent-1.jsonl"), []string{
-		userLine("sub1", "2026-07-28T10:00:01.000Z", "/Users/ben/git/acorn", "s1", `"dispatched task"`),
+		userLine("sub1", "2026-07-28T10:00:01.000Z", "/Users/you/git/acorn", "s1", `"dispatched task"`),
 	})
 	return 3
 }
@@ -121,7 +121,7 @@ func TestCollectReportsTheSameLocatorsThroughASymlinkedRoot(t *testing.T) {
 		if viaReal[i] != viaLink[i] {
 			t.Fatalf("event %d differs by route:\n via real: %+v\n via link: %+v", i, viaReal[i], viaLink[i])
 		}
-		if viaLink[i].Locator != "/Users/ben/git/acorn" {
+		if viaLink[i].Locator != "/Users/you/git/acorn" {
 			t.Errorf("Locator = %q, want the record's own cwd", viaLink[i].Locator)
 		}
 	}

@@ -32,13 +32,13 @@
 // spent editing one document and must never be dropped by a rule. This tool
 // reproduces that census with the SUFFIX classifier the original used, and then
 // cross-tabulates it against what the exclude list actually removes. A path
-// prefix such as /Users/ben/git/Easley/reports/ can reach files the suffix
+// prefix such as /Users/you/git/Easley/reports/ can reach files the suffix
 // census called ordinary — 2024-12-09.json looks like a document and is
 // generated dashboard output — so the intersection is where a rule would start
 // eating real work, and it is printed file by file rather than as a rate.
 //
 //	go run ./scripts/excludecheck -store ~/.timetattle/timetattle.db \
-//	  -exclude '*.log.bz2,*.gz,*.log,/Users/ben/git/Easley/reports/'
+//	  -exclude '*.log.bz2,*.gz,*.log,/Users/you/git/Easley/reports/'
 package main
 
 import (

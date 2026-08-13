@@ -81,7 +81,7 @@ type prefix struct {
 //   - a pattern with NO slash is a glob matched against the file's BASE NAME
 //     with filepath.Match — "*.log.bz2", "*.gz";
 //   - a pattern WITH a slash is an absolute path prefix, respecting path
-//     boundaries — "/Users/ben/git/Easley/reports/".
+//     boundaries — "/Users/you/git/Easley/reports/".
 //
 // A directory of generated output cannot be named by a base-name glob and a
 // file type cannot be named by a path, so both are needed; doublestar globbing
@@ -153,14 +153,14 @@ func (x Excludes) match(locator string) (string, bool) {
 	clean := filepath.Clean(locator)
 	for _, p := range x.prefixes {
 		// Path boundaries are respected on purpose. A literal prefix
-		// comparison would let "/Users/ben/git/Ea" swallow every file in
-		// /Users/ben/git/Easley, which is a typo that silently deletes a
+		// comparison would let "/Users/you/git/Ea" swallow every file in
+		// /Users/you/git/Easley, which is a typo that silently deletes a
 		// project. filepath.Clean on both sides is also what makes
 		// "…/logs" and "…/logs/" the same instruction rather than two
 		// subtly different ones.
 		// Proved by mutation: replacing this with a plain
 		// strings.HasPrefix makes TestAPrefixStopsAtAPathBoundary fail on
-		// "/Users/ben/git/Ea" against "/Users/ben/git/Easley/logs/access.log".
+		// "/Users/you/git/Ea" against "/Users/you/git/Easley/logs/access.log".
 		// No pattern in the live corpus happens to be a near-miss prefix of
 		// another path today, so real data alone would never have caught it.
 		if clean == p.clean || strings.HasPrefix(clean, p.clean+string(filepath.Separator)) {
