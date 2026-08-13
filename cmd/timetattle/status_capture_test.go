@@ -423,3 +423,67 @@ func dropCaptureTable(t *testing.T, path string) {
 		t.Fatalf("drop capture_run: %v", err)
 	}
 }
+
+// A CAPTURE SKIPPED BY POLICY IS NOT A CAPTURE THAT LOOKED AND FOUND NOTHING.
+//
+// Migration 0015 (task 6fByq) adds a fifth capture_run status, `skipped`, for a
+// run that passed over the knowledgeC snapshot deliberately — throttled, so that
+// the snapshot cadence is no longer welded to the harvest cadence. Its CHECK
+// pins the shape: files_new, files_held and bytes are all zero, which is exactly
+// what a run that looked and found everything already held ALSO records apart
+// from files_held.
+//
+// So the two are one column apart in the table and a world apart in meaning, and
+// this report used to print both as "ok, nothing new" because the switch fell
+// through to the ok wording for any status it did not recognise. That is the
+// absence-is-not-an-observation collapse at the capture layer — the same rule
+// this file's evidence sibling exists for one layer up.
+func TestACaptureSkippedByPolicyDoesNotPrintAsNothingNew(t *testing.T) {
+	skipped := captureState{
+		captureKind: captureKind{kind: captureKindKnowledgeC, label: "knowledgeC"},
+		recorded:    true,
+		last:        store.Capture{Kind: captureKindKnowledgeC, Status: "skipped"},
+	}
+	held := captureState{
+		captureKind: captureKind{kind: captureKindKnowledgeC, label: "knowledgeC"},
+		recorded:    true,
+		last:        store.Capture{Kind: captureKindKnowledgeC, Status: store.CaptureOK, FilesHeld: 1},
+	}
+
+	got, other := statusCaptureOutcome(skipped), statusCaptureOutcome(held)
+	t.Logf("skipped: %q\nalready held: %q", got, other)
+
+	if got == other {
+		t.Fatalf("a capture skipped by policy and one that looked and found everything already "+
+			"held both print %q, so a throttled snapshot is indistinguishable from an observation", got)
+	}
+	if strings.Contains(got, "nothing new") {
+		t.Errorf("a policy skip prints %q, which is the wording for a capture that ran and observed "+
+			"nothing new", got)
+	}
+	if !strings.Contains(got, "skipped") {
+		t.Errorf("a policy skip prints %q and never says it was skipped", got)
+	}
+}
+
+// And the fall-through itself, which is the actual defect: an unrecognised
+// status must not be reported in the words of a healthy one. `skipped` reached
+// this report before this file had ever heard of it, and it will not be the last
+// status to.
+func TestAnUnrecognisedCaptureStatusIsNotReportedAsHealthy(t *testing.T) {
+	unknown := captureState{
+		captureKind: captureKind{kind: captureKindBiome, label: "Biome"},
+		recorded:    true,
+		last:        store.Capture{Kind: captureKindBiome, Status: "some-later-status"},
+	}
+
+	got := statusCaptureOutcome(unknown)
+	t.Logf("an unrecognised status: %q", got)
+
+	if !strings.Contains(got, "some-later-status") {
+		t.Errorf("a status this report has never heard of prints %q, which does not name it", got)
+	}
+	if strings.Contains(got, "ok,") {
+		t.Errorf("a status this report has never heard of prints %q, which is the healthy wording", got)
+	}
+}

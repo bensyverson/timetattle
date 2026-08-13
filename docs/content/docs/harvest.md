@@ -370,6 +370,8 @@ store:     /Users/you/.timetattle/timetattle.db
 schema:    0007_capture_run.sql, applied 2026-08-01T15:04:08.783000Z
 schedule:  every 4h00m, from StartCalendarInterval in /Users/you/Library/LaunchAgents/com.example.harvest.plist
 stale:     6h00m, an interval and a half of that schedule
+evidence:  newest 2026-08-01 09:12:44, 12m ago
+           whether the machine was idle through that or the collection has stopped is not in this record
 last run:  2026-08-01 08:30:08, 55m ago
 
 source                 last run  status  inputs    seen    new  last ok
@@ -392,7 +394,7 @@ preserved in /Users/you/.timetattle/snapshots:
   Motion vault  39 files  1h21m ago  11m ago       ok, nothing new, 39 already …
   filedays      none      -          11m ago       nothing to capture on this m…
 
-every source ran and succeeded within the last 6h00m, and every capture held
+every source ran and succeeded within the last 6h00m, and every capture held, and the newest evidence in the store is 12m old
 ```
 
 That is the report **in an 80-column terminal**, where every column has shrunk
@@ -581,12 +583,25 @@ halves: what is on disk, and what the last capture recorded doing.
 | `nothing to capture on this machine` | It looked and there was nothing there: no Motion installed, no `filedays` roots configured, no such Biome stream. An observation, not a shrug. |
 | `partial, 3 preserved and some lost` | It preserved some of what it tried and lost the rest, with the reason named below the table. |
 | `failed` | It preserved nothing, with the reason named below the table. |
+| `skipped by policy, so nothing was looked at` | It did not run, deliberately: the snapshot is throttled, so its cadence is not welded to the harvest's. A **decision**, and not an observation about the source at all. |
 | `no capture recorded` | Nothing has ever recorded a capture of this kind. Reported and left to you to judge, like `never run` above. |
+| `a status this report does not recognise ("…")` | `capture_run` holds a status this report has never heard of. Named rather than described, because the alternative is describing it in the words of a healthy one. |
 
-The middle three are the ones that had nowhere to live before. **`ok, nothing
+The middle four are the ones that had nowhere to live before. **`ok, nothing
 new` and `no capture recorded` are the pair that matters**: they can describe
 byte-for-byte identical directories, and only the recorded row tells them
 apart.
+
+`skipped by policy` is a second pair with `ok, nothing new`, and a tighter one.
+Migration 0015's `CHECK` pins a skipped run to `files_new`, `files_held` and
+`bytes` all zero; a run that looked and found everything already held records
+`files_new` zero with `files_held` positive. One column apart in the table, and
+a world apart in meaning — one of them looked. Until 2026-08-13 this report fell
+through to the `ok` wording for any status it did not recognise, so a policy
+skip printed as `ok, nothing new`: a decision reported in the words of an
+observation. The last row above is the general fix, and matters more than the
+`skipped` row: a status this report has never heard of can no longer arrive
+wearing the all-clear.
 
 Staleness is checked **per capture** as well as for the harvest as a whole,
 because the two come apart in exactly the case this section is about.
@@ -709,6 +724,13 @@ fires on time and ingests nothing advances the staleness clock while the store
 stands still, and no bound derived from any schedule can catch that. Watching
 the store itself advance is a separate check.
 
+> **Closed 2026-08-13.** That separate check is now
+> [Whether evidence arrived](#whether-evidence-arrived-which-is-not-whether-a-harvest-ran),
+> below. The paragraph above still describes the *staleness bound* correctly —
+> it is derived from the schedule and it can only ever see harvests — so it is
+> left standing rather than edited. What has changed is that it is no longer the
+> only freshness check in the report.
+
 Staleness is not redundant with the failed-run check, and the incident that
 prompted this command is why. Because the old capture phase failed before
 `store.Open`, those three failed runs wrote **no rows at all** — the whole
@@ -722,6 +744,118 @@ newest run could have caught it. Since the fix, both would.
 > which means the whole source table, and the `last run` line with it, can stay
 > perfectly current while the capture feeding them has stopped. Only the age of
 > the last recorded capture catches that.
+
+### Whether evidence arrived, which is not whether a harvest ran
+
+Every check above reads `harvest_run`, so every one of them measures whether a
+**harvest ran**. A harvest that fires exactly on schedule and ingests nothing
+advances all of them while the store itself does not move. Measured on the live
+store on 2026-08-13 at 15:04Z:
+
+```console
+$ sqlite3 ~/.timetattle/timetattle.db \
+    "select max(started_at) from harvest_run;
+     select max(coalesce(ended_at, started_at)) from event;"
+2026-08-13T13:05:20.006382Z     # the newest harvest run, 1h59m old
+2026-08-13T02:52:15.089123Z     # the newest event, 12h12m old
+```
+
+and the report read *every source ran and succeeded within the last 6h00m, and
+every capture held*, and exited zero. Twelve hours with no evidence, and green.
+
+**The age of the newest evidence is reported and never judged.** 15:04Z was
+10:04 in the morning locally and the newest evidence was 21:52 the previous
+evening: asleep, then not yet at the desk, is a complete explanation and nothing
+in the store contradicts it. A rule that called twelve hours a fault would fire
+every single morning. What the age *does* do is take the unqualified all-clear
+away — the `evidence:` line above sits beside the schedule, the bottom line
+carries the figure, and a reader can no longer be handed a green report over a
+store that has not moved since yesterday.
+
+**What is reported is silence somebody witnessed.** A source's silence is
+measured as its **witnessed lag**: how far behind the newest evidence in the
+whole store its own newest evidence sits. The store's frontier does not move
+while nobody is recording, so a night, a weekend and a fortnight's holiday cost
+every source exactly nothing. A source falls behind only while some *other*
+source is recording — and that other source is the witness that the machine was
+alive and this one said nothing through it. That is an observation rather than
+an absence, and it is the whole of the distinction.
+
+It is judged against **that source's own history**, because the thirteen sources
+have nothing in common. Over each source's collected era on the live store the
+longest witnessed lag ranges from 12.33h to 70.00h, so any single global bound
+would be five times too tight at one end or six times too loose at the other.
+The rule is four times a source's own longest closed lag, with a floor of one
+harvest interval under it — derived from the same installed plist the staleness
+bound comes from, so it follows the agent down to hourly with nothing edited.
+The reason for a floor at all is that evidence cannot arrive faster than the
+harvest brings it in.
+
+```console
+$ go run ./scripts/quietperiod            # every source's own quiet, and the replay
+$ go run ./scripts/quietperiod -slack 1 -episodes
+```
+
+`quietperiod` is what the multiple of four was chosen with, replaying the store
+prequentially the way `runningcheck` calibrates the stranded-run rule. Over the
+fourteen-day record the rule reports 37 times at a multiple of 1, 17 at 2, 7 at
+4, 2 at 6 and none at 10. **There is no multiple that comes clean and still sees
+a stalled source, and there cannot be**: the maximum of a sample only ratchets
+upward, so the first occurrence of any new length of quiet is unprecedented
+whatever caused it. Four of the seven reports at the shipped multiple are the
+single weekend of 2026-08-08 to 08-10, when the machine was on and recording
+system activity while no commit, no task claim and no watched file was touched
+— and those are true statements rather than false alarms. It is a trade, and the
+right rate to re-measure it against is a longer store.
+
+**A source nothing can judge is reported as such.** A source with no closed
+quiet spell inside its own collected era, or fewer than twenty of them, gets no
+bound and is named on its own line as unjudged — neither healthy nor faulty.
+`blender-backups` and `motion-autosave` are both that on this machine: every
+event either of them holds is a file modification time from before this machine
+ever ran a harvest.
+
+**And the finding never names a cause.** Whether a source was quiet because it
+had nothing to say or because it has stopped working is not in the store, and
+the report says so in the same breath as the reading — exactly as the stale
+verdict says that `harvest_run` cannot tell a missed harvest from a machine that
+was not running:
+
+```console
+1 source recorded nothing while the store went on advancing:
+  knowledgec-appusage: nothing since 3d ago, while the store advanced 2d past it — 4.1 times the 12h20m it has ever been quiet for, across 8871 recorded quiet spells
+    whether it has nothing to say or has stopped working is not in this record
+2 sources recorded too little since collection began, so nothing here says what quiet looks like for them: blender-backups, motion-autosave
+nothing else is wrong: every source ran and every capture held within the last 6h00m, but 1 source stopped recording, above
+```
+
+**It does not set the exit status.** `status`'s contract is that a thing
+observed to be wrong fails and a thing never recorded is reported, and a
+witnessed silence is on the second side of that line: it is a true reading whose
+cause the report explicitly declines to name. What it does instead is replace
+the all-clear, which is the half that mattered.
+
+**How this reconciles with `dashboard`.** The two answer different questions and
+the difference subtracts exactly. On local 2026-08-13 the store held **0 events
+and 219 `harvest_run` rows**; `dashboard` therefore draws that day as *observed
+and idle* rather than unobserved, because its rule is recorded presence **or** a
+logged run ([the heatmap](dashboard.md)). Its Source Freshness section reports
+`knowledgec-appusage` as harvested `2h33m ago`, which is `store.Freshness` —
+the last successful *run*. `status` reports the same source as having stored
+nothing for 3d, which is `max(COALESCE(ended_at, started_at))` — the newest
+*event*. Between those two instants the source ran nine times and succeeded nine
+times:
+
+```console
+$ sqlite3 ~/.timetattle/timetattle.db \
+    "select count(*), sum(status='ok') from harvest_run
+      where source_id='knowledgec-appusage' and started_at > '2026-08-11T00:28:45';"
+9|9
+```
+
+Neither figure contradicts the other. What they share is that **`dashboard`'s
+observedness test still counts a harvest row as an observation**, which is the
+same weakness `status` carried, and it has not been changed here.
 
 ## Full Disk Access
 
