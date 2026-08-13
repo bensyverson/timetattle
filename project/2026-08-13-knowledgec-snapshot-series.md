@@ -278,6 +278,38 @@ output which one to read. This is the same hazard as the clipped window in
 `scripts/sleepcheck`: a comparison whose denominator is contaminated reads as
 reassuring precisely when it should not.
 
+**Which denominator, though — there are two, and they are not the same one.**
+Added on integration 2026-08-13, because the integrator conflated them while
+holding both figures and a later reader will too.
+
+`vs longest` above is over the WHOLE HISTORY of the stream in the store, and its
+maximum is 42.93h — the July stall. That is the contaminated denominator this
+section is about.
+
+`timetattle status` quotes a different figure. Its witnessed-lag bound is
+restricted to each source's own COLLECTED ERA, which for `knowledgec-appusage`
+begins 2026-07-30T17:01:55Z, and the July stall of 2026-07-27 to 07-29 falls
+before it. The era maximum is 12.33h — 12h20m, the figure `status` prints — and
+it runs 2026-08-08T13:04:13Z to 2026-08-09T01:23:52Z, which is Saturday 08:04 to
+Saturday 20:23 local. A weekend quiet spell, not a fault. Verified:
+
+```
+sqlite3 ~/.timetattle/timetattle.db "with e as (select distinct started_at from event where source_id='knowledgec-appusage' and started_at >= '2026-07-30T17:01:55'), g as (select lag(started_at) over (order by started_at) prev, started_at, (julianday(started_at)-julianday(lag(started_at) over (order by started_at)))*24 h from e) select prev, started_at, round(h,3) from g where h is not null order by h desc limit 5;"
+```
+
+So `status`'s denominator is CLEAN TODAY and this section's criticism does not
+transfer to it as written. What DOES transfer is the mechanism. The era
+restriction only excludes stalls that happened before collection began; it
+cannot exclude one that happens inside the era. The maximum of a sample only
+ratchets upward, so the first unnoticed stall after 2026-07-30 becomes the
+yardstick against which the next one is judged, and the check goes quietly
+blinder each time it fails to fire. The agent that built the check said the same
+thing from the other direction — that there is no multiple of the maximum that
+both stops firing on innocent silences and still sees a stalled source.
+
+Reporting against p99 as well as the maximum is the fix on both sides, and it is
+why this tool prints both. `status` does not yet.
+
 ---
 
 ## 5. The sibling streams, and the two different expiry mechanisms
