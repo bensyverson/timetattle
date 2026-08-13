@@ -40,6 +40,30 @@ package config
 // sQI of the task that added this file. A stated zero is refused by Validate,
 // so the pointer only ever means "unsaid".
 //
+// The omitempty and omitzero tags below are the WRITING half of that rule —
+// edit.go is what writes this section back. On a POINTER, omitempty omits only
+// the nil case: a pointer to zero is still written as 0, so a stated zero stays
+// stated and is refused by Validate as it should be. Period and Started need
+// the tags most, because neither is a pointer: without them a contract entry is
+// written carrying `"period": ""` and an hourly one carrying `"started": ""`,
+// which is an empty string standing in for something nobody said — the exact
+// confusion the Currency pointer exists to prevent, reintroduced by the writer.
+//
+// Measured, by removing all nine tags and running the package's tests: an
+// hourly entry is then written as `"currency": null, "rate": 150,
+// "budgeted_hours": 30, "period": "week", "contract_total": null,
+// "expected_hours": null, "started": ""`. That still LOADS — null reads back as
+// an unset pointer and "" as an unset date — so the cost is not a refusal but a
+// file that states six things nobody typed, three of them about the shape the
+// entry did not choose. What CANNOT load is the same file with zeros instead of
+// nulls, since `"contract_total": 0` makes the entry declare both shapes.
+//
+// The tags must NOT be copied on to Config's own fields. Sessions.PresenceSources
+// ships with a non-empty default, so a file stating [] means "none" while an
+// absent key means "unsaid"; omitempty cannot tell those apart and would
+// silently restore knowledgec-backlit the first time such a file was written
+// back.
+//
 // # Naming: engagements, not "clients"
 //
 // This package's own doc comment said these values would arrive as a "clients"
@@ -65,9 +89,9 @@ type Engagements struct {
 	// Clients maps a client name — the name the registry resolved and
 	// metrics prints, exactly as `-client` takes it — to that client's
 	// engagement.
-	Clients map[string]Engagement `json:"clients"`
+	Clients map[string]Engagement `json:"clients,omitempty"`
 	// Projects maps a project name, exactly as `-project` takes it.
-	Projects map[string]Engagement `json:"projects"`
+	Projects map[string]Engagement `json:"projects,omitempty"`
 }
 
 // IsEmpty reports whether anything is configured at all. It is the whole of
@@ -115,23 +139,23 @@ type Engagement struct {
 	// as "" is a person having tried to say something and said nothing, and
 	// Validate refuses one, where an absent key is simply unstated. Read it
 	// through CurrencyLabel, which flattens both to "".
-	Currency *string `json:"currency"`
+	Currency *string `json:"currency,omitempty"`
 
 	// Rate is the nominal hourly rate — shape (a). It is what is CHARGED per
 	// hour, which the contract shape's effective rate deliberately is not.
-	Rate *float64 `json:"rate"`
+	Rate *float64 `json:"rate,omitempty"`
 	// BudgetedHours is how many hours Period is meant to hold — shape (a).
-	BudgetedHours *float64 `json:"budgeted_hours"`
+	BudgetedHours *float64 `json:"budgeted_hours,omitempty"`
 	// Period is what BudgetedHours recurs over.
-	Period BudgetPeriod `json:"period"`
+	Period BudgetPeriod `json:"period,omitempty"`
 
 	// ContractTotal is the whole fixed value of the engagement — shape (b).
 	// It does not recur and it is not per period.
-	ContractTotal *float64 `json:"contract_total"`
+	ContractTotal *float64 `json:"contract_total,omitempty"`
 	// ExpectedHours is how many hours ContractTotal was priced against —
 	// shape (b). The dashboard burns this down against hours to date, which
 	// is why it is a total and never a per-period figure.
-	ExpectedHours *float64 `json:"expected_hours"`
+	ExpectedHours *float64 `json:"expected_hours,omitempty"`
 	// Started is the civil day the contract began — shape (b) only, and
 	// optional there.
 	//
@@ -144,7 +168,7 @@ type Engagement struct {
 	// than a silently incomplete figure.
 	//
 	// Unstated means the query reaches as far back as the store goes.
-	Started Date `json:"started"`
+	Started Date `json:"started,omitzero"`
 }
 
 // EngagementShape names which of the two shapes an entry declared.
