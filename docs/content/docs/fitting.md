@@ -293,10 +293,11 @@ it could is a step of at most `reach` and every such step is already inside a
 chain.
 
 Presence readings are kept where they overlap a kept chain's reach and only
-there, since darkness is subtracted instant by instant. Anything whose extent
-cannot be read at all is kept, because being wrong in the direction of carrying
-too much costs a little time and being wrong in the other direction changes an
-answer silently.
+there. Darkness acts on a single instant — the start of an observation it might
+suppress — so a reading that reaches no kept chain can change nothing inside a
+labelled day. Anything whose extent cannot be read at all is kept, because being
+wrong in the direction of carrying too much costs a little time and being wrong
+in the other direction changes an answer silently.
 
 Every run says what it removed:
 

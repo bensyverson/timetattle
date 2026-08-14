@@ -9,9 +9,15 @@ description: "Reading the backlight, the lock and application usage out of a pre
 `knowledgeC` is the SQLite database behind macOS's own usage reporting, and it
 is the only source Timetattle has that **directly observes an interval**.
 Everything else yields instants: a commit happens at a moment, a file is saved
-at a moment. The backlight going on and off is a span, observed as a span,
-which is why it is the denominator for everything else and the reason
-[harvesting](/docs/harvest/) cannot wait.
+at a moment. The backlight going on and off is a span, observed as a span — and
+because `knowledgeC` prunes itself within a month, [harvesting](/docs/harvest/)
+cannot wait.
+
+**It is not the denominator for anything.** That is worth saying at the top,
+because the stream is filed under the role name *presence* and the metric called
+[presence](/docs/metrics/) is a different quantity — the wall clock the sittings
+cover, clustered out of evidence. What the backlight observes is narrower than
+either, and [narrower than its own name](#what-a-dark-reading-actually-observed-which-is-a-lid).
 
 `internal/knowledgec` reads it. Four streams, four sources, one snapshot file:
 
@@ -67,6 +73,47 @@ be collapsed by accident. Conflating it with darkness deletes real work. On
 14:02:24 while Biome records dense application switching throughout; read as
 darkness, that is 1h27m of confirmed work gone. Every query written before this
 was understood collapsed it by selecting `WHERE value = 1`.
+
+## What a dark reading actually observed, which is a lid
+
+The four states are about *coverage* — which spans the sampler said something
+about. This is the separate question of what the something **means**, and the
+answer is much smaller than the stream's role name suggests.
+
+`/display/isBacklit` observes a **lid**. Lid state stands in for somebody being
+at the machine, which stands in for work being done — a proxy for a proxy — and
+neither step holds in the direction that deletes. **A video render with the
+backlight deliberately switched off is unambiguous work, and it leaves exactly
+the same trace as an empty room.** So does a compile, a long export, and a
+coding agent running unattended.
+
+This was learned the expensive way. The clustering used to treat observed
+darkness as an observation of *absence*: it split a sitting, subtracted the dark
+span from it, and dropped every evidence observation anchored inside it. That
+rule was written from one real case — a Motion autosave written at 2026-07-11
+17:53 with the screen off, which is evidence the application was running and
+none at all that a person was there — and it generalised from the one situation
+where the mechanism is the whole explanation. On the live store it reached
+**1** timer-written observation and **24,703** others, and deleted **35.8h** of
+engaged time. `go run ./scripts/darkcause` is the census, split by what wrote
+each observation.
+
+So a dark reading is now entitled to do exactly one thing: suppress an evidence
+observation anchored inside it that a **wall-clock timer** wrote. A timer's
+artifact asserts that an application was running and nothing about what was
+happening, so joined with a dark reading there is no evidence of work in either
+direction — which is true of no other mechanism. Everything else survives. See
+[what the clustering does with this stream](/docs/sessions/#observed-absent-observed-present-and-nothing-recorded).
+
+**Do not read a dark span as an idle machine, and do not reach for
+[Biome](/docs/app-focus/) to prove that it was.** Biome records application
+focus, and focus is a thing the window server stops reporting when the display
+stops lighting — so Biome's silence during darkness is the *same* fact counted
+twice, not a second witness to it. It is nearly total silence: of the 36,644
+Biome rows recorded since the backlight stream began, **132** begin inside
+observed darkness, which is 0.4%. That number is what the circular argument
+predicts and is therefore no evidence for it. Reproduce the count per source
+with `go run ./scripts/darkcause`.
 
 ## What the collector does not do
 

@@ -21,13 +21,27 @@ $ timetattle sessionize
 gap 15m0s, lead-in 5m0s, tail-out 5m0s
 presence: knowledgec-backlit
 ignored:  knowledgec-islocked, knowledgec-mediausage
-39593 observations read: 35158 evidence, 1571 presence, 2864 ignored
-395 observations had an endpoint that was never observed, and counted as an instant
-362 sittings, 230.3h presence, median 9m28s, p95 3h8m12s
-21.3h of that (9.2%) is margin: lead-in, tail-out and bridged silence
-observed absence: 416.3h recorded, 23.9h trimmed across 84 splits, 98 observations suppressed
+excluded: *.bz2, *.gz, *.log, /Users/you/git/Easley/reports/
+1757 observations excluded before clustering and not counted below:
+  86 SQLite sidecars, 1034 by "*.bz2", 100 by "*.gz", 19 by "*.log",
+  518 by "/Users/…/reports/"
+1088305 observations read: 1082008 evidence, 2161 presence, 4136 ignored
+748 observations had an endpoint that was never observed, and counted as an instant
+1181 sittings, 1243.8h presence, median 29m23s, p95 3h50m34s
+836.8h of that (67.3%) is margin: lead-in, tail-out and bridged silence
+observed absence: 640.3h recorded, 0.0h trimmed across 0 splits, 1 observations suppressed
 contested (read as lit and dark at once): 13.3h, trimmed from nothing
 ```
+
+The `excluded` lines appear because this machine has configured
+[exclusions](#excluding-machine-activity); the list ships empty, so a fresh
+install prints `excluded: (none)`.
+
+**Read the last three lines together.** Two thirds of that presence is margin
+the clustering invented rather than anything anybody observed, and the 640.3h of
+darkness the backlight recorded removed no time from any sitting and suppressed
+exactly one observation. Neither zero is a rounding artifact and neither is a
+sign the stream is broken; both are explained below.
 
 It captures nothing and reads no source. Everything it needs is already in the
 database, which is what makes it safe to run as often as an argument about the
@@ -89,7 +103,7 @@ Which is which is configuration, not code.
 | Role | What it does |
 | --- | --- |
 | **Evidence** | Clustered. Sittings are built out of it and nothing else. |
-| **Presence** | Bounds sittings and never creates them. |
+| **Presence** | Never creates a sitting, and no longer shortens one. All it does is suppress a timer-written observation recorded in observed darkness — [see below](#observed-absent-observed-present-and-nothing-recorded). |
 | **Ignored** | Read from the store and dropped. |
 
 `knowledgec-backlit` is the only stream treated as presence, and it is
@@ -126,49 +140,130 @@ Biome recorded dense application switching throughout: read as darkness, that is
 So presence acts in one direction only.
 
 - **Observed absent** — covered by an `off` reading and by no `on` reading —
-  splits a sitting and is subtracted from it, and an observation *anchored*
-  inside it is dropped. A Motion autosave is written by a wall-clock timer that
-  does not care whether anybody is there; the 2026-07-11 17:53 one was written
-  with the screen off during a break Ben independently recalls.
+  suppresses an evidence observation *anchored* inside it whose cause is a
+  **wall-clock timer**, and does nothing else. It does not split a sitting, it
+  is not subtracted from one, and it suppresses nothing written by any other
+  mechanism.
 - **Observed present** merges nothing. A lit screen between two observations
-  three hours apart is not a reason to call them one sitting.
+  three hours apart is not a reason to call them one sitting; it is a reason
+  presence will be larger than engaged time, which is the point of keeping the
+  two apart.
 - **Nothing recorded** does neither. The gap threshold decides alone, exactly as
   if the stream did not exist.
 
 Where the two readings **contradict** each other — knowledgeC writes both an
 `isBacklit=1` and an `isBacklit=0` row with identical endpoints at 2026-07-14
 09:01:12, and 636 `on` rows sit inside longer `off` rows in one snapshot —
-darkness is not established and nothing is trimmed. The report says how much
-time that covers, so a figure resting on it can be recognised as one.
+darkness is **not established** and nothing is suppressed. The report says how
+much time that covers, so a figure resting on contested readings can be
+recognised as one.
 
-### The fourth case, which the schema found
+### What a dark backlight actually observed, which is a lid
 
-Two dark spans inside one cluster cut it into three, and the middle piece can
-sit *between* two observations rather than containing either. Nothing observed
-work there and nothing observed darkness there. Emitting it would invent a
-sitting; counting it as trimmed would claim a reading nobody took. It is
-dropped, and reported.
+The first state used to do much more than it does. Darkness split a sitting, was
+subtracted from it, and dropped any observation anchored inside it — arguing
+from a Motion autosave written at 2026-07-11 17:53 with the screen off during a
+break: evidence that the application was running, and none at all that a person
+was there.
 
-This was not designed. It was caught by `CHECK (events > 0)` on the first real
-run, as a session resting on zero observations at 2026-07-09T23:37:36. It
-happens four times in the live store.
+That argument is sound about the autosave and unsound as a rule, because it
+generalises from the one case where the mechanism is the whole explanation.
+**A video render with the backlight deliberately switched off is unambiguous
+work, and it leaves exactly the same trace.** So does a compile, a long export,
+and a coding agent running unattended. Reading a dark screen as an absence of
+work deletes every one of them.
 
-### A fifth case, which the extraction found
+`knowledgec-backlit` observes a **lid**, and its role name promises more than it
+can deliver. Lid state stands in for somebody being at the machine, which stands
+in for work being done — a proxy for a proxy — and neither step holds in the
+direction that deletes. The three states above are still exactly right; the
+mistake was giving the first one a weight it cannot carry.
 
-A sitting of no duration — one point observation, no lead-in and no tail-out —
-used to disappear entirely if the backlight stream had recorded darkness
-**anywhere** in the run, including hours away from it. The subtraction that
-removes observed darkness dropped every zero-length span whenever it had
-anything at all to cut, and nothing counted the loss: no time was trimmed, so
-`TrimmedByAbsence` stayed at zero, and no piece was emitted, so
-`UnevidencedPieces` stayed at zero too. Silent, and in the direction of deleting
-real work.
+**Cause is what separates the two cases, and it was built for this.** An
+artifact written by a wall-clock timer asserts that an application was running
+and nothing whatever about what was happening; joined with a dark reading there
+is no evidence of work in either direction, which is true of no other mechanism.
+So the timer arm stays and everything else survives — including the **empty**
+cause, which means "not an artifact" rather than "nobody said" and which 868,924
+live `claude-transcripts` rows carry, and the **recovery** cause, whose
+evidentiary weight is documented as unmeasured and would otherwise be settled by
+default, in the direction of deleting work.
 
-A point survives now unless a cut actually contains it, read half-open, exactly
-as an observation's own suppression test reads it. **This changes no shipped
-number**: at the configured 5m lead-in and 5m tail-out no expanded cluster is
-ever zero-length, so the case arises only at zero margins. It is held by
+### What the old rule cost, and two things the figure does not say
+
+On the last derivation taken under it, the rule that was replaced suppressed
+**24,704** observations and trimmed **48.6h** — and exactly **one** of those
+24,704 was written by a timer. Across three projects it cost **35.8h** of
+engaged time. `go run ./scripts/darkcause` recounts that census against the live
+store, per cause and per source, computing darkness the way the clustering does
+rather than from the raw `off` rows; `timetattle metrics --all` either side of
+the change is where the hours came from.
+
+**It is not a rate.** The cost falls across the seven weeks the backlight stream
+covers, and it falls unevenly: the weekly deltas run 0.5, 0.3, 2.1, 5.0, 13.4,
+8.1, 6.4 hours (`timetattle metrics --all --by week`, differenced). Quoting any
+one week as typical misstates it by up to fortyfold.
+
+**And "1 timer observation" is not evidence the old rule was idle**, which is
+how it was first read. The store holds **38** timer-caused rows in total —
+Motion's autosave is the entire timer population — of which **23** fall after
+the backlight stream begins recording on 2026-07-02. Catching one of 23 is near
+the arithmetic ceiling, and the one it caught is the 2026-07-11 17:53 autosave
+the rule was written for. The old rule hit its design case. The argument for
+narrowing it was never that it caught too little; it is that the other 24,703
+were not timers, and were never evidence of absence.
+
+The narrowed rule still catches that design case on real data: the single
+observation the stored derivation reports as suppressed is that same autosave.
+
+### Engaged time is the headline, and the backlight is not in it
+
+This is why the change is confined to one arm rather than made configurable.
+**Engaged time answers "how much did I work on this", and it counts work done
+with the screen off exactly as it counts work done with the screen on.** An
+overrun on a fixed-price contract is not smaller because the render, the
+compile or the agent ran while the lid was shut.
+
+A **hands-on** figure — how much of that time somebody was at the keyboard for —
+is a different question with a smaller answer, and the backlight is the right
+instrument for *that* one. Nothing here computes it. The point is that darkness
+is entitled to affect it and not this.
+
+### Two failure modes that carving created, and that no longer exist
+
+Both are kept here because their counters are still in the schema and still
+printed, and a reader has to be able to tell **structurally zero** from
+**measured zero**. These two now read structurally zero: there is no mechanism
+left that could make them anything else.
+
+**A sitting resting on no observations.** Two dark spans inside one cluster cut
+it into three, and the middle piece could sit *between* two observations rather
+than containing either. Nothing observed work there and nothing observed
+darkness there — emitting it would invent a sitting, and counting it as trimmed
+would claim a reading nobody took, so it was dropped and reported. This was not
+designed: it was caught by `CHECK (events > 0)` on the first real run, as a
+session resting on zero observations at 2026-07-09T23:37:36, and it happened
+four times. Pieces were what darkness cut, and there are no pieces now, so
+`UnevidencedPieces` can no longer fire at all.
+
+**A point sitting deleted by darkness hours away from it.** A sitting of no
+duration — one point observation, no lead-in and no tail-out — used to disappear
+entirely if the backlight stream had recorded darkness **anywhere** in the run.
+The subtraction dropped every zero-length span whenever it had anything at all
+to cut, and nothing counted the loss: no time was trimmed, so `TrimmedByAbsence`
+stayed at zero, and no piece was emitted, so `UnevidencedPieces` stayed at zero
+too. Silent, and in the direction of deleting real work. It is held by
 `TestAPointSittingSurvivesDarknessRecordedElsewhereInTheDay`.
+
+**A cluster is now emitted whole**, and that half of the rule had to move with
+the suppression rather than separately. Keeping a non-timer observation while
+still carving darkness out of its cluster would retain the evidence and throw
+away the only time it could have occupied: the cluster shrinks to nothing, no
+sitting is emitted, and nothing counts the loss — a quieter deletion than the
+one the change exists to stop, and it would have stranded roughly 24,700 records
+on the live store. `TestEverySurvivingObservationLandsInASitting` pins the
+property that forbids it: **every observation is either suppressed and counted,
+or placed in a sitting.** There is no third outcome.
 
 ## Lead-in and tail-out
 
