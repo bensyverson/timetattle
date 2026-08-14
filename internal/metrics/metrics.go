@@ -53,11 +53,20 @@
 // Total and Observed, and a caller has to name which one it wants.
 //
 // Applied per project, that decomposition says something sharper than the
-// headline. Engaged.Observed counts only the project's OWN evidence, and every
-// source that can be attributed to a project — Claude transcripts, git, file
-// saves — emits INSTANTS. An instant observes no duration. So on the live store
-// every project's Engaged.Observed is zero, and 100% of every billable hour is
-// inferred by clustering. Corroborated is the third state: how much of a
+// headline. Engaged.Observed counts only the project's OWN evidence, and the
+// sources that carry the most of it — Claude transcripts, git, file saves —
+// emit INSTANTS, which observe no duration.
+//
+// THIS COMMENT USED TO CONCLUDE that every project's Engaged.Observed is
+// therefore zero and 100% of every billable hour is inferred. That was wrong,
+// and had been for some time before anyone noticed: not every attributable
+// source emits instants — job-claims are intervals and carry a project — so the
+// column has been non-zero on the live store for as long as they have been
+// collected. Measured 2026-08-14 with `timetattle metrics --all`: 178.7h
+// observed against 1216.0h absolute across all projects, so 85.3% is inferred
+// rather than 100%. A round number in a comment is worth re-measuring for
+// exactly this reason; the note further down predicted the same drift about a
+// different constant. Corroborated is the third state: how much of a
 // project's engaged time some source observed WITHOUT saying whose it was, a
 // Biome focus interval being the case. "acorn was observed working", "somebody
 // was observed working" and "nothing was recorded" are three answers, and this

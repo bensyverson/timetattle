@@ -29,14 +29,18 @@
 //   - EVIDENCE is anything that suggests work was being done. Sittings are
 //     built out of it and nothing else.
 //
-//   - PRESENCE bounds sittings and never creates them. knowledgec-backlit is
-//     the only stream this project treats as observing presence. It is
-//     deliberately excluded from evidence: fourteen hours of lit screen with
-//     no other trace is not fourteen hours of work, and clustering presence
-//     would make an evening of reading indistinguishable from an evening of
-//     building. It is also the reason engaged time and presence are two
-//     metrics rather than one (task IFmcU), which a single clustered stream
-//     could not express.
+//   - PRESENCE never creates a sitting, and since 2026-08-14 it barely touches
+//     one: all it may now do is suppress an observation a wall-clock timer
+//     wrote. The role kept its name, which is worth saying out loud because the
+//     name promises more than the stream can deliver — it USED to bound a
+//     sitting, subtracting darkness from it, and that is exactly what was
+//     retired. knowledgec-backlit is the only stream this project treats as
+//     observing presence. It is deliberately excluded from evidence: fourteen
+//     hours of lit screen with no other trace is not fourteen hours of work,
+//     and clustering presence would make an evening of reading
+//     indistinguishable from an evening of building. It is also the reason
+//     engaged time and presence are two metrics rather than one (task IFmcU),
+//     which a single clustered stream could not express.
 //
 //   - IGNORED sources are read from the store and then dropped. A source lands
 //     here when its MEANING is unestablished rather than when it is
