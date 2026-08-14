@@ -243,28 +243,34 @@ func TestAPointsOnlySyntheticDayStillReachesTheScreen(t *testing.T) {
 	}
 }
 
-// A day the backlight went dark in the middle of. The block ends where the
-// observation was still running, which nothing but presence can do.
-func TestObservedDarknessCutsABlockShortOnASyntheticDay(t *testing.T) {
+// A day the backlight went dark in the middle of. No block ends where the
+// observation was still running: darkness stopped cutting sittings on
+// 2026-08-14, because a dark backlight observes a closed lid and work carries on
+// behind one. This asserted the opposite until then, and the inversion is the
+// point — the assembled day must inherit the derivation's answer rather than
+// carry an idea of darkness of its own.
+func TestObservedDarknessDoesNotCutABlockShortOnASyntheticDay(t *testing.T) {
 	f := storefixture.New(t)
 	day, events := syntheticDay(t, f, f.DarknessDay)
 	if len(day.Blocks) == 0 {
 		t.Fatal("the darkness day produced no blocks")
 	}
-	cut := false
+	var covering int
 	for _, b := range day.Blocks {
 		for _, e := range events {
 			if e.Source != storefixture.EvidenceSource || e.Shape != source.Interval {
 				continue
 			}
+			covering++
 			if e.Start.Before(b.Span.End) && b.Span.End.Before(e.End) {
-				cut = true
+				t.Errorf("a block ends at %v, inside an interval still being observed at %v..%v",
+					b.Span.End, e.Start, e.End)
 			}
 		}
 	}
-	if !cut {
-		t.Error("no block ends inside an interval that was still being observed; " +
-			"the darkness did not reach the assembled day")
+	if covering == 0 {
+		t.Error("the darkness day reached the assembled day with no evidence interval at all, " +
+			"so this asserts nothing")
 	}
 }
 

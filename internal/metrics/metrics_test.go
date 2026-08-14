@@ -428,31 +428,58 @@ func TestNoProjectIsCreditedMoreThanThePresenceItSitsIn(t *testing.T) {
 	}
 }
 
-// A stretch the screen was observed dark across is not presence, and metrics
-// must inherit that rather than re-deriving it. The clustering already splits
-// and trims; this asserts the trim survives into the totals.
-func TestObservedDarknessIsNotCountedAsPresence(t *testing.T) {
+// A stretch the screen was observed dark across is still work, and metrics must
+// inherit that rather than re-deriving anything.
+//
+// This asserted the reverse until 2026-08-14 — the dark span was subtracted and
+// presence fell from 22m to 18m. The backlight observes a LID, not a person and
+// not a machine at rest: a render, an export or an unattended agent goes on
+// producing exactly these observations with the screen switched off, so a dark
+// reading is not a reason to delete the time around it. `point` here is a
+// claude-transcripts record, which is the population this turns on.
+func TestObservedDarknessIsStillCountedAsPresence(t *testing.T) {
 	dark := source.NewInterval(at(10, 6), at(10, 10), source.Identity{}, "knowledgec-backlit")
 	dark.State = "off"
 
-	// 10:00 and 10:12 are twelve minutes apart, inside the gap, so without the
-	// dark reading they are one sitting running 09:55–10:17.
+	// 10:00 and 10:12 are twelve minutes apart, inside the gap, so with or
+	// without the dark reading they are one sitting running 09:55–10:17.
 	lit := compute(t, []source.Event{point(at(10, 0), "acorn"), point(at(10, 12), "acorn")})
-	trimmed := compute(t, []source.Event{point(at(10, 0), "acorn"), point(at(10, 12), "acorn"), dark})
+	darkened := compute(t, []source.Event{point(at(10, 0), "acorn"), point(at(10, 12), "acorn"), dark})
 
 	if want := 22 * time.Minute; lit.Presence.Total != want {
 		t.Fatalf("presence without the dark reading = %v, want %v", lit.Presence.Total, want)
 	}
-	if !(trimmed.Presence.Total < lit.Presence.Total) {
-		t.Errorf("presence with an observed dark span is %v against %v without it; the trim was lost",
-			trimmed.Presence.Total, lit.Presence.Total)
+	if darkened.Presence.Total != lit.Presence.Total {
+		t.Errorf("presence with an observed dark span is %v against %v without it; a dark backlight "+
+			"must not remove time from the headline", darkened.Presence.Total, lit.Presence.Total)
 	}
-	if want := 18 * time.Minute; trimmed.Presence.Total != want {
-		t.Errorf("presence = %v, want %v (09:55–10:06 and 10:10–10:17)", trimmed.Presence.Total, want)
+	if acorn := projectOf(t, darkened, "acorn"); acorn.Engaged.Total != darkened.Presence.Total {
+		t.Errorf("acorn engaged %v against %v of presence; a project's own clustering must see the "+
+			"same darkness the same way", acorn.Engaged.Total, darkened.Presence.Total)
 	}
-	if acorn := projectOf(t, trimmed, "acorn"); acorn.Engaged.Total != trimmed.Presence.Total {
-		t.Errorf("acorn engaged %v against %v of presence; a project's own clustering must be trimmed "+
-			"by the same darkness", acorn.Engaged.Total, trimmed.Presence.Total)
+}
+
+// The half that survives, in the same package, so that "darkness does nothing"
+// cannot be read off the test above. A Motion autosave is written by a
+// wall-clock timer whether or not anyone is there, and joined with a dark
+// reading it evidences nothing in either direction.
+func TestATimerArtifactWrittenInDarknessIsNotCountedAsPresence(t *testing.T) {
+	dark := source.NewInterval(at(10, 6), at(10, 10), source.Identity{}, "knowledgec-backlit")
+	dark.State = "off"
+	autosave := source.NewPoint(at(10, 8), source.Identity{Project: "acorn"}, "motion-autosave")
+	autosave.Locator = "/Users/you/git/acorn/a.motn"
+	autosave.Cause = source.CauseTimer
+
+	alone := compute(t, []source.Event{autosave})
+	inDark := compute(t, []source.Event{autosave, dark})
+
+	if want := 10 * time.Minute; alone.Presence.Total != want {
+		t.Fatalf("an autosave with no presence reading scored %v, want %v", alone.Presence.Total, want)
+	}
+	if inDark.Presence.Total != 0 {
+		t.Errorf("presence = %v, want 0: the only observation was a timer artifact written with the "+
+			"screen off, which evidences that Motion was running and nothing else",
+			inDark.Presence.Total)
 	}
 }
 

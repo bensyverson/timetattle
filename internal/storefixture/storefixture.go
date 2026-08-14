@@ -37,21 +37,27 @@
 //   - A concurrent-project day. A quarter of real days carry two or more
 //     projects and the maximum is nine, so a corpus of one project per day would
 //     let a whole class of allocation bug through.
-//   - Observed darkness cutting a sitting in the MIDDLE of an observed stretch.
-//     Real, found 2026-07-28: a sitting ends three seconds before the end of the
-//     focus interval containing it, because the backlight went dark. Nothing but
-//     presence can end a sitting inside evidence, so nothing else tests the
-//     trim.
+//   - Observed darkness falling in the MIDDLE of an observed stretch. Real,
+//     found 2026-07-28: the backlight goes dark three seconds before the end of
+//     the focus interval containing it. The day also carries a timer-written
+//     autosave inside the same dark stretch, because darkness now treats the two
+//     differently and one fixture has to pose both — the interval and the saves
+//     around it run straight through, and the autosave is suppressed. Until
+//     2026-08-14 the dark reading cut the sitting short instead; the shape is
+//     kept and the expectation inverted, so what changed stays legible.
 //   - A points-only day, with no duration-bearing evidence at all. That regime
 //     holds 75.7% of engaged time, and an isolated save with no neighbours has
 //     no span of its own: without lead-in and tail-out a day of creative work
 //     disappears entirely.
 //   - A span lying BETWEEN two observations rather than containing either.
-//     Two dark stretches inside one cluster leave a middle piece that no
-//     observation reaches. It is emitted as a sitting nothing evidenced unless
-//     it is dropped. This was found by a CHECK constraint on a real run rather
-//     than by a test, and the invariant was written in the code as a comment and
-//     was false.
+//     Two dark stretches inside one cluster left a middle piece that no
+//     observation reached, and it went to the database as a sitting nothing
+//     evidenced. Found by a CHECK constraint on a real run rather than by a
+//     test, while the invariant sat in the code as a comment and was false.
+//     Darkness stopped carving clusters on 2026-08-14, so the shape no longer
+//     produces a piece at all. It is kept because the INVARIANT is still
+//     enforced by that constraint and must not depend on the route by which
+//     sittings are built.
 //
 // Beside those: a superseded horizon (so the canonical read has something to
 // collapse), a live horizon and a bare stop (the two unbounded reasons that
@@ -271,7 +277,9 @@ type Fixture struct {
 	// ConcurrentDay carries three projects interleaved.
 	ConcurrentDay sessions.Day
 	// DarknessDay carries a dark stretch that begins three seconds before
-	// the end of the focus interval containing it.
+	// the end of the focus interval containing it, and a timer-written
+	// autosave inside it. The interval and the saves around it survive the
+	// darkness; the autosave is the one thing it still suppresses.
 	DarknessDay sessions.Day
 	// PointsOnlyDay carries instants and no duration-bearing evidence at all.
 	PointsOnlyDay sessions.Day
@@ -522,8 +530,23 @@ func Events() []source.Event {
 
 	// --- The darkness day. The dark stretch begins three seconds before the
 	// end of the focus interval containing it, which is the shape found in the
-	// real corpus on 2026-07-28. Nothing but presence can end a sitting inside
-	// an interval that was still being observed.
+	// real corpus on 2026-07-28.
+	//
+	// It carries BOTH cases darkness now has to be told apart, because the
+	// difference between them is the whole of the rule:
+	//
+	//   - The autosave at 11:45 is written by a wall-clock timer inside the
+	//     dark stretch. It asserts that Motion was running and nothing about
+	//     whether work was happening, so it is suppressed and counted.
+	//   - The focus interval running to 11:20 crosses into the same darkness,
+	//     and the saves either side of it are user-action. None of them is
+	//     touched: the sitting runs straight through the dark stretch, because
+	//     a dark backlight observed a closed lid and a closed lid is not an
+	//     observation that nobody was working.
+	//
+	// Until 2026-08-14 darkness cut the sitting short inside that still-running
+	// interval, and this day existed to demonstrate it. The shape is kept and
+	// the expectation inverted, so what changed stays legible.
 	out = append(out,
 		lit(5, 9, 30, 0, 11, 19, 57),
 		dark(5, 11, 19, 57, 12, 40, 0),
@@ -531,6 +554,7 @@ func Events() []source.Event {
 		focus(5, 10, 0, 11, 20, appForge, docDraft),
 		focus(5, 12, 45, 13, 40, appMosaic, docPlates),
 		saved(5, 10, 45, ProjectQuarry, docDraft, appForge),
+		autosaved(5, 11, 45, docDraft, appForge),
 		saved(5, 13, 20, ProjectMeadow, docPlates, appMosaic),
 	)
 
