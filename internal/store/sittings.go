@@ -20,12 +20,17 @@ package store
 // times in three separate tools, always in the direction of reporting work as
 // absent because nobody looked.
 //
-// That is why the derivation is read across the WHOLE table and the sittings
-// only within the window. Reading the parameters from the windowed rows would
-// make an empty Sunday indistinguishable from an empty database.
+// That is why the derivation is read from its own row and the sittings only
+// within the window. Until migration 0016 the derivation was restated on every
+// session row and had to be read across the whole table instead — which almost
+// worked, and lost the case a run row makes plain: a derivation that produced
+// NO sittings wrote no rows, and so reported itself as no derivation at all.
+// `timetattle sessionize -from <after the last event>` reaches it.
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -47,12 +52,12 @@ import (
 // OVERLAP rather than containment: a sitting that began before it and ended
 // inside it describes time during it.
 //
-// It refuses a table whose rows disagree about the derivation. That cannot
-// happen through ReplaceDerived, which rebuilds wholesale inside one
-// transaction; it can happen through a hand-written INSERT, and a mixture reads
-// as a perfectly ordinary set of sittings with half of them measured against a
-// different model. Derived can carry one Params, so the alternative to refusing
-// is returning one of the two as though it described all the rows.
+// A table holding two derivations no longer has to be refused, because it can
+// no longer be written: migration 0016 put the derivation on one row under
+// `CHECK (id = 1)`, and every sitting references it. Reconciling a mixture on
+// the way out — which is what this did across 1557 rows on every read — was the
+// cost of the parameters being restated, and the mixture it caught was one only
+// a hand-written INSERT could produce.
 func (s *Store) Sittings(ctx context.Context, from, to time.Time) (sittings.Derived, error) {
 	out, err := s.derivation(ctx)
 	if err != nil {
@@ -94,96 +99,98 @@ func (s *Store) Sittings(ctx context.Context, from, to time.Time) (sittings.Deri
 	return out, rows.Err()
 }
 
-// derivation reads the parameters every row was derived under, from the whole
-// table rather than from a window, and refuses a table holding more than one.
+// derivation reads the one row that says what this store's sittings were
+// derived with, drawn from, and what the derivation did.
 //
-// The parameters are restated on every row deliberately — migration 0003 says
-// why at length: a single shared parameter row would be tidier and would make
-// it possible to produce a session span separated from its parameters, which is
-// a span with no meaning. The cost is that they have to be reconciled on the
-// way out, which is this.
+// Migration 0016 made this one row. Before it the nine columns were restated on
+// every session row, which meant a SELECT DISTINCT across 1557 rows on every
+// read and a reconciliation that had to refuse a table disagreeing with itself.
+// Both are gone: `CHECK (id = 1)` makes a second derivation unrepresentable, and
+// derived_session.run_id references this row, so a sitting cannot exist without
+// it.
+//
+// NO ROW means nothing has been derived. That is the only thing it can mean now,
+// and it is a stronger statement than it was: a derivation that produced no
+// sittings still writes this row, so "the model ran and found none" is a row and
+// no longer an absence.
 func (s *Store) derivation(ctx context.Context) (sittings.Derived, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT computed_at, gap_micros,
-		lead_in_micros, tail_out_micros, presence_sources, ignore_sources,
-		exclude_patterns, corpus_from, corpus_to
-		FROM derived_session ORDER BY computed_at`)
-	if err != nil {
-		// A store that has not run 0010 has no corpus columns, and a read-only
+	var (
+		out                            sittings.Derived
+		computed                       string
+		gapUS, leadUS, tailUS          int64
+		presenceSources, ignoreSources string
+		policy                         string
+		exclude, corpusFrom, corpusTo  string
+		st                             sittings.Stats
+		trimmedUS, droppedUS           int64
+		contestedUS, absenceUS         int64
+	)
+	err := s.db.QueryRowContext(ctx, `SELECT computed_at, gap_micros,
+		lead_in_micros, tail_out_micros, presence_sources, ignore_sources, darkness_policy,
+		exclude_patterns, corpus_from, corpus_to,
+		evidence_observations, presence_observations, ignored_observations,
+		unbounded_observations, presence_without_span, merged_by_expansion,
+		split_by_absence, trimmed_by_absence_micros, suppressed_by_absence,
+		unevidenced_pieces, unevidenced_dropped_micros,
+		contested_micros, observed_absence_micros
+		FROM derived_session_run WHERE id = 1`).
+		Scan(&computed, &gapUS, &leadUS, &tailUS, &presenceSources, &ignoreSources, &policy,
+			&exclude, &corpusFrom, &corpusTo,
+			&st.Evidence, &st.Presence, &st.Ignored,
+			&st.Unbounded, &st.PresenceWithoutSpan, &st.MergedByExpansion,
+			&st.SplitByAbsence, &trimmedUS, &st.SuppressedByAbsence,
+			&st.UnevidencedPieces, &droppedUS,
+			&contestedUS, &absenceUS)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// Nothing has been derived. The zero Derived says so, and saying so is
+		// not the same as saying the window was empty.
+		return sittings.Derived{}, nil
+	case err != nil:
+		// A store that has not run 0016 has no such table, and a read-only
 		// handle applies no migration. That is a third state — not "nothing
 		// derived", not "here is the derivation" — and it deserves its own
-		// sentence rather than a complaint naming a column. The version is
+		// sentence rather than a complaint naming a table. The version is
 		// looked up only on the failure path, so the ordinary read pays
 		// nothing for it.
-		if schema, serr := s.Schema(ctx); serr == nil && schema.Version < 10 {
+		if schema, serr := s.Schema(ctx); serr == nil && schema.Version < 16 {
 			return sittings.Derived{}, fmt.Errorf(
-				"%s is at migration %d, and the corpus a derivation was drawn from "+
-					"(the exclude list, and the window) arrived in 0010. Its stored sittings "+
-					"were computed under an exclude list nobody recorded, so they cannot be "+
-					"read as having excluded nothing; open the store for writing once to "+
-					"migrate it, then rebuild with `timetattle sessionize`",
+				"%s is at migration %d, and what a derivation DID — how much time the "+
+					"darkness rule trimmed, how many observations it suppressed, and under "+
+					"which rule — arrived in 0016. Its stored sittings recorded only what "+
+					"they were given, so those figures cannot be read as zero; open the "+
+					"store for writing once to migrate it, then rebuild with "+
+					"`timetattle sessionize`",
 				s.path, schema.Version)
 		}
 		return sittings.Derived{}, fmt.Errorf("read the derivation in %s: %w", s.path, err)
 	}
-	defer rows.Close()
 
-	var (
-		out   sittings.Derived
-		found bool
-	)
-	for rows.Next() {
-		var (
-			computed                       string
-			gapUS, leadUS, tailUS          int64
-			presenceSources, ignoreSources string
-			exclude, corpusFrom, corpusTo  string
-		)
-		if err := rows.Scan(&computed, &gapUS, &leadUS, &tailUS, &presenceSources, &ignoreSources,
-			&exclude, &corpusFrom, &corpusTo); err != nil {
-			return sittings.Derived{}, fmt.Errorf("read the derivation in %s: %w", s.path, err)
-		}
-		at, err := parseStoredTime(computed)
-		if err != nil {
-			return sittings.Derived{}, err
-		}
-		p := sittings.Params{
-			Gap:             time.Duration(gapUS) * time.Microsecond,
-			LeadIn:          time.Duration(leadUS) * time.Microsecond,
-			TailOut:         time.Duration(tailUS) * time.Microsecond,
-			PresenceSources: splitSources(presenceSources),
-			IgnoreSources:   splitSources(ignoreSources),
-		}
-		c, err := s.corpus(exclude, corpusFrom, corpusTo)
-		if err != nil {
-			return sittings.Derived{}, err
-		}
-		if !found {
-			out.Params, out.Corpus, out.ComputedAt, found = p, c, at, true
-			continue
-		}
-		if !out.Params.Equal(p) || !out.ComputedAt.Equal(at) {
-			return sittings.Derived{}, fmt.Errorf(
-				"derived_session in %s holds rows from more than one derivation "+
-					"(%s at a gap of %v, and %s at a gap of %v); "+
-					"rebuild it with `timetattle sessionize` rather than reading a mixture",
-				s.path, formatTime(out.ComputedAt), out.Params.Gap, formatTime(at), p.Gap)
-		}
-		// The corpus is checked separately so the complaint can name what
-		// actually differs. Two rows agreeing on every parameter and
-		// disagreeing on what was excluded are still two derivations, and the
-		// gap in the message above would be identical in both — which is how a
-		// reader comes to believe the table is one answer when half of it was
-		// drawn from observations the other half never saw.
-		if !out.Corpus.Equal(c) {
-			return sittings.Derived{}, fmt.Errorf(
-				"derived_session in %s holds rows drawn from more than one corpus "+
-					"(one excluding %v over %s, another excluding %v over %s); "+
-					"rebuild it with `timetattle sessionize` rather than reading a mixture",
-				s.path, out.Corpus.Canonical().Exclude, describeWindow(out.Corpus),
-				c.Canonical().Exclude, describeWindow(c))
-		}
+	at, err := parseStoredTime(computed)
+	if err != nil {
+		return sittings.Derived{}, err
 	}
-	return out, rows.Err()
+	c, err := s.corpus(exclude, corpusFrom, corpusTo)
+	if err != nil {
+		return sittings.Derived{}, err
+	}
+	st.TrimmedByAbsence = time.Duration(trimmedUS) * time.Microsecond
+	st.UnevidencedDropped = time.Duration(droppedUS) * time.Microsecond
+	st.Contested = time.Duration(contestedUS) * time.Microsecond
+	st.ObservedAbsence = time.Duration(absenceUS) * time.Microsecond
+
+	out.ComputedAt = at
+	out.Corpus = c
+	out.Stats = st
+	out.DarknessPolicy = sittings.DarknessPolicy(policy)
+	out.Params = sittings.Params{
+		Gap:             time.Duration(gapUS) * time.Microsecond,
+		LeadIn:          time.Duration(leadUS) * time.Microsecond,
+		TailOut:         time.Duration(tailUS) * time.Microsecond,
+		PresenceSources: splitSources(presenceSources),
+		IgnoreSources:   splitSources(ignoreSources),
+	}
+	return out, nil
 }
 
 // corpus reads the three stored corpus columns back.

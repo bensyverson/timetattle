@@ -22,6 +22,32 @@ import (
 // state the property as one the STORE holds, so that a third derivation gets it
 // without being told.
 
+// clearAndOpenDerivation is the first half of every rebuild below: it clears
+// whatever derivation is there and writes the new one's row.
+//
+// It is one DELETE and not two. derived_session.run_id references
+// derived_session_run ON DELETE CASCADE, so clearing the derivation clears its
+// sittings — which is the property these tests are about, expressed in the
+// schema rather than in the discipline of whoever writes the next rebuild.
+func clearAndOpenDerivation(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session_run`); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO derived_session_run
+		(id, computed_at, gap_micros, lead_in_micros, tail_out_micros,
+		 presence_sources, ignore_sources, darkness_policy,
+		 exclude_patterns, corpus_from, corpus_to,
+		 evidence_observations, presence_observations, ignored_observations,
+		 unbounded_observations, presence_without_span, merged_by_expansion,
+		 split_by_absence, trimmed_by_absence_micros, suppressed_by_absence,
+		 unevidenced_pieces, unevidenced_dropped_micros,
+		 contested_micros, observed_absence_micros)
+		VALUES (1, '2026-07-11T09:00:00.000000Z', 900000000, 0, 0, '', '',
+		        'suppress-all-and-trim', '[]', '', '',
+		        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`)
+	return err
+}
+
 // insertSession writes one legal derived_session row, distinguished by the
 // second it starts at. derived_session is used rather than a table invented for
 // the test because a real table brings its real CHECKs, and one of the failures
@@ -30,10 +56,8 @@ func insertSession(ctx context.Context, tx *sql.Tx, second int) error {
 	at := fmt.Sprintf("2026-07-11T09:%02d:00.000000Z", second)
 	end := fmt.Sprintf("2026-07-11T09:%02d:30.000000Z", second)
 	_, err := tx.ExecContext(ctx, `INSERT INTO derived_session
-		(started_at, ended_at, events, sources, margin_micros, computed_at,
-		 gap_micros, lead_in_micros, tail_out_micros, presence_sources, ignore_sources,
-		 exclude_patterns, corpus_from, corpus_to)
-		VALUES (?, ?, 1, 'test', 0, ?, 900000000, 0, 0, '', '', '[]', '', '')`, at, end, at)
+		(run_id, started_at, ended_at, events, sources, margin_micros)
+		VALUES (1, ?, ?, 1, 'test', 0)`, at, end)
 	return err
 }
 
@@ -42,7 +66,7 @@ func insertSession(ctx context.Context, tx *sql.Tx, second int) error {
 func seedDerivation(t *testing.T, f fixture, n int) {
 	t.Helper()
 	err := f.ReplaceDerived(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session`); err != nil {
+		if err := clearAndOpenDerivation(ctx, tx); err != nil {
 			return err
 		}
 		for i := range n {
@@ -98,7 +122,7 @@ func TestAFailedReplacementLeavesThePreviousDerivationIntact(t *testing.T) {
 
 	boom := errors.New("the derivation ran out of evidence halfway")
 	err := f.ReplaceDerived(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session`); err != nil {
+		if err := clearAndOpenDerivation(ctx, tx); err != nil {
 			return err
 		}
 		// Two rows of the new derivation, deliberately starting later than the
@@ -134,7 +158,7 @@ func TestAReplacementTheDatabaseRefusesLeavesThePreviousDerivationIntact(t *test
 	seedDerivation(t, f, 4)
 
 	err := f.ReplaceDerived(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session`); err != nil {
+		if err := clearAndOpenDerivation(ctx, tx); err != nil {
 			return err
 		}
 		if err := insertSession(ctx, tx, 40); err != nil {
@@ -167,7 +191,7 @@ func TestAPanicDuringAReplacementLeavesThePreviousDerivationIntact(t *testing.T)
 			}
 		}()
 		_ = f.ReplaceDerived(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session`); err != nil {
+			if err := clearAndOpenDerivation(ctx, tx); err != nil {
 				return err
 			}
 			if err := insertSession(ctx, tx, 50); err != nil {
@@ -197,14 +221,14 @@ func TestAFailedReplacementDoesNotWedgeTheStore(t *testing.T) {
 
 	boom := errors.New("the derivation ran out of evidence halfway")
 	_ = f.ReplaceDerived(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session`); err != nil {
+		if err := clearAndOpenDerivation(ctx, tx); err != nil {
 			return err
 		}
 		return boom
 	})
 
 	err := f.ReplaceDerived(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session`); err != nil {
+		if err := clearAndOpenDerivation(ctx, tx); err != nil {
 			return err
 		}
 		return insertSession(ctx, tx, 7)

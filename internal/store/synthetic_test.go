@@ -52,8 +52,10 @@ func TestSittingsAgreesWithTheSyntheticTableItReads(t *testing.T) {
 		FROM derived_session`).Scan(&rows, &hours); err != nil {
 		t.Fatalf("count derived_session: %v", err)
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT computed_at, gap_micros,
-		lead_in_micros, tail_out_micros, presence_sources, ignore_sources FROM derived_session)`).
+	// One row, not one DISTINCT combination across 1557 of them. Migration 0016
+	// moved the derivation onto its own singleton row, so counting it is
+	// counting rows rather than reconciling columns.
+	if err := db.QueryRow(`SELECT COUNT(*) FROM derived_session_run`).
 		Scan(&derivation); err != nil {
 		t.Fatalf("count the derivations: %v", err)
 	}

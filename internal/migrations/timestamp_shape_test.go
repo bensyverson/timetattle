@@ -169,15 +169,18 @@ var tsColumns = []tsColumn{
 	},
 	{
 		table: "derived_session", column: "started_at",
-		write: func(t *testing.T, d *sql.DB, v any) error { return tsSession(d, v, tsCeil, tsGood) },
+		write: func(t *testing.T, d *sql.DB, v any) error { return tsSession(d, v, tsCeil) },
 	},
 	{
 		table: "derived_session", column: "ended_at",
-		write: func(t *testing.T, d *sql.DB, v any) error { return tsSession(d, tsFloor, v, tsGood) },
+		write: func(t *testing.T, d *sql.DB, v any) error { return tsSession(d, tsFloor, v) },
 	},
+	// computed_at and the corpus bounds moved to derived_session_run in 0016,
+	// which is where the derivation now lives; they are the same three columns
+	// under a new table name. See tsSessionRun.
 	{
-		table: "derived_session", column: "computed_at",
-		write: func(t *testing.T, d *sql.DB, v any) error { return tsSession(d, tsFloor, tsCeil, v) },
+		table: "derived_session_run", column: "computed_at",
+		write: func(t *testing.T, d *sql.DB, v any) error { return tsSessionRun(d, v, "", "") },
 	},
 	// The corpus bounds, added by 0010. They are NOT NULL and their absent
 	// state is the empty string rather than a NULL: "unbounded" is a value
@@ -186,15 +189,15 @@ var tsColumns = []tsColumn{
 	// row a writeAbsent would insert cannot exist, and the empty case is
 	// exercised in derivation_corpus_test.go where it belongs.
 	{
-		table: "derived_session", column: "corpus_from",
+		table: "derived_session_run", column: "corpus_from",
 		write: func(t *testing.T, d *sql.DB, v any) error {
-			return tsSessionCorpus(d, tsFloor, tsCeil, tsGood, v, "")
+			return tsSessionRun(d, tsGood, v, "")
 		},
 	},
 	{
-		table: "derived_session", column: "corpus_to",
+		table: "derived_session_run", column: "corpus_to",
 		write: func(t *testing.T, d *sql.DB, v any) error {
-			return tsSessionCorpus(d, tsFloor, tsCeil, tsGood, "", v)
+			return tsSessionRun(d, tsGood, "", v)
 		},
 	},
 	{
@@ -315,15 +318,41 @@ func cpInsert(d *sql.DB, effectiveFrom, recordedAt any) error {
 	return err
 }
 
-// tsSession writes one derived_session with the three timestamps spelled by the
-// caller and every other column at something the schema accepts.
+// tsSession writes one derived_session with its two timestamps spelled by the
+// caller, and the derivation it hangs off.
 //
-// It writes the corpus columns 0010 added at their unbounded values — "[]" for
-// "this derivation excluded nothing" and "" for "no window" — because they are
-// NOT NULL and this helper's subject is the timestamps. The corpus bounds have
-// their own entries in tsColumns below.
-func tsSession(d *sql.DB, started, ended, computed any) error {
-	return tsSessionCorpus(d, started, ended, computed, "", "")
+// The run row comes first because 0016 made it have to: run_id is NOT NULL and
+// references derived_session_run, so a sitting cannot exist before the
+// derivation that produced it. Its own timestamps are written at values the
+// schema accepts, because this helper's subject is the sitting's endpoints;
+// derived_session_run.computed_at and the corpus bounds have their own entries
+// in tsColumns above and go through tsSessionRun.
+func tsSession(d *sql.DB, started, ended any) error {
+	if err := tsSessionRun(d, tsGood, "", ""); err != nil {
+		return err
+	}
+	_, err := d.Exec(`INSERT INTO derived_session
+		(run_id, started_at, ended_at, events, sources, margin_micros)
+		VALUES (1, ?, ?, 3, 'biome', 0)`, started, ended)
+	return err
+}
+
+// tsSessionRun writes the one derivation row with its three timestamps spelled
+// by the caller and every other column — thirteen statistics included — at
+// something the schema accepts.
+func tsSessionRun(d *sql.DB, computed, from, to any) error {
+	_, err := d.Exec(`INSERT INTO derived_session_run
+		(id, computed_at, gap_micros, lead_in_micros, tail_out_micros,
+		 presence_sources, ignore_sources, darkness_policy,
+		 exclude_patterns, corpus_from, corpus_to,
+		 evidence_observations, presence_observations, ignored_observations,
+		 unbounded_observations, presence_without_span, merged_by_expansion,
+		 split_by_absence, trimmed_by_absence_micros, suppressed_by_absence,
+		 unevidenced_pieces, unevidenced_dropped_micros,
+		 contested_micros, observed_absence_micros)
+		VALUES (1, ?, 900000000, 0, 0, '', '', 'suppress-all-and-trim', '[]', ?, ?,
+		        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`, computed, from, to)
+	return err
 }
 
 // tsSessionBefore0010 writes a derived_session into a schema that has not yet
@@ -338,17 +367,6 @@ func tsSessionBefore0010(d *sql.DB, started, ended, computed any) error {
 	return err
 }
 
-// tsSessionCorpus is tsSession with the corpus window spelled by the caller.
-func tsSessionCorpus(d *sql.DB, started, ended, computed, from, to any) error {
-	_, err := d.Exec(`INSERT INTO derived_session
-		(started_at, ended_at, events, sources, margin_micros, computed_at,
-		 gap_micros, lead_in_micros, tail_out_micros, presence_sources, ignore_sources,
-		 exclude_patterns, corpus_from, corpus_to)
-		VALUES (?, ?, 3, 'biome', 0, ?, 900000000, 0, 0, '', '', '[]', ?, ?)`,
-		started, ended, computed, from, to)
-	return err
-}
-
 // tsIrregular names the TEXT columns that carry an instant WITHOUT following the
 // _at naming convention that discovery keys on. There is one, and it is the
 // reason this list exists rather than a pure pattern match: the first draft of
@@ -359,16 +377,17 @@ func tsSessionCorpus(d *sql.DB, started, ended, computed, from, to any) error {
 // It is checked against the schema in tsDiscovered, so it cannot rot into a name
 // that no longer exists.
 //
-// derived_session.corpus_from and corpus_to joined it with 0010. They carry the
-// window the events were read over, they are ordered against the same
+// corpus_from and corpus_to joined it with 0010, on derived_session, and moved
+// to derived_session_run with the rest of the derivation in 0016. They carry
+// the window the events were read over, they are ordered against the same
 // timestamps as everything else, and neither is named _at because neither is a
 // moment something happened — they are the bounds of a population. Without this
 // list the discovery query would pass over both in silence, which is the exact
 // failure harvest_run.since is here to remember.
 var tsIrregular = []string{
 	"harvest_run.since",
-	"derived_session.corpus_from",
-	"derived_session.corpus_to",
+	"derived_session_run.corpus_from",
+	"derived_session_run.corpus_to",
 }
 
 // tsDiscovered reads every TEXT column that carries an instant out of the live

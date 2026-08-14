@@ -189,76 +189,13 @@ type (
 	// has already applied it by the time the events arrive here, which is
 	// exactly why it cannot be a field of Params.
 	Corpus = sittings.Corpus
+	// Stats is what the derivation DID: the thirteen counts Cluster fills in
+	// below. It is defined in internal/sittings for the same reason the three
+	// above are — Store.Sittings reads it back out of derived_session_run and
+	// has to be able to name it, and a second definition over there would
+	// drift from this one from the day it was written.
+	Stats = sittings.Stats
 )
-
-// Stats is what the derivation did, in numbers, so that a result can be
-// questioned without re-running it.
-//
-// Every count here separates something that was observed from something that
-// was not. A figure that dropped observations without saying how many is a
-// figure that cannot be reconciled with the store it came from.
-type Stats struct {
-	// Evidence is how many observations were clustered; Presence how many
-	// were read as bounds; Ignored how many were dropped by configuration.
-	// The three sum to the input.
-	Evidence int
-	Presence int
-	Ignored  int
-	// Unbounded counts evidence observations whose extent was never observed.
-	// Each contributes its one endpoint as an instant and no duration.
-	Unbounded int
-	// PresenceWithoutSpan counts presence observations that carried no usable
-	// interval — an unbounded reading, or a state that is neither 'on' nor
-	// 'off'. They bound nothing, and saying so is not the same as saying the
-	// stream was silent.
-	PresenceWithoutSpan int
-	// MergedByExpansion counts pairs of clusters joined because the lead-in
-	// and tail-out overlapped. A large number here means the margins have
-	// swallowed the gap threshold.
-	MergedByExpansion int
-	// SplitByAbsence counts sittings cut into more than one piece by an
-	// observed dark span; TrimmedByAbsence is how much time that removed.
-	//
-	// BOTH ARE STRUCTURALLY ZERO, and have been since 2026-08-14. Darkness no
-	// longer subtracts anything from a cluster, so there is no route by which
-	// either can be non-zero — they are not "measured and found to be nothing",
-	// which is the reading a bare zero invites and the confusion this package
-	// exists to refuse. They are retained rather than deleted because the store
-	// persists the derivation's statistics and a field that vanishes from one
-	// run to the next is worse than one that explains itself.
-	SplitByAbsence   int
-	TrimmedByAbsence time.Duration
-	// SuppressedByAbsence counts evidence observations dropped for being
-	// anchored inside observed darkness. Only source.CauseTimer observations
-	// are, so this is a count of wall-clock artifacts and not of work.
-	SuppressedByAbsence int
-	// UnevidencedPieces counts fragments left with no observation in them
-	// after darkness cut a sitting up, and UnevidencedDropped is how much
-	// time they covered.
-	//
-	// The case was found by the schema rather than by design: two dark spans
-	// inside one cluster left a middle piece lying BETWEEN two observations
-	// rather than containing either, so nothing evidenced it and nothing had
-	// observed darkness in it, and it reached CHECK (events > 0) as a sitting
-	// resting on nothing.
-	//
-	// ALSO STRUCTURALLY ZERO since 2026-08-14, and for the same reason: pieces
-	// were made by subtracting darkness, nothing subtracts darkness now, so a
-	// cluster is one piece and that piece always holds the observations it was
-	// built from. The invariant the case broke still holds and is still tested
-	// (TestNoSittingRestsOnZeroObservations) — what has gone is the route to
-	// breaking it, not the guarantee.
-	UnevidencedPieces  int
-	UnevidencedDropped time.Duration
-	// Contested is how much time the backlight stream claims as both lit and
-	// dark. None of it is trimmed, because contradictory readings establish
-	// no darkness; it is reported so a number resting on it is recognisable.
-	Contested time.Duration
-	// ObservedAbsence is the total span the backlight was read as dark,
-	// contested time excluded. It is the denominator TrimmedByAbsence is a
-	// fraction of.
-	ObservedAbsence time.Duration
-}
 
 // Result is a derivation and everything needed to interpret it.
 type Result struct {

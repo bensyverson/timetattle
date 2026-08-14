@@ -117,12 +117,25 @@ type Derived struct {
 	// they were produced FROM, and ComputedAt is when. All three travel with
 	// them because a sitting separated from any of the three is a span with no
 	// meaning: the same events at a two-minute gap and at two hours differ by
-	// 2.3x, and the same gap over the corpus with and without Ben's exclude
-	// list differs by 126.2h.
+	// 2.3x, and the same gap over the corpus with and without the configured
+	// exclude list differs by 126.2h.
 	Params     Params
 	Corpus     Corpus
 	ComputedAt time.Time
 	Sittings   []Sitting
+
+	// Stats is what the derivation DID, and DarknessPolicy is the rule it was
+	// allowed to do it under. Both describe the whole run and not the window
+	// asked about, so a windowed read reports the same figures a total one
+	// does; a fraction of them for a Tuesday would be a number nobody could
+	// reconcile with anything.
+	//
+	// Both are zero when ComputedAt is, and mean nothing has been derived
+	// rather than a derivation that suppressed nothing. Stats is a struct of
+	// counts, so its zero value is a legal reading as well as an absent one —
+	// which is exactly why ComputedAt and not Stats is what says which.
+	Stats          Stats
+	DarknessPolicy DarknessPolicy
 }
 
 // Total is how much wall clock the sittings cover. Sittings are disjoint by

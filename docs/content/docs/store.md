@@ -301,7 +301,8 @@ columns — `event.started_at`, `event.ended_at`, `harvest_run.finished_at`,
 `harvest_run.since` — carry their own `IS NULL OR` arm, because an instant that
 was never observed is a fact and not a failure.
 
-`derived_session.corpus_from` and `corpus_to`, added by `0010`, carry a
+`derived_session_run.corpus_from` and `corpus_to` — added by `0010` on
+`derived_session` and moved to the derivation's own row by `0016` — carry a
 `= '' OR GLOB` arm instead: they are `NOT NULL` and spell "unbounded" as the
 empty string. That is deliberate rather than stylistic. A `CHECK` passes when it
 evaluates to `NULL`, so a nullable bound with a bare `GLOB` would have enforced
