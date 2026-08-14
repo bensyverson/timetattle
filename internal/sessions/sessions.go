@@ -329,8 +329,16 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 	// anything downstream can see — the same instants are covered, the same
 	// total elapses, and subtracting [a,b) then [b,c) removes what [a,c) does —
 	// but it is the difference between a run Subtract and Covers can take
-	// cheaply and one they cannot, and this run is handed to Subtract once per
-	// cluster and to Covers once per observation. Merging the joins here, once,
+	// cheaply and one they cannot.
+	//
+	// THE COST ARGUMENT THAT FOLLOWED IS RETIRED, and is left here corrected
+	// rather than deleted because it is the reason this Union looks
+	// over-careful. The run used to be handed to Subtract once per cluster and
+	// to Covers once per OBSERVATION, which on this corpus was a million calls.
+	// Neither is true now: nothing subtracts darkness from a cluster at all,
+	// and the Covers call is guarded by a cause test that short-circuits, so it
+	// is reached for the 38 timer-caused rows in the whole store rather than for
+	// every observation. Merging the joins here, once,
 	// is what makes both of those free.
 	absent := timespan.Union(timespan.Subtract(darkU, litU))
 	res.Stats.Contested = timespan.Total(timespan.Intersect(darkU, litU))
