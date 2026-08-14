@@ -109,10 +109,24 @@
 // it.
 //
 // The rule that was replaced had, over the whole live store, reached 1 timer
-// observation and 24,703 others, and cost roughly 35 hours across three
-// projects in the two weeks the backlight had been collecting at all
-// (`go run ./scripts/darkcause`, and `timetattle metrics --all` either side).
-// It was protecting against a case that had happened once.
+// observation and 24,703 others, and cost 35.8 hours of engaged time across
+// three projects (`go run ./scripts/darkcause`, and `timetattle metrics --all`
+// either side).
+//
+// TWO THINGS THAT FIGURE DOES NOT SAY, both of which an earlier draft of this
+// comment got wrong. It is not a rate: the cost falls across the seven weeks
+// the backlight stream covers, not evenly, and the weekly deltas run 0.5, 0.3,
+// 2.1, 5.0, 13.4, 8.1, 6.4 (`timetattle metrics --all --by week`, differenced).
+// Quoting any one week as typical overstates or understates it by up to 40x.
+//
+// And "1 timer observation" is NOT evidence the old rule was idle, which is how
+// it was first read here. The store holds 38 timer-caused rows in total —
+// motion-autosave is the entire timer population — of which 23 fall after the
+// backlight begins recording on 2026-07-02. Catching one of 23 is near the
+// arithmetic ceiling, and the one it caught is the 2026-07-11 17:53 autosave
+// this package already argued from. The old rule hit its design case. The
+// argument for narrowing it was never that it caught too little; it is that
+// the other 24,703 were not timers and were never evidence of absence.
 //
 // # Engaged time is the headline, and the backlight is not in it
 //
