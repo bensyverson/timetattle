@@ -28,6 +28,23 @@ nothing to be out of order relative to. The one call that matters for
 performance — `sessions.go:297`, called once per evidence observation, which
 is what made this the top of the profile — passes `Subtract`'s output.
 
+> **Corrected 2026-08-14: that call is no longer made once per evidence
+> observation.** `93cd2cc` narrowed observed darkness to suppress only
+> observations whose `Cause` is `source.CauseTimer`, and the surviving test
+> (now `internal/sessions/sessions.go:361`) reads
+> `s.cause == source.CauseTimer && timespan.Covers(absent, s.span.Start)`. `&&`
+> short-circuits, so `Covers` is reached for 38 observations across the whole
+> live store rather than 1,082,008. **The precondition proof below is unaffected
+> and still load-bearing — the argument that changed is the one about how often
+> the call happens, not the one about what it may be handed.**
+>
+> The optimisation is not wasted; its beneficiary moved. `scripts/darkcause`,
+> added by the same change, calls `Covers(absent, e.Anchor())` once per evidence
+> observation over the whole corpus to census what the retired rule reached, and
+> it is now the only per-observation caller. A reader re-profiling
+> `timetattle metrics` today should not expect to find `Covers` near the top.
+> See `project/2026-08-14-darkness-may-only-suppress-a-timer.md`.
+
 `Subtract` does **not** sort or merge its `from` argument on its own; it only
 ever removes or splits each of `from`'s existing elements in place, so the
 sortedness of its output depends on the sortedness of what it was handed.
