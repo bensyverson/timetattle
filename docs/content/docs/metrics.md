@@ -516,10 +516,19 @@ produced it.**
 
 ## Presence is not screen-on time
 
-Presence is the clock the *sittings* cover. The backlight only bounds them, by
-splitting a sitting where the screen was observed dark; it never creates one,
-because fourteen hours of lit screen with no other trace is not fourteen hours
-of work.
+Presence is the clock the *sittings* cover, and the sittings are clustered out
+of **evidence**. The backlight never creates one, because fourteen hours of lit
+screen with no other trace is not fourteen hours of work — and it no longer
+shortens one either. A dark reading observes a shut lid, which is a proxy for
+somebody being at the machine, which is a proxy for work; a render, a compile or
+an unattended agent produces work with the screen off and leaves the same trace
+as an empty room. So darkness suppresses only an observation a **wall-clock
+timer** wrote, and the [clustering](/docs/sessions/#what-a-dark-backlight-actually-observed-which-is-a-lid)
+has the argument.
+
+**Presence therefore includes time nobody was at the keyboard for**, and that is
+deliberate rather than an artifact. It is the capacity denominator, and capacity
+consumed by a background render is still consumed.
 
 The gap between the two is large in both directions, so the report carries it
 rather than leaving it to be assumed. On an earlier run of this corpus — before
@@ -787,9 +796,9 @@ and compute each one separately. It is wrong, and wrong invisibly. Clustering is
 not distributive over a partition of the events: a day computed alone gets its
 own lead-in at its first observation and its own tail-out at its last, so every
 boundary manufactures margin the whole span does not have; a silence the gap
-threshold bridged across midnight becomes two sittings instead of one; and the
-presence readings that would have trimmed a sitting from outside the day are not
-there to trim it. Days computed that way cannot be added up at all.
+threshold bridged across midnight becomes two sittings instead of one; and a
+dark span that begins outside the day is not there to suppress the timer-written
+observation inside it. Days computed that way cannot be added up at all.
 
 So the periods here are cut out of **the same partition every figure above them
 is summed from**. A sitting that crosses a period boundary is **split** at it and

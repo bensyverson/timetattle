@@ -14,10 +14,14 @@ human recollection.
 
 **Timetattle produces insight, not a system of record.** It is a signal for when
 work happened, not an authority on what anyone owes, and nothing it reports is a
-timesheet. On the current corpus 74.9% of engaged time is inferred by the
-clustering rather than observed by anything, and every report prints that
-alongside the number instead of behind it. The tool is most useful exactly where
-it disagrees with what you remember.
+timesheet. On the current corpus **67.3% of presence** — the wall clock the
+sittings cover — is inferred by the clustering rather than observed by anything,
+and the **engaged** hours a project is billed for are more inferred still: 178.7h
+observed out of 1216.0h. Every report prints those alongside the number instead
+of behind it, and both come off one run of `timetattle metrics --all`: the first
+from its `PRESENCE` line, the second from the `observed` and `absolute` columns
+of its per-project table. The tool is most useful exactly where it disagrees
+with what you remember.
 
 Hours attributed to a client are **directional rather than final**. Higher
 attribution fidelity makes them more useful and is worth pursuing, but no figure
@@ -38,7 +42,9 @@ Timetattle answers two questions:
 
 1. **How is capacity actually spent?** Utilization and the shape of the working
    day — how much, when, in what blocks, and how it divides across concurrent
-   work.
+   work. Capacity is measured against **presence**, which is not screen-on time:
+   a render or a coding agent running with the laptop shut is counted, because
+   it is work being produced and time being spent.
 2. **Where did the time go?** Reconstruct what was worked on and when, well
    enough to know whether a contract is underwater.
 
@@ -154,14 +160,20 @@ treating each file's creation-to-modification span as working time claimed
 Two metrics, which cannot collapse into one:
 
 - **Engaged** time is per-project and may overlap, because concurrent work on
-  two projects is billable to both. It drives billing and effective rate.
+  two projects is billable to both. It drives billing and effective rate, and it
+  counts work done with the screen off exactly as it counts work done with the
+  screen on.
 - **Presence** is wall clock and is never double-counted. It is the
   denominator for capacity — a half-time retainer measured against engaged
-  time could read as satisfied at 30% of real attention.
+  time could read as satisfied at 30% of real attention. **It is not screen-on
+  time**, and it deliberately includes hours nobody was at the keyboard for: a
+  dark backlight observes a shut lid, and a render, a compile or a coding agent
+  working behind one is capacity being spent.
 
 **Both figures are mostly inference, and the inference is not yet fitted.**
-75.7% of the engaged time in the live store is margin — lead-in, tail-out and
-bridged silence — that the clustering parameters invented. `timetattle review`
+67.3% of the presence in the live store is margin — lead-in, tail-out and
+bridged silence — that the clustering parameters invented, and 85.3% of the
+engaged hours are. `timetattle review`
 is where that gets calibrated: it puts a whole working day on one screen and
 confirms it in one keystroke, and a confirmed day says whether *every* instant
 in it was work rather than only where work was. Nothing downstream is believable
