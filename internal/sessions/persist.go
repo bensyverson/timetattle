@@ -8,13 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bensyverson/timetattle/internal/sittings"
 	"github.com/bensyverson/timetattle/internal/store"
 )
 
-// Writing derived_session.
+// Writing the derivation: one derived_session_run row, and the sittings that
+// hang off it.
 //
 // Only the write lives here, and it takes no handle at all: it is handed a
-// transaction the store opened. Reading the table back is Store.Sittings.
+// transaction the store opened. Reading the tables back is Store.Sittings.
 
 // Replace is the derivation that rebuilds derived_session from res.
 //
@@ -53,19 +55,14 @@ func Replace(res Result, corpus Corpus, computedAt time.Time) store.Derivation {
 			return fmt.Errorf("refusing to store sessions drawn from a corpus that cannot exist: %w", err)
 		}
 
-		if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session`); err != nil {
-			return fmt.Errorf("clear derived_session: %w", err)
+		// ONE delete, and it is the run row rather than the sittings.
+		// derived_session.run_id references it ON DELETE CASCADE, so this takes
+		// every sitting with it — which is what makes "either entirely this
+		// derivation or entirely the previous one" impossible to half-do. Two
+		// deletes could be written with one of them forgotten; this one cannot.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM derived_session_run`); err != nil {
+			return fmt.Errorf("clear the stored derivation: %w", err)
 		}
-
-		stmt, err := tx.PrepareContext(ctx, `INSERT INTO derived_session
-			(started_at, ended_at, events, sources, margin_micros, computed_at,
-			 gap_micros, lead_in_micros, tail_out_micros, presence_sources, ignore_sources,
-			 exclude_patterns, corpus_from, corpus_to)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-		if err != nil {
-			return fmt.Errorf("prepare the session insert: %w", err)
-		}
-		defer stmt.Close()
 
 		var (
 			at       = formatTime(computedAt)
@@ -77,7 +74,49 @@ func Replace(res Result, corpus Corpus, computedAt time.Time) store.Derivation {
 			exclude    = corpus.ExcludeJSON()
 			corpusFrom = formatBound(corpus.From)
 			corpusTo   = formatBound(corpus.To)
+			st         = res.Stats
 		)
+
+		// The run row is written whether or not the derivation produced a single
+		// sitting, and that is the point of it. With the parameters restated on
+		// every session row, a derivation that clustered nothing wrote nothing at
+		// all and read back exactly like a store nobody had ever sessionized —
+		// this project's oldest bug, reachable from the command line with
+		// `sessionize -from <after the last event>`.
+		//
+		// darkness_policy records the RULE rather than a parameter: nothing
+		// configures it, and it is about to change. See
+		// sittings.CurrentDarknessPolicy, which must be changed with the rule.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO derived_session_run
+			(id, computed_at, gap_micros, lead_in_micros, tail_out_micros,
+			 presence_sources, ignore_sources, darkness_policy,
+			 exclude_patterns, corpus_from, corpus_to,
+			 evidence_observations, presence_observations, ignored_observations,
+			 unbounded_observations, presence_without_span, merged_by_expansion,
+			 split_by_absence, trimmed_by_absence_micros, suppressed_by_absence,
+			 unevidenced_pieces, unevidenced_dropped_micros,
+			 contested_micros, observed_absence_micros)
+			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			at, micros(res.Params.Gap), micros(res.Params.LeadIn), micros(res.Params.TailOut),
+			presence, ignore, string(sittings.CurrentDarknessPolicy),
+			exclude, corpusFrom, corpusTo,
+			st.Evidence, st.Presence, st.Ignored,
+			st.Unbounded, st.PresenceWithoutSpan, st.MergedByExpansion,
+			st.SplitByAbsence, micros(st.TrimmedByAbsence), st.SuppressedByAbsence,
+			st.UnevidencedPieces, micros(st.UnevidencedDropped),
+			micros(st.Contested), micros(st.ObservedAbsence),
+		); err != nil {
+			return fmt.Errorf("store the derivation computed at %s: %w", at, err)
+		}
+
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO derived_session
+			(run_id, started_at, ended_at, events, sources, margin_micros)
+			VALUES (1, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return fmt.Errorf("prepare the session insert: %w", err)
+		}
+		defer stmt.Close()
+
 		for _, s := range res.Sessions {
 			// Asserted here rather than in SQL: SQLite's date functions resolve
 			// to milliseconds at best while these endpoints carry microseconds,
@@ -89,10 +128,7 @@ func Replace(res Result, corpus Corpus, computedAt time.Time) store.Derivation {
 			}
 			if _, err := stmt.ExecContext(ctx,
 				formatTime(s.Start), formatTime(s.End), s.Events, strings.Join(s.Sources, ","),
-				micros(s.Margin), at,
-				micros(res.Params.Gap), micros(res.Params.LeadIn), micros(res.Params.TailOut),
-				presence, ignore,
-				exclude, corpusFrom, corpusTo,
+				micros(s.Margin),
 			); err != nil {
 				return fmt.Errorf("store the session at %s: %w", formatTime(s.Start), err)
 			}

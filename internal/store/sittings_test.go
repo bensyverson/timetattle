@@ -121,35 +121,69 @@ func TestAWindowWithNoSittingsStillNamesTheDerivation(t *testing.T) {
 	}
 }
 
-// A mixture cannot come out of Replace, which rebuilds the table wholesale. It
-// can come out of a hand-written INSERT or a rebuild interrupted in a way
-// SQLite is not meant to allow, and it reads as a perfectly ordinary set of
-// sittings — half of them measured against one model and half against another.
-func TestSittingsRefusesATableHoldingTwoDerivations(t *testing.T) {
+// A mixture used to be possible and had to be caught on the way out. It is now
+// unrepresentable, and this is the test that says so.
+//
+// Replace has always rebuilt wholesale, so a mixture could only come out of a
+// hand-written INSERT or a rebuild interrupted in a way SQLite is not meant to
+// allow — and it read as a perfectly ordinary set of sittings, half of them
+// measured against one model and half against another. Sittings therefore
+// reconciled the parameters across every row on every read and refused a table
+// that disagreed with itself.
+//
+// Migration 0016 put the derivation on one row under `CHECK (id = 1)` and made
+// every sitting reference it, so the INSERT that used to produce a mixture is
+// refused by the database — through the store's own connection, which is where
+// the foreign key is switched on.
+func TestASecondDerivationCannotBeWrittenBesideTheFirst(t *testing.T) {
 	f := newStore(t)
 	ctx := context.Background()
 	seedSittings(t, f, sitParams(), time.Now().UTC(), sitting(0, 60))
 
+	// A whole second derivation, at a different gap.
 	err := f.ReplaceDerived(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO derived_session
-			(started_at, ended_at, events, sources, margin_micros, computed_at,
-			 gap_micros, lead_in_micros, tail_out_micros, presence_sources, ignore_sources,
-			 exclude_patterns, corpus_from, corpus_to)
-			VALUES (?, ?, 1, 'biome-appusage', 0, ?, 7200000000, 300000000, 300000000, 'knowledgec-backlit', '',
-			        '[]', '', '')`,
-			sitAt(300).Format(store.TimeLayout), sitAt(360).Format(store.TimeLayout),
+		_, err := tx.ExecContext(ctx, `INSERT INTO derived_session_run
+			(id, computed_at, gap_micros, lead_in_micros, tail_out_micros,
+			 presence_sources, ignore_sources, darkness_policy,
+			 exclude_patterns, corpus_from, corpus_to,
+			 evidence_observations, presence_observations, ignored_observations,
+			 unbounded_observations, presence_without_span, merged_by_expansion,
+			 split_by_absence, trimmed_by_absence_micros, suppressed_by_absence,
+			 unevidenced_pieces, unevidenced_dropped_micros,
+			 contested_micros, observed_absence_micros)
+			VALUES (2, ?, 7200000000, 300000000, 300000000, 'knowledgec-backlit', '',
+			        'suppress-all-and-trim', '[]', '', '',
+			        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`,
 			sitBase.Format(store.TimeLayout))
 		return err
 	})
-	if err != nil {
-		t.Fatalf("write a second derivation's row: %v", err)
+	if err == nil {
+		t.Error("a second derivation was written beside the first; half these sittings " +
+			"would be measured against a different model")
 	}
 
-	if _, err := f.Sittings(ctx, time.Time{}, time.Time{}); err == nil {
-		t.Fatal("Sittings read a table holding two derivations without complaint; " +
-			"half these sittings are measured against a different model")
-	} else if !strings.Contains(err.Error(), "sessionize") {
-		t.Errorf("the complaint does not name the way out: %v", err)
+	// And a sitting hung off a derivation that does not exist, which is the
+	// orphan the restated columns were aiming at and could not prevent.
+	err = f.ReplaceDerived(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO derived_session
+			(run_id, started_at, ended_at, events, sources, margin_micros)
+			VALUES (2, ?, ?, 1, 'biome-appusage', 0)`,
+			sitAt(300).Format(store.TimeLayout), sitAt(360).Format(store.TimeLayout))
+		return err
+	})
+	if err == nil {
+		t.Error("a sitting was written pointing at a derivation that does not exist; " +
+			"it is a span with no parameters and nothing could interpret it")
+	}
+
+	// The store still reads back the one derivation that was written.
+	got, gerr := f.Sittings(ctx, time.Time{}, time.Time{})
+	if gerr != nil {
+		t.Fatalf("Sittings: %v", gerr)
+	}
+	if len(got.Sittings) != 1 || got.Params.Gap != sitParams().Gap {
+		t.Errorf("after two refused writes the store holds %d sittings at a gap of %v",
+			len(got.Sittings), got.Params.Gap)
 	}
 }
 

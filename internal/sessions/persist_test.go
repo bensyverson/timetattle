@@ -178,12 +178,16 @@ func TestASecondReplaceProducesByteIdenticalRows(t *testing.T) {
 	if err := replace(st, res, derivedAt); err != nil {
 		t.Fatalf("first Replace: %v", err)
 	}
-	first := fingerprint(t, db, "derived_session")
+	// Both tables. The derivation is on its own row since migration 0016, so a
+	// fingerprint of the sittings alone would no longer notice a parameter or a
+	// statistic that moved between two identical runs.
+	first := fingerprint(t, db, "derived_session") + fingerprint(t, db, "derived_session_run")
 
 	if err := replace(st, res, derivedAt); err != nil {
 		t.Fatalf("second Replace: %v", err)
 	}
-	if second := fingerprint(t, db, "derived_session"); second != first {
+	second := fingerprint(t, db, "derived_session") + fingerprint(t, db, "derived_session_run")
+	if second != first {
 		t.Errorf("a second recompute produced different rows:\n%s\n---\n%s", first, second)
 	}
 	if got, want := rowCount(t, db, "derived_session"), len(res.Sessions); got != want {
@@ -192,33 +196,61 @@ func TestASecondReplaceProducesByteIdenticalRows(t *testing.T) {
 }
 
 func TestOnlyTheDerivationTimeMovesWhenTheClockDoes(t *testing.T) {
-	// The honest form of the byte-identical claim. Everything a session says
+	// The honest form of the byte-identical claim. Everything a derivation says
 	// about the work is reproducible; computed_at is a reading of the wall
 	// clock and cannot be, so it is the one column allowed to differ and it
 	// must be the ONLY one.
+	//
+	// computed_at lives on derived_session_run since migration 0016, so the
+	// column is omitted there and the sittings are compared whole. Omitting a
+	// column that no longer exists would have made this pass without comparing
+	// anything the clock could have touched.
 	st, db := open(t)
 	res := sample(t)
+
+	clocked := func() string {
+		return fingerprint(t, db, "derived_session") +
+			fingerprintExcept(t, db, "derived_session_run", "computed_at")
+	}
 
 	if err := replace(st, res, derivedAt); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
-	first := fingerprintExcept(t, db, "derived_session", "computed_at")
+	first := clocked()
 
 	if err := replace(st, res, derivedAt.Add(72*time.Hour)); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
-	if second := fingerprintExcept(t, db, "derived_session", "computed_at"); second != first {
+	if second := clocked(); second != first {
 		t.Errorf("moving the clock changed something other than computed_at:\n%s\n---\n%s", first, second)
 	}
-	if fingerprint(t, db, "derived_session") == "" {
-		t.Fatal("the table is empty; the comparison above was vacuous")
+	if fingerprint(t, db, "derived_session") == "" || fingerprint(t, db, "derived_session_run") == "" {
+		t.Fatal("a table is empty; the comparison above was vacuous")
+	}
+	// And the column that IS allowed to move has moved, or the comparison above
+	// proves only that nothing happened.
+	var stored string
+	if err := db.QueryRow(`SELECT computed_at FROM derived_session_run`).Scan(&stored); err != nil {
+		t.Fatalf("read computed_at: %v", err)
+	}
+	if want := derivedAt.Add(72 * time.Hour).Format(store.TimeLayout); stored != want {
+		t.Errorf("computed_at is %s after the clock moved, want %s", stored, want)
 	}
 }
 
 func TestReplaceLeavesNoRowsFromTheParametersItSuperseded(t *testing.T) {
 	// A table half computed at one gap and half at another is a number nobody
-	// can interpret, and it would not look wrong from the outside. Storing the
-	// parameters on every row is what makes the mixture detectable at all.
+	// can interpret, and it would not look wrong from the outside. Since
+	// migration 0016 the gap is on one row under `CHECK (id = 1)`, so a mixture
+	// cannot be written — and what this measures is that a recompute REPLACED
+	// the derivation rather than being refused by that CHECK and leaving the old
+	// one standing, which is the failure the singleton makes possible.
+	//
+	// These two derivations produce IDENTICAL SPANS — at a two-minute gap the
+	// three points cluster three ways and the five-minute margins then merge two
+	// of them back, landing on the same two sittings a fifteen-minute gap
+	// reaches directly. So the stored gap is the only thing that tells them
+	// apart, which is a small demonstration of why it is stored at all.
 	st, db := open(t)
 	events := []source.Event{point(0), point(10 * time.Minute), point(3 * time.Hour)}
 
@@ -231,17 +263,35 @@ func TestReplaceLeavesNoRowsFromTheParametersItSuperseded(t *testing.T) {
 	if err := replace(st, first, derivedAt); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
+	// The tight derivation is really in the store, or the replacement below
+	// would be superseding nothing.
+	var before int64
+	if err := db.QueryRow(`SELECT gap_micros FROM derived_session_run`).Scan(&before); err != nil {
+		t.Fatalf("read the stored gap: %v", err)
+	}
+	if before != int64(tight.Gap/time.Microsecond) {
+		t.Fatalf("the first derivation stored a gap of %d, want %d", before, tight.Gap/time.Microsecond)
+	}
 
 	if err := replace(st, sample(t), derivedAt); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 
-	var distinct int
-	if err := db.QueryRow(`SELECT COUNT(DISTINCT gap_micros) FROM derived_session`).Scan(&distinct); err != nil {
+	var rows int
+	var gap int64
+	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(gap_micros), -1) FROM derived_session_run`).
+		Scan(&rows, &gap); err != nil {
 		t.Fatalf("read the stored gaps: %v", err)
 	}
-	if distinct != 1 {
-		t.Errorf("derived_session holds %d distinct gaps; a recompute left rows from the old one behind", distinct)
+	if rows != 1 {
+		t.Fatalf("derived_session_run holds %d rows after a recompute, want 1", rows)
+	}
+	if want := int64(sample(t).Params.Gap / time.Microsecond); gap != want {
+		t.Errorf("the stored gap is %d, want %d; the recompute did not supersede the tight one", gap, want)
+	}
+	// And the sittings hanging off it are the new derivation's.
+	if got, want := rowCount(t, db, "derived_session"), len(sample(t).Sessions); got != want {
+		t.Errorf("derived_session holds %d rows after the recompute, want %d", got, want)
 	}
 }
 
@@ -300,15 +350,19 @@ func TestTwoSessionsCannotClaimTheSameSpan(t *testing.T) {
 		t.Fatalf("Replace: %v", err)
 	}
 
+	// A straight copy of an existing row, which is exactly the shape a rebuild
+	// that inserted without deleting would produce. The column list is the
+	// whole of derived_session since migration 0016 moved the derivation off
+	// it, so a column added here without being added to the index's key would
+	// show up as this test passing for the wrong reason.
 	_, err := db.Exec(`INSERT INTO derived_session
-		(started_at, ended_at, events, sources, margin_micros, computed_at,
-		 gap_micros, lead_in_micros, tail_out_micros, presence_sources, ignore_sources,
-		 exclude_patterns, corpus_from, corpus_to)
-		SELECT started_at, ended_at, events, sources, margin_micros, computed_at,
-		       gap_micros, lead_in_micros, tail_out_micros, presence_sources, ignore_sources,
-		       exclude_patterns, corpus_from, corpus_to
+		(run_id, started_at, ended_at, events, sources, margin_micros)
+		SELECT run_id, started_at, ended_at, events, sources, margin_micros
 		FROM derived_session LIMIT 1`)
 	if err == nil {
 		t.Fatal("a second session with an identical span inserted; the derived table would double-count wall clock")
+	}
+	if !strings.Contains(err.Error(), "UNIQUE") {
+		t.Errorf("the copy was refused for some reason other than the span index: %v", err)
 	}
 }

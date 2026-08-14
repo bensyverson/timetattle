@@ -131,7 +131,7 @@ func TestAFlagOverridesTheConfiguredValueForOneRunOnly(t *testing.T) {
 		t.Fatalf("sessionize: %v", err)
 	}
 
-	if got, want := query[int64](t, path, `SELECT DISTINCT gap_micros FROM derived_session`),
+	if got, want := query[int64](t, path, `SELECT gap_micros FROM derived_session_run`),
 		int64(2*time.Minute/time.Microsecond); got != want {
 		t.Errorf("stored gap %d microseconds, want %d: the flag did not override the file", got, want)
 	}
@@ -162,7 +162,7 @@ func TestTheConfiguredValueIsUsedWhenNoFlagOverridesIt(t *testing.T) {
 	if got := query[int](t, path, `SELECT COUNT(*) FROM derived_session`); got != 1 {
 		t.Errorf("derived_session holds %d rows, want 1 at a four-hour gap", got)
 	}
-	if got, want := query[int64](t, path, `SELECT DISTINCT lead_in_micros FROM derived_session`),
+	if got, want := query[int64](t, path, `SELECT lead_in_micros FROM derived_session_run`),
 		int64(time.Minute/time.Microsecond); got != want {
 		t.Errorf("stored lead-in %d microseconds, want %d", got, want)
 	}
@@ -173,13 +173,13 @@ func TestDryRunLeavesTheStoredSessionsAlone(t *testing.T) {
 	if err := sessionize([]string{"-store", path, "-quiet"}); err != nil {
 		t.Fatalf("sessionize: %v", err)
 	}
-	before := query[int64](t, path, `SELECT DISTINCT gap_micros FROM derived_session`)
+	before := query[int64](t, path, `SELECT gap_micros FROM derived_session_run`)
 
 	if err := sessionize([]string{"-store", path, "-gap", "9h", "-dry-run", "-quiet"}); err != nil {
 		t.Fatalf("sessionize -dry-run: %v", err)
 	}
 
-	if after := query[int64](t, path, `SELECT DISTINCT gap_micros FROM derived_session`); after != before {
+	if after := query[int64](t, path, `SELECT gap_micros FROM derived_session_run`); after != before {
 		t.Errorf("a dry run rewrote the table: gap is now %d microseconds, was %d", after, before)
 	}
 }

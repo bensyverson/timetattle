@@ -225,17 +225,81 @@ for the mutation that measures what that buys.
 
 **A rebuild leaves `event` and `harvest_run` byte-identical.** Checked by
 fingerprinting both tables around consecutive rebuilds, on the real store: after
-two runs over 765,651 events, both fingerprints are unchanged, and every column
-of `derived_session` except `computed_at` is unchanged too.
+two runs over 765,651 events, both fingerprints are unchanged, and so is every
+column of `derived_session` and of `derived_session_run` except the latter's
+`computed_at`, which is a reading of the wall clock and cannot be reproducible.
 
-Every row carries the parameters it was derived under. That is redundant on
-purpose: a session span separated from its parameters means nothing, so nothing
-should be able to produce one, and a table computed at one gap while a question
-is asked at another is then a discrepancy anybody can see with a `SELECT`.
+### `derived_session_run`: one row for the derivation
+
+The derivation lives on a row of its own, under `CHECK (id = 1)`, and every
+sitting references it. Until migration `0016` the parameters were restated on
+every session row instead — deliberately, because a session span separated from
+its parameters means nothing and nothing should be able to produce one.
+
+The goal is unchanged and the mechanism is stronger. `derived_session.run_id` is
+`NOT NULL` and references `derived_session_run` with `ON DELETE CASCADE`, so
+with foreign keys on — which `store.Open` sets — a sitting **cannot** be written
+before the derivation that produced it exists, and clearing the derivation
+clears its sittings. What used to be caught on the way out is now unrepresentable.
+
+Two things it fixed beyond tidiness:
+
+- **A derivation that produced no sittings wrote nothing at all**, and read back
+  identically to a store nobody had ever sessionized. `timetattle sessionize
+  -from <after the last event>` reaches that from the command line. The run row
+  exists whether or not it produced anything, so "the model ran and found none"
+  and "nobody has run the model" are now different rows and not the same silence.
+- **What the derivation *did* is now stored.** See below.
+
+Measured by removing the cascade: every rebuild after the first fails outright
+with `FOREIGN KEY constraint failed`, because `sessionize` clears the derivation
+and the sittings would be left pointing at nothing. It fails loudly rather than
+orphaning, which is the behaviour worth having.
+
+### What the derivation *did*
+
+`sessions.Cluster` computes thirteen figures about every run — how many
+observations it read as evidence, presence and ignored; how many carried no
+extent; how many clusters its margins merged; how many sittings observed
+darkness split, how much time that removed, how many observations it suppressed;
+how much time two readings contested; how much darkness was observed at all.
+Before `0016` they were printed by `sessionize` and thrown away.
+
+So the store could not answer **"how much did the darkness rule cost on the last
+derivation"**. Answering it took two `timetattle metrics --all` runs with
+different flags and a subtraction — which measures a *different* clustering
+rather than reading the one that produced the stored table. It is now a `SELECT`
+against `derived_session_run`, and the columns reconcile exactly with what
+`sessionize` prints.
+
+Every count is `NOT NULL` and `>= 0`, and four cross-column invariants refuse
+the impossible readings: an unbounded observation was evidence first, a
+suppressed one was evidence first, a spanless presence reading was presence
+first, and trimmed time is a subset of the darkness it came out of. Each pair
+may legitimately be *equal*; only the contradiction is refused.
+
+`darkness_policy` records what the derivation let observed darkness **do** to
+it. It is not configurable and is not a parameter — nothing sets it — but the
+rule is going to change, and rows derived either side of that change are not
+comparable. Recording the figures without recording which rule produced them
+would build exactly the series this project refuses: numbers that moved for a
+reason nobody stored. The value set is deliberately not pinned by a `CHECK`,
+because the column exists to hold values that do not exist yet.
+
+**One row and not a history.** A history of run rows would say what the darkness
+rule cost in *observations and trimmed time*, which is worth having — but not
+what it cost in *hours*, because hours are computed from the sittings and the
+sittings are replaced wholesale on every run. Answering "what did this change
+cost project X" needs both derivations' sittings kept, which is a much larger
+change: the span index would have to become per-run and would stop guarding a
+rebuild that inserted without deleting, every reader would have to learn which
+generation it wanted, and `sessionize -gap 2m` would deposit a whole generation
+on every calibration run. The before-and-after question has a cheaper answer:
+run `sessionize` and `metrics --all` before a rule changes and keep the output.
 
 ### The corpus: what the derivation was drawn *from*
 
-Every row also carries the **corpus** — which observations the derivation was
+The run row also carries the **corpus** — which observations the derivation was
 allowed to see, as against what it did with them:
 
 | column | what it records |
@@ -243,10 +307,11 @@ allowed to see, as against what it did with them:
 | `exclude_patterns` | the `sessions.exclude` patterns applied when the events were read, as a JSON array, sorted and deduplicated. `[]` means this derivation excluded nothing. |
 | `corpus_from`, `corpus_to` | the `-from`/`-to` window the events were read over. Empty means unbounded — a value, not a missing entry. |
 
-Both arrived in migration 0010, and both are `NOT NULL`, deliberately: there is
-no value that says *nobody recorded what this derivation excluded*. That state
-is the absence of rows, which `Store.Sittings` already reports as "nothing has
-been derived".
+Both arrived in migration 0010 on `derived_session` and moved to the run row
+with the rest of the derivation in `0016`. Both are `NOT NULL`, deliberately:
+there is no value that says *nobody recorded what this derivation excluded*.
+That state is the absence of the run row, which `Store.Sittings` already reports
+as "nothing has been derived".
 
 The exclusion is not a parameter of the clustering — `sessions.Cluster` never
 sees it, because `sessions.Retain` has already applied it — so it lives in
@@ -261,30 +326,39 @@ values into every column of `derived_session`.
 
 Migration 0010 **discards any derivation that predates it** rather than
 defaulting it to "excluded nothing", because there is no honest value to write
-for rows computed under a list nobody recorded. The cost is one `timetattle
-sessionize`.
+for rows computed under a list nobody recorded. `0016` discards again, for the
+same reason applied to the statistics: those rows recorded what they were given
+and never what they did, and the live figures say what defaulting to zero would
+cost — the last derivation under the old schema suppressed **24,704
+observations** and trimmed **48.6h**. The cost of either discard is one
+`timetattle sessionize`.
 
 ### Reading it back
 
 `Store.Sittings(ctx, from, to)` returns the sittings overlapping the window
-**and the derivation they came out of**: the parameters, the corpus, and the
-moment they were computed. The window is by overlap rather than containment, and
-either end may be the zero time for unbounded.
+**and the derivation they came out of**: the parameters, the corpus, the
+statistics, the darkness policy, and the moment they were computed. The window
+is by overlap rather than containment, and either end may be the zero time for
+unbounded.
 
-The parameters are read across the **whole table** rather than the window, which
-is what keeps the three states apart:
+The derivation is read from its **own row** rather than from the windowed
+sittings, which is what keeps the three states apart:
 
 - sittings in the window — the model ran and found work there;
 - no sittings, but a derivation named — the model ran and found none there;
 - a zero `ComputedAt` — nothing has ever been derived, and this is not an empty
   day.
 
-A table whose rows disagree about the derivation is refused by name, naming
-`sessionize` as the way out, rather than answered with one of the two parameter
-sets as though it described every row. Rows that agree on every parameter and
-disagree on the **corpus** are refused too, with a complaint that names the two
-exclude lists — the gap would be identical in both, so the parameter message
-would say nothing a reader could act on.
+The statistics and the policy describe the **whole run**, so a windowed read
+reports the same figures a total one does. A fraction of them for a Tuesday
+would be a number nobody could reconcile with anything.
+
+Before `0016` this reconciled the parameters across every row on each read and
+refused a table that disagreed with itself. Both are gone: a second derivation
+cannot be written, so there is no mixture left to catch. A store below `0016`
+is a fourth thing again — not "nothing derived", not "here is the derivation" —
+and it is refused by a message naming the migration and `sessionize` as the way
+out, rather than by a complaint about a missing table.
 
 A sitting and its parameters are the same types the clustering produces:
 `sessions.Session` and `sessions.Params` are `sittings.Sitting` and

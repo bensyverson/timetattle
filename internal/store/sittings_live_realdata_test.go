@@ -55,18 +55,26 @@ func TestSittingsAgreesWithTheLiveTableItReads(t *testing.T) {
 	defer st.Close()
 
 	// A read-only handle applies no migration, so a live store that has not
-	// been opened for writing since 0010 landed does not carry the corpus
-	// columns at all. That is a fact about the FILE and not about this reader:
-	// the first command that opens it read-write migrates it, and the
+	// been opened for writing since the last schema change does not carry the
+	// columns this reads. That is a fact about the FILE and not about this
+	// reader: the first command that opens it read-write migrates it, and the
 	// derivation is rebuilt by the next `timetattle sessionize`. Saying which
 	// of the two it is beats a failure naming a missing column.
+	//
+	// The version named tracks the newest migration to touch these tables —
+	// 0010 for the corpus columns, now 0016 for the derivation's own row. This
+	// SKIPS rather than fails, deliberately: an unmigrated store on somebody's
+	// machine is an ordinary state, and failing on it would turn every future
+	// schema change into a red suite until a human ran a command. The skip
+	// carries the version, so "not reconciled" never reads as "reconciled".
 	schema, err := st.Schema(context.Background())
 	if err != nil {
 		t.Skipf("%s has never been migrated: %v", path, err)
 	}
-	if schema.Version < 10 {
-		t.Skipf("the live store is at migration %d and the corpus columns arrived in 0010; "+
-			"run any timetattle command that opens it for writing", schema.Version)
+	if schema.Version < 16 {
+		t.Skipf("the live store is at migration %d and the derivation's own row arrived in 0016; "+
+			"run any timetattle command that opens it for writing, then `timetattle sessionize`",
+			schema.Version)
 	}
 
 	got, err := st.Sittings(context.Background(), time.Time{}, time.Time{})
@@ -89,25 +97,38 @@ func TestSittingsAgreesWithTheLiveTableItReads(t *testing.T) {
 		FROM derived_session`).Scan(&rows, &hours); err != nil {
 		t.Fatalf("count derived_session: %v", err)
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT computed_at, gap_micros,
-		lead_in_micros, tail_out_micros, presence_sources, ignore_sources FROM derived_session)`).
+	// One row, not one DISTINCT combination across every sitting: migration 0016
+	// moved the derivation onto its own singleton row.
+	if err := db.QueryRow(`SELECT COUNT(*) FROM derived_session_run`).
 		Scan(&derivation); err != nil {
 		t.Fatalf("count the derivations: %v", err)
 	}
 
-	if rows == 0 {
-		// Nothing derived. The method has to say exactly that rather than
-		// report a day with no work in it, which is the whole point of
-		// ComputedAt, and there is nothing left to reconcile.
+	// THE THREE STATES, keyed on the run row rather than on the sittings.
+	//
+	// Before migration 0016 this branched on `rows == 0` and asserted a zero
+	// ComputedAt there, which conflated the last two: a derivation that ran and
+	// found nothing wrote no session rows and so looked like a store nobody had
+	// derived into. The run row is what separates them, so it is what this
+	// branches on.
+	if derivation == 0 {
 		if !got.ComputedAt.IsZero() || len(got.Sittings) != 0 {
-			t.Errorf("derived_session is empty but Sittings reported %d sittings derived at %v",
+			t.Errorf("there is no derivation row but Sittings reported %d sittings derived at %v",
 				len(got.Sittings), got.ComputedAt)
 		}
 		t.Skip("the live store holds no derivation to reconcile against")
 	}
-	if derivation != 1 {
-		t.Skipf("the live derived_session holds %d derivations; Sittings refuses it, "+
-			"and there is nothing to reconcile", derivation)
+	if got.ComputedAt.IsZero() {
+		t.Fatalf("a derivation row exists and Sittings reported no derivation at all; "+
+			"%d sittings are in the table", rows)
+	}
+	if rows == 0 {
+		// The model ran and found no sittings. That is a reading, not an
+		// absence, and there is nothing left to reconcile numerically.
+		if len(got.Sittings) != 0 {
+			t.Errorf("derived_session is empty but Sittings reported %d sittings", len(got.Sittings))
+		}
+		t.Skip("the live derivation produced no sittings; there is no total to reconcile")
 	}
 
 	if len(got.Sittings) != rows {

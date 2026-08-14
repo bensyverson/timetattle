@@ -14,6 +14,11 @@ import (
 // the clustering, and a field it silently ignored would be the first. It is
 // still part of the derivation — a bigger part than most of them, worth 126.2h
 // of presence on the live corpus — so it is stored, and Replace is handed it.
+//
+// The columns moved from derived_session to derived_session_run in migration
+// 0016, which put the whole derivation on one row instead of restating it on
+// every sitting. The values and the rules about them are unchanged, so the
+// tests below are unchanged apart from the table they read.
 
 // Two runs configured with the same patterns in a different order, or with one
 // of them written twice, are the same derivation. Matching does not depend on
@@ -29,12 +34,12 @@ func TestTheExcludeListIsStoredInACanonicalForm(t *testing.T) {
 	if err := replaceFrom(st, res, written, derivedAt); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
-	first := fingerprint(t, db, "derived_session")
+	first := fingerprint(t, db, "derived_session_run")
 
 	if err := replaceFrom(st, res, sorted, derivedAt); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
-	if second := fingerprint(t, db, "derived_session"); second != first {
+	if second := fingerprint(t, db, "derived_session_run"); second != first {
 		t.Errorf("the same corpus written two ways stored different rows.\nfirst:  %s\nsecond: %s",
 			first, second)
 	}
@@ -52,14 +57,14 @@ func TestADerivationThatExcludedNothingStoresTheEmptyList(t *testing.T) {
 		t.Fatalf("Replace: %v", err)
 	}
 	var stored string
-	if err := db.QueryRow(`SELECT DISTINCT exclude_patterns FROM derived_session`).Scan(&stored); err != nil {
+	if err := db.QueryRow(`SELECT exclude_patterns FROM derived_session_run`).Scan(&stored); err != nil {
 		t.Fatalf("read exclude_patterns: %v", err)
 	}
 	if stored != "[]" {
 		t.Errorf("a derivation that excluded nothing stored %q, want %q", stored, "[]")
 	}
 	var from, to string
-	if err := db.QueryRow(`SELECT DISTINCT corpus_from, corpus_to FROM derived_session`).Scan(&from, &to); err != nil {
+	if err := db.QueryRow(`SELECT corpus_from, corpus_to FROM derived_session_run`).Scan(&from, &to); err != nil {
 		t.Fatalf("read the corpus window: %v", err)
 	}
 	if from != "" || to != "" {
