@@ -118,6 +118,23 @@ by exactly one family, 671h1m23.2s by more than one, 1h14m4.0s by none, and
 those three come to the 1165h18m54.5s of presence exactly (the table above is
 the same figures rounded to `%.1fh`).
 
+> **Corrected 2026-08-14: this capture was taken under a clustering rule that
+> has since been retired, so every hour in it moved — not by corpus growth
+> alone.** `93cd2cc` stopped observed darkness suppressing evidence and
+> subtracting time from sittings; it now suppresses only observations whose
+> `Cause` is `source.CauseTimer`. Re-running `timetattle metrics --all` on
+> 2026-08-14 gives presence **1243.8h across 1181 sittings** (from 1165.3h
+> across 1548), and, for instance, `Apps` 412.2h and `Claude` 1035.4h where this
+> table has 352.3h and 989.3h. Sitting counts moved most: the retired rule cut
+> sittings at every dark span.
+>
+> **The finding is unaffected and that is the point of leaving the table
+> standing.** The rows still overlap and still never sum — 2603.1h against
+> 1243.8h of presence, 2.09x, against the 2.08x recorded here. The union shape
+> was the right call for a structural reason, and a structural reason does not
+> move when a rule does. See
+> `project/2026-08-14-darkness-may-only-suppress-a-timer.md`.
+
 Two readings worth recording:
 
 - **`Jobs` holds 293.7h and only 2.4h of it alone.** The task database is

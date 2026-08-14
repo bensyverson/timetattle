@@ -160,6 +160,25 @@ That is the next reduction, it is in `internal/timespan` rather than
 `internal/sessions`, and it is deliberately **not** done here: this change was
 scoped to keep the byte-identity proof above narrow enough to mean something.
 
+> **Corrected 2026-08-14: the per-observation call above no longer happens, so
+> the cost model in this section is stale.** `93cd2cc` narrowed what observed
+> darkness may do to a derivation — it now suppresses only observations whose
+> `Cause` is `source.CauseTimer` — and the test at
+> `internal/sessions/sessions.go:361` reads
+> `s.cause == source.CauseTimer && timespan.Covers(absent, s.span.Start)`. Go
+> short-circuits `&&`, so `Covers` is reached only for timer-caused
+> observations, of which the whole live store holds **38**
+> (`sqlite3 ~/.timetattle/timetattle.db "select count(*) from event where
+> cause='timer';"`) against 1,082,008 evidence observations. One clustering pass
+> therefore costs 38 × absent-spans at worst, not observations × absent-spans.
+>
+> Nothing in the measurement above is retracted: `Covers` genuinely was the top
+> of the profile on 2026-08-07, and the binary search that
+> `project/2026-08-07-covers-binary-search.md` then built was genuinely the right
+> answer to it. What changed is the workload, and the successor document carries
+> the same correction against its own call-site table. See
+> `project/2026-08-14-darkness-may-only-suppress-a-timer.md`.
+
 The general lesson is the one this repository keeps relearning in a new costume:
 the profile named one hot symbol, that symbol was genuinely the problem, and
 fixing it revealed a second problem of the same shape underneath. A single
