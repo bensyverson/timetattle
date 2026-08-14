@@ -189,7 +189,14 @@ func TestOneDayGoesDarkInTheMiddleOfAnObservedInterval(t *testing.T) {
 	}
 }
 
-func TestTheDarknessCutsASittingShortOfTheIntervalContainingIt(t *testing.T) {
+// The darkness day, from the other side: what the dark stretch does NOT do.
+//
+// It asserted the opposite until 2026-08-14 — a sitting ending inside an
+// interval that was still being observed, which nothing but presence could
+// cause. A dark backlight observes a closed lid, and work goes on behind a
+// closed lid, so the reading is no longer allowed to end a sitting. Every
+// evidence interval on this day is therefore covered whole.
+func TestTheDarknessDoesNotCutASittingShortOfTheIntervalContainingIt(t *testing.T) {
 	f := storefixture.New(t)
 	start, end := f.Calendar.Bounds(f.DarknessDay)
 	derived, err := f.Store.Sittings(context.Background(), start, end)
@@ -205,19 +212,32 @@ func TestTheDarknessCutsASittingShortOfTheIntervalContainingIt(t *testing.T) {
 			covering = append(covering, e)
 		}
 	}
-	cut := false
+	if len(covering) == 0 {
+		t.Fatalf("%s holds no evidence interval, so this asserts nothing", f.DarknessDay)
+	}
 	for _, s := range derived.Sittings {
 		for _, e := range covering {
-			// The sitting ends inside an interval that was still being
-			// observed. Nothing but presence can do that.
 			if e.Start.Before(s.End) && s.End.Before(e.End) {
-				cut = true
+				t.Errorf("a sitting on %s ends at %v, inside an evidence interval running %v..%v; "+
+					"darkness cut an observation that was still being made",
+					f.DarknessDay, s.End, e.Start, e.End)
 			}
 		}
 	}
-	if !cut {
-		t.Errorf("no sitting on %s ends inside an evidence interval; the darkness did not cut anything",
-			f.DarknessDay)
+	// And the one thing it still does. The autosave inside the dark stretch is
+	// written by a wall-clock timer, so it is dropped — and counted, because an
+	// observation removed without a number is a number that vanished.
+	res, err := sessions.Cluster(events(t, f, store.Filter{From: start, To: end}), f.Params)
+	if err != nil {
+		t.Fatalf("Cluster: %v", err)
+	}
+	if res.Stats.SuppressedByAbsence != 1 {
+		t.Errorf("SuppressedByAbsence = %d on %s, want 1: the timer autosave written in the dark "+
+			"is the only observation darkness still removes", res.Stats.SuppressedByAbsence, f.DarknessDay)
+	}
+	if res.Stats.TrimmedByAbsence != 0 {
+		t.Errorf("TrimmedByAbsence = %v, want 0: darkness subtracts no time from a sitting",
+			res.Stats.TrimmedByAbsence)
 	}
 }
 
@@ -256,30 +276,56 @@ func TestAPointsOnlyDayStillScoresTime(t *testing.T) {
 	}
 }
 
-// The fourth presence case.
+// The fourth presence case, which no longer has a way to happen.
 //
-// Two dark stretches inside one cluster carve out a middle piece that lies
-// BETWEEN two observations rather than containing either. The clustering must
-// drop it rather than emit a sitting nothing evidenced. This was found by a
-// CHECK constraint on a real run, not by a test, and the invariant was written
-// in the code as a comment and was false.
-func TestOneClusterLeavesAPieceThatLiesBetweenTwoObservations(t *testing.T) {
+// Two dark stretches inside one cluster used to carve out a middle piece lying
+// BETWEEN two observations rather than containing either, and it reached the
+// database as a sitting resting on nothing — found by a CHECK constraint on a
+// real run, not by a test, while the invariant sat in the code as a comment and
+// was false. The between day was built to hold that shape.
+//
+// Darkness stopped carving clusters on 2026-08-14, so no piece is produced and
+// none can be left unevidenced. The corpus keeps the shape, because the
+// INVARIANT is still enforced by CHECK (events > 0) and must not depend on the
+// route by which sittings are built; what this now asserts is that the route
+// is gone and that the guarantee survived it.
+//
+// The two counters are asserted to be zero deliberately. They are structurally
+// zero rather than measured zero, and pinning them here is what keeps a later
+// reader from taking a bare zero for a measurement.
+func TestNoClusterIsCarvedAndNoSittingRestsOnNothing(t *testing.T) {
 	f := storefixture.New(t)
-	res, err := sessions.Cluster(events(t, f, store.Filter{}), f.Params)
+	all := events(t, f, store.Filter{})
+	res, err := sessions.Cluster(all, f.Params)
 	if err != nil {
 		t.Fatalf("Cluster: %v", err)
 	}
-	if res.Stats.UnevidencedPieces == 0 {
-		t.Error("no piece of any cluster lies between two observations; the fourth presence case " +
-			"is not in the corpus")
+	if res.Stats.ObservedAbsence == 0 {
+		t.Fatal("the corpus establishes no darkness at all, so this asserts nothing")
 	}
-	if res.Stats.SplitByAbsence == 0 {
-		t.Error("no cluster was split by observed darkness")
+	if res.Stats.UnevidencedPieces != 0 || res.Stats.UnevidencedDropped != 0 {
+		t.Errorf("UnevidencedPieces = %d over %v; no cluster is cut, so no piece can be left over",
+			res.Stats.UnevidencedPieces, res.Stats.UnevidencedDropped)
+	}
+	if res.Stats.SplitByAbsence != 0 || res.Stats.TrimmedByAbsence != 0 {
+		t.Errorf("SplitByAbsence = %d removing %v; darkness no longer splits or trims a sitting",
+			res.Stats.SplitByAbsence, res.Stats.TrimmedByAbsence)
 	}
 	for _, s := range res.Sessions {
 		if s.Events == 0 {
 			t.Errorf("sitting %v..%v rests on no observation at all", s.Start, s.End)
 		}
+	}
+	// Every observation is accounted for exactly once: suppressed and counted,
+	// or placed in a sitting. This is the property that makes narrowing
+	// suppression and dropping the subtraction one change rather than two.
+	var placed int
+	for _, s := range res.Sessions {
+		placed += s.Events
+	}
+	if got := placed + res.Stats.SuppressedByAbsence; got != res.Stats.Evidence {
+		t.Errorf("%d observations placed and %d suppressed against %d of evidence; %d went nowhere",
+			placed, res.Stats.SuppressedByAbsence, res.Stats.Evidence, res.Stats.Evidence-got)
 	}
 }
 

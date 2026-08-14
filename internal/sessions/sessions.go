@@ -56,12 +56,10 @@
 // So presence acts in one direction only:
 //
 //   - OBSERVED ABSENT — covered by an 'off' reading and by no 'on' reading —
-//     splits a sitting and is subtracted from it, and an observation anchored
-//     inside it is dropped. A Motion autosave is written by a wall-clock timer
-//     that does not care whether anybody is there; the 2026-07-11 17:53 one was
-//     written with the screen off during a break Ben independently recalls, and
-//     it is evidence the application was running and none at all that a person
-//     was.
+//     suppresses an evidence observation anchored inside it whose Cause is
+//     source.CauseTimer, and does NOTHING ELSE. It does not split a sitting, it
+//     is not subtracted from one, and it suppresses nothing written by any
+//     other mechanism.
 //
 //   - OBSERVED PRESENT never merges anything. A lit screen between two
 //     observations three hours apart is not a reason to call them one sitting;
@@ -74,9 +72,71 @@
 // Where the two readings contradict each other — knowledgeC writes both an
 // isBacklit=1 and an isBacklit=0 row with identical endpoints at 2026-07-14
 // 09:01:12, and 636 'on' rows sit inside longer 'off' rows in one snapshot —
-// darkness is NOT established and nothing is trimmed. Stats.Contested reports
-// how much time that covers, so a figure resting on contested readings can be
-// recognised as one.
+// darkness is NOT established and nothing is suppressed. Stats.Contested
+// reports how much time that covers, so a figure resting on contested readings
+// can be recognised as one.
+//
+// # What a dark backlight actually observed, which is a lid
+//
+// The first state used to do much more than it does. Darkness split a sitting,
+// was subtracted from it, and dropped any observation anchored inside it,
+// arguing from a Motion autosave written at 2026-07-11 17:53 with the screen
+// off during a break: evidence the application was running and none at all that
+// a person was there.
+//
+// That argument is sound about the autosave and unsound as a rule, because it
+// generalises from the one case where the mechanism is the whole explanation. A
+// video render with the backlight deliberately switched off is unambiguous
+// work, and it leaves exactly the same trace. So does a compile, a long export,
+// and an agent running unattended. Reading a dark screen as an absence of work
+// deletes every one of them.
+//
+// knowledgec-backlit observes a LID, and its name promises more than it can
+// deliver. Lid state stands in for someone being at the machine, which stands
+// in for work being done — a proxy for a proxy — and neither step holds in the
+// direction that deletes. The three states above are still exactly right; the
+// mistake was giving the first one a weight it cannot carry.
+//
+// Cause is what separates the two cases, and it was built for this. An artifact
+// written by a WALL-CLOCK TIMER asserts that an application was running and
+// nothing whatever about what was happening; joined with a dark reading there is
+// no evidence of work in either direction, which is true of no other mechanism.
+// So the timer arm stays, and everything else survives. That includes the empty
+// cause — which means "not an artifact" rather than "nobody said", and which
+// 868,924 live claude-transcripts rows carry — and source.CauseRecovery, whose
+// evidentiary weight is documented as unmeasured and would be settled by
+// default, in the direction of deleting work, if darkness were allowed to drop
+// it.
+//
+// The rule that was replaced had, over the whole live store, reached 1 timer
+// observation and 24,703 others, and cost 35.8 hours of engaged time across
+// three projects (`go run ./scripts/darkcause`, and `timetattle metrics --all`
+// either side).
+//
+// TWO THINGS THAT FIGURE DOES NOT SAY, both of which an earlier draft of this
+// comment got wrong. It is not a rate: the cost falls across the seven weeks
+// the backlight stream covers, not evenly, and the weekly deltas run 0.5, 0.3,
+// 2.1, 5.0, 13.4, 8.1, 6.4 (`timetattle metrics --all --by week`, differenced).
+// Quoting any one week as typical overstates or understates it by up to 40x.
+//
+// And "1 timer observation" is NOT evidence the old rule was idle, which is how
+// it was first read here. The store holds 38 timer-caused rows in total —
+// motion-autosave is the entire timer population — of which 23 fall after the
+// backlight begins recording on 2026-07-02. Catching one of 23 is near the
+// arithmetic ceiling, and the one it caught is the 2026-07-11 17:53 autosave
+// this package already argued from. The old rule hit its design case. The
+// argument for narrowing it was never that it caught too little; it is that
+// the other 24,703 were not timers and were never evidence of absence.
+//
+// # Engaged time is the headline, and the backlight is not in it
+//
+// This is the reason the change is confined to one arm rather than made
+// configurable. ENGAGED TIME answers "how much did I work on this", and it
+// counts work done with the screen off exactly as it counts work done with the
+// screen on. A separate hands-on figure — how much of that time somebody was at
+// the keyboard for — is a different question and reports a smaller number, and
+// the backlight is the right instrument for THAT one. Nothing here computes it;
+// the point is that darkness is entitled to affect it and not this.
 //
 // # Sittings are global, and attribution happens above them
 //
@@ -158,22 +218,36 @@ type Stats struct {
 	MergedByExpansion int
 	// SplitByAbsence counts sittings cut into more than one piece by an
 	// observed dark span; TrimmedByAbsence is how much time that removed.
+	//
+	// BOTH ARE STRUCTURALLY ZERO, and have been since 2026-08-14. Darkness no
+	// longer subtracts anything from a cluster, so there is no route by which
+	// either can be non-zero — they are not "measured and found to be nothing",
+	// which is the reading a bare zero invites and the confusion this package
+	// exists to refuse. They are retained rather than deleted because the store
+	// persists the derivation's statistics and a field that vanishes from one
+	// run to the next is worse than one that explains itself.
 	SplitByAbsence   int
 	TrimmedByAbsence time.Duration
 	// SuppressedByAbsence counts evidence observations dropped for being
-	// anchored inside observed darkness.
+	// anchored inside observed darkness. Only source.CauseTimer observations
+	// are, so this is a count of wall-clock artifacts and not of work.
 	SuppressedByAbsence int
 	// UnevidencedPieces counts fragments left with no observation in them
 	// after darkness cut a sitting up, and UnevidencedDropped is how much
 	// time they covered.
 	//
-	// This is a third case, distinct from both of the above, and it was
-	// found by the schema rather than by design: two dark spans inside one
-	// cluster leave a middle piece that can lie BETWEEN two observations
-	// rather than containing either. Nothing observed work there and nothing
-	// observed darkness there. Emitting it would invent a sitting; counting
-	// it as trimmed would claim a reading nobody took. So it is dropped, and
-	// said out loud, which is the only treatment that is true.
+	// The case was found by the schema rather than by design: two dark spans
+	// inside one cluster left a middle piece lying BETWEEN two observations
+	// rather than containing either, so nothing evidenced it and nothing had
+	// observed darkness in it, and it reached CHECK (events > 0) as a sitting
+	// resting on nothing.
+	//
+	// ALSO STRUCTURALLY ZERO since 2026-08-14, and for the same reason: pieces
+	// were made by subtracting darkness, nothing subtracts darkness now, so a
+	// cluster is one piece and that piece always holds the observations it was
+	// built from. The invariant the case broke still holds and is still tested
+	// (TestNoSittingRestsOnZeroObservations) — what has gone is the route to
+	// breaking it, not the guarantee.
 	UnevidencedPieces  int
 	UnevidencedDropped time.Duration
 	// Contested is how much time the backlight stream claims as both lit and
@@ -216,6 +290,11 @@ func (r Result) Total() time.Duration {
 type observation struct {
 	span   timespan.Span
 	source string
+	// cause is what wrote the artifact, carried through because darkness is
+	// entitled to act on exactly one value of it. Deducing it here from source
+	// would be the mistake internal/source's header names: inference branches on
+	// Shape and Cause and stays ignorant of which reader produced the event.
+	cause source.Cause
 }
 
 // Cluster groups events into sittings.
@@ -283,12 +362,17 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 				// and nothing else.
 				res.Stats.Unbounded++
 				at := e.Anchor()
-				evidence = append(evidence, observation{span: timespan.Span{Start: at, End: at}, source: e.Source})
+				evidence = append(evidence, observation{
+					span:   timespan.Span{Start: at, End: at},
+					source: e.Source,
+					cause:  e.Cause,
+				})
 				continue
 			}
 			evidence = append(evidence, observation{
 				span:   timespan.Span{Start: e.Start, End: e.End},
 				source: e.Source,
+				cause:  e.Cause,
 			})
 		}
 	}
@@ -320,9 +404,24 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 	// ever overwritten after it has been read. Reading evidence after this loop
 	// would see kept's contents, so if a future change needs it, allocate a
 	// second slice here rather than restoring the read.
+	//
+	// A dark reading suppresses an observation written by a WALL-CLOCK TIMER and
+	// nothing else. See the header: the backlight observed a lid, and a lid says
+	// nothing about whether work was being produced — but a timer's artifact
+	// says nothing about it either, and that is a claim about the timer rather
+	// than about the darkness. Where the two coincide there is no evidence of
+	// work in either direction, and only there.
+	//
+	// Every other cause survives, including the empty one. Empty means "not an
+	// artifact" rather than "nobody said" — a focus interval and a transcript
+	// record are not written by anything a manifest can describe — so there is
+	// no timer to argue from, and 868,924 live claude-transcripts rows carry it.
+	// source.CauseRecovery survives for the opposite reason: its evidentiary
+	// weight is documented as UNMEASURED, and suppressing it would be settling
+	// that question by default, in the direction of deleting work.
 	kept := evidence[:0]
 	for _, s := range evidence {
-		if timespan.Covers(absent, s.span.Start) {
+		if s.cause == source.CauseTimer && timespan.Covers(absent, s.span.Start) {
 			res.Stats.SuppressedByAbsence++
 			continue
 		}
@@ -396,57 +495,68 @@ func Cluster(events []source.Event, p Params) (Result, error) {
 		expanded = append(expanded, next)
 	}
 
-	// One buffer for the clipped spans, reused across every piece of every
-	// cluster rather than allocated per piece. Union clones what it is given,
-	// so nothing outside this loop keeps a reference to it and truncating it
-	// for the next piece cannot reach an answer already computed.
+	// One buffer for the clipped spans, reused across every cluster rather than
+	// allocated per cluster. Union clones what it is given, so nothing outside
+	// this loop keeps a reference to it and truncating it for the next cluster
+	// cannot reach an answer already computed.
 	var covered []timespan.Span
 	for _, c := range expanded {
-		// Expansion can reach into a span the screen was observed dark
-		// across, and so can a focus interval that ran on after the display
-		// slept. Both are removed here rather than at clustering time,
-		// because a sitting either side of a dark span is two sittings.
-		pieces := timespan.Subtract([]timespan.Span{c.span}, absent)
-		res.Stats.TrimmedByAbsence += c.span.Duration() - timespan.Total(pieces)
-		if len(pieces) > 1 {
-			res.Stats.SplitByAbsence++
-		}
-		// Observations are attributed to a piece by their EXPANDED span, the
-		// same spans the pieces were carved out of, so that a piece made
-		// entirely of tail-out still names the observation it hangs off.
+		// A CLUSTER IS EMITTED WHOLE. Darkness is not subtracted from it, and
+		// that is the half of the rule which has to move together with the
+		// suppression above rather than separately.
 		//
-		// It does NOT follow that every piece has one. Two dark spans inside
-		// one cluster leave a middle piece that can sit between two
-		// observations rather than containing either; that piece is dropped
-		// below rather than emitted as a sitting nothing evidenced.
-		for _, piece := range pieces {
-			s := Session{Start: piece.Start, End: piece.End}
-			covered = covered[:0]
-			for _, m := range c.members {
-				grown := timespan.Span{
-					Start: m.span.Start.Add(-p.LeadIn),
-					End:   m.span.End.Add(p.TailOut),
-				}
-				if !timespan.Overlaps(grown, piece) {
-					continue
-				}
-				s.Events++
-				if !slices.Contains(s.Sources, m.source) {
-					s.Sources = append(s.Sources, m.source)
-				}
-				if clipped, ok := timespan.Clip(m.span, piece); ok {
-					covered = append(covered, clipped)
-				}
+		// Keeping a non-timer observation there while still carving darkness out
+		// here would retain the evidence and throw away the only time it could
+		// have occupied: its cluster shrinks to nothing, no sitting is emitted,
+		// and NOTHING counts the loss — SuppressedByAbsence does not fire, and
+		// UnevidencedPieces counts pieces rather than observations. That is a
+		// quieter deletion than the one this change exists to stop, and it would
+		// have stranded roughly 24,700 records on the live store.
+		// TestEverySurvivingObservationLandsInASitting pins the property that
+		// forbids it: every observation is suppressed and counted, or placed in
+		// a sitting, with no third outcome.
+		piece := c.span
+		s := Session{Start: piece.Start, End: piece.End}
+		covered = covered[:0]
+		// Observations are attributed by their EXPANDED span, so that a stretch
+		// made entirely of tail-out still names the observation it hangs off.
+		for _, m := range c.members {
+			grown := timespan.Span{
+				Start: m.span.Start.Add(-p.LeadIn),
+				End:   m.span.End.Add(p.TailOut),
 			}
-			if s.Events == 0 {
-				res.Stats.UnevidencedPieces++
-				res.Stats.UnevidencedDropped += piece.Duration()
+			if !timespan.Overlaps(grown, piece) {
 				continue
 			}
-			slices.Sort(s.Sources)
-			s.Margin = piece.Duration() - timespan.Total(timespan.Union(covered))
-			res.Sessions = append(res.Sessions, s)
+			s.Events++
+			if !slices.Contains(s.Sources, m.source) {
+				s.Sources = append(s.Sources, m.source)
+			}
+			if clipped, ok := timespan.Clip(m.span, piece); ok {
+				covered = append(covered, clipped)
+			}
 		}
+		// UNREACHABLE BY CONSTRUCTION, and kept because the invariant it guards
+		// is enforced by a CHECK (events > 0) that a real run has already
+		// tripped. Members are sorted by start and the cluster span runs from the
+		// first member's start less the lead-in to the furthest end plus the
+		// tail-out, so every grown member span lies inside it, and Overlaps
+		// counts a zero-length span as touching. Nothing can fall out.
+		//
+		// It became unreachable when darkness stopped carving clusters: pieces
+		// were what darkness cut, a piece could land between two observations
+		// rather than containing either, and there are no pieces now. So these
+		// two counters read STRUCTURALLY zero rather than measured zero — a
+		// distinction their own documentation makes, because a bare zero here
+		// invites exactly the reading this package exists to refuse.
+		if s.Events == 0 {
+			res.Stats.UnevidencedPieces++
+			res.Stats.UnevidencedDropped += piece.Duration()
+			continue
+		}
+		slices.Sort(s.Sources)
+		s.Margin = piece.Duration() - timespan.Total(timespan.Union(covered))
+		res.Sessions = append(res.Sessions, s)
 	}
 	return res, nil
 }
