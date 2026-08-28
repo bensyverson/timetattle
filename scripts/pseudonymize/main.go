@@ -72,6 +72,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -358,8 +359,8 @@ func isColumnAligned(s string) bool {
 // Substitutions are repaired right to left: an edit at one offset moves
 // everything after it, and everything after it has already been dealt with.
 func repairColumns(out string, reps []substitution) (string, bool) {
-	for i := len(reps) - 1; i >= 0; i-- {
-		r := reps[i]
+	for _, r := range slices.Backward(reps) {
+
 		if r.delta == 0 {
 			continue
 		}
