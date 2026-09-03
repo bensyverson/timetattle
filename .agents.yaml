@@ -1,3 +1,6 @@
+sources:
+  - name: agents-md
+    path: ../agents-md
 modules:
   - core
   - principles
