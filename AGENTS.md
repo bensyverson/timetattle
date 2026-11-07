@@ -29,7 +29,7 @@ Findings go in `project/` as dated documents. A document goes in `project/privat
 - **Schema migrations are numbered files in [internal/migrations/](internal/migrations/).**
 - **The pre-commit hook runs the confidentiality gate first.** It is `scripts/git-hooks/pre-commit`, wired in via `core.hooksPath`, and it runs the gate before `go vet`, a `scripts/` layout check, `go fix`, `gofmt`, `go mod tidy`, `go test ./...` and `go build`. The hook asks whether *this commit* adds anything unpublishable; `make gate` asks whether the repository is publishable *as it stands*, across the whole tree and every object in `.git`, and is what to run before pushing to a public mirror.
 
-<!-- agents:begin core@98d8a9 -->
+<!-- agents:begin core@ffe7d8 -->
 ## Working rules
 
 **Understand the why.** If the goal behind a request isn't clear, ask before solving — beware the XY problem.
@@ -47,6 +47,8 @@ Findings go in `project/` as dated documents. A document goes in `project/privat
 **Don't tour the codebase.** Start from the README and the docs (an Explore agent is fine); dig only where the task leads — once you have a specific need, read as much as that need requires.
 
 **Scripts.** Analysis tooling goes in `scripts/` so it can be re-run — check there before writing one.
+
+**Shell variables.** Never store a command or a list of arguments in a plain shell variable. zsh doesn't split `$VAR` into words, so `git commit -- $FILES` passes one path made of every name. Use a function or an array, or write it out. This applies on remote machines too.
 
 **Critique before declaring done.** Re-read the original request: is the need actually met? Do lint and tests pass? Are docs updated? What would an expert flag? Fix serious flaws before reporting.
 
@@ -66,7 +68,8 @@ Findings go in `project/` as dated documents. A document goes in `project/privat
 - **On the main thread, read `project/agents/delegation.md` in full before you begin, so whether to delegate is a choice, not a default.** A subagent skips this: its brief is its scope, and it doesn’t delegate further.
 - **Unless the user says they're around, assume they aren't.** Make the call yourself when it's safe and a two-way door, queue the rest, and report every decision at the end. While they're around, bring questions as they come up, including ones an agent raises mid-flight.
 - **Before starting, say what needs the user's eyes.**
-- **Continue working if there’s more to be done, but wrap up once you cross your context limit.** The main thread should wrap after passing 25%; subagents should prepare to hand over their work after passing 40% (check using `contextfill` if available).
+- **Get independent review of the code you land**, at the triggers in `project/agents/review.md`, and before handoff.
+- **Keep working while there's work; once past your context line, start nothing new.** The main thread's line is 33%, a subagent's 40% (read with contextfill; never estimate). Those are defaults: when the contextfill hook names a line, its line wins. The line is where wrapping up begins: finishing what's in flight and handing off happen after it, however far past it that takes. It is not a cutoff, so until you reach it, keep taking on work; don't start wrapping up early. A delegating main thread: delegation.md ▸ Carving the work.
 
 ## Git
 
@@ -104,10 +107,10 @@ Defaults, not laws. When we break one, we do it consciously and say so in the re
 Pre-launch, zero users, no existing data. Never spend effort on backward compatibility — assume every use is green-field — but flag breaking changes and update the affected tests. Be ambitious: if a feature is important, build it fully now rather than an MVP; balance that against over-engineering and future-proofing.
 <!-- agents:end stage-build -->
 
-<!-- agents:begin go@91ab6a -->
+<!-- agents:begin go@4864fc -->
 ## Go
 
-- Before committing: `go fix ./...`, `gofmt -w .`, `go vet ./...` and `go mod tidy`, then the tests you touched. `go fix` converges over several passes — "re-run to apply more" is progress, not failure; re-run until clean before editing code.
+- Before committing: `go fix ./...`, `gofmt -w .`, `go vet ./...` and `go mod tidy`, then the tests you touched. `go fix` converges over several passes — "re-run to apply more" is progress, not failure; re-run until clean before editing code. The pre-commit hook `agents hooks install` writes checks all four without rewriting anything, then runs the tests.
 - **Run `go fix ./...` before staging, not just before committing.** A pre-commit hook that re-stages `gofmt` rewrites will not re-stage `go fix` rewrites: a file `go fix` changed that is already gofmt-clean commits unfixed, and your working tree quietly diverges from what you committed.
 - **Tests that share a database need `-p 1` and a database per agent.** `go test ./...` runs packages in parallel, so packages that seed the same fixtures and truncate the same tables produce a wall of unrelated-looking failures that survives a re-run and reads as a real regression.
 - **Schema changes are numbered migrations** in the project's migrations directory (the head names it). Never run one by hand — the binary migrates when it starts or opens the database and records the version; the next run applies it. Read the full note history on the task (`job show <id>`) before writing schema; it is the most expensive thing to change.
@@ -118,7 +121,7 @@ Pre-launch, zero users, no existing data. Never spend effort on backward compati
 - **`r.ParseForm()` reads a body only when it is urlencoded**; for multipart it leaves it empty without erroring. Keep one wire format per route — a handler that accepts two body shapes needs two sets of checks where the design wanted one.
 <!-- agents:end go -->
 
-<!-- agents:begin docs@7ba2fd -->
+<!-- agents:begin docs@426033 -->
 ## Documentation practice
 
 - **Plans, findings, designs and decisions go in `project/` as dated documents** (`YYYY-MM-DD-title.md`) — the written history of the project. They are point-in-time records: correct an earlier one *in place*, as a marked block quote, rather than silently editing a number or leaving a stale claim standing.
@@ -128,7 +131,7 @@ Pre-launch, zero users, no existing data. Never spend effort on backward compati
 - **A wrong documented cause is worse than none** — it stops the next reader looking. Correcting one means saying it was wrong, not quietly rewording.
 - **Open the note before you cite it**, and check whether a recorded ruling has been superseded before passing it on.
 - **Every repo has a README; if none exists, write one (delegate it if you can).** It is tight: the project's name and a one-line description a non-technical reader understands (6th-grade reading level); one short paragraph of what it is; how to install or consume it; a crisp Quick Start with an example or two; links out to the specific docs for anything more; authorship and license at the end.
-- **The head of `AGENTS.md` lists where the docs live; keep that list current.**
+- **The head of `AGENTS.md` lists where the docs live; keep that list current with documentation, but exclude project/ docs such as plans and research.**
 <!-- agents:end docs -->
 
 <!-- agents:begin background@882e19 -->
@@ -139,7 +142,7 @@ Pre-launch, zero users, no existing data. Never spend effort on backward compati
 **It holds *current* state, so it is rewritten, not appended.** Every number, date and name appears there once and links the dated `project/` document it came from; when a fact changes, edit the sentence that holds it and let the dated record keep the history.
 <!-- agents:end background -->
 
-<!-- agents:begin index@19ea97 -->
+<!-- agents:begin index@729471 -->
 ## Situational instructions
 
 These files carry instructions for specific situations. When one applies, read the file before acting and follow it.
@@ -151,4 +154,5 @@ These files carry instructions for specific situations. When one applies, read t
 | Before filing or claiming work in job, and when running as a subagent | `project/agents/jobs.md` |
 | The first time a tool call is refused or denied, and before briefing a subagent | `project/agents/harness.md` |
 | Before writing a plan, importing a `tasks:` block, or detailing the leaves of work ahead | `project/agents/planning.md` |
+| Before handoff, when a job container closes, and before building on unreviewed code | `project/agents/review.md` |
 <!-- agents:end index -->
