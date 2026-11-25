@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -50,9 +49,7 @@ import (
 // already safe: they keep the attribution they had, and the next harvest
 // retries them.
 func resolveProjects(ctx context.Context, st *store.Store, registered []*registry.Marker, out io.Writer) error {
-	att, err := st.ResolveProjects(ctx, func(locator string) (store.Attributed, bool, error) {
-		return resolveLocator(locator, registered)
-	})
+	att, err := st.ResolveProjects(ctx, passResolver(&registry.Resolver{}, registered))
 	if err != nil {
 		return fmt.Errorf("resolve projects: %w", err)
 	}
@@ -154,7 +151,21 @@ func backfillClientAssertions(ctx context.Context, st *store.Store,
 // the client away — the marker was in hand on every one of the 38 registered
 // directories and only `project` reached the store.
 func resolveLocator(locator string, registered []*registry.Marker) (store.Attributed, bool, error) {
-	m, found, err := registry.ResolveAmong(attributionDirOf(locator), locator, registered)
+	return resolveLocatorWith(&registry.Resolver{}, locator, registered)
+}
+
+// passResolver answers every locator of one pass through r, so that what r
+// remembers about a directory serves all the locators in it. r must not outlive
+// the pass: nothing tells it the filesystem or the registry has changed.
+func passResolver(r *registry.Resolver, registered []*registry.Marker) store.Resolver {
+	return func(locator string) (store.Attributed, bool, error) {
+		return resolveLocatorWith(r, locator, registered)
+	}
+}
+
+// resolveLocatorWith is resolveLocator, asking the filesystem through r.
+func resolveLocatorWith(r *registry.Resolver, locator string, registered []*registry.Marker) (store.Attributed, bool, error) {
+	m, found, err := r.ResolveAmong(attributionDirIn(r, locator), locator, registered)
 	if err != nil || !found {
 		return store.Attributed{}, found, err
 	}
@@ -187,7 +198,12 @@ func resolveLocator(locator string, registered []*registry.Marker) (store.Attrib
 // because ResolveProjects calls the resolver once per DISTINCT locator, not
 // once per event.
 func attributionDirOf(locator string) string {
-	if info, err := os.Stat(locator); err == nil && info.IsDir() {
+	return attributionDirIn(&registry.Resolver{}, locator)
+}
+
+// attributionDirIn is attributionDirOf, asking the filesystem through r.
+func attributionDirIn(r *registry.Resolver, locator string) string {
+	if r.IsDir(locator) {
 		return locator
 	}
 	return filepath.Dir(locator)

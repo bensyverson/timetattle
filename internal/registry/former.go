@@ -57,7 +57,12 @@ import (
 //     it, and quietly attributing renamed work to a catch-all is the
 //     wrong-attribution-is-worse-than-none failure.
 func ResolveAmong(climbFrom, path string, registered []*Marker) (*Marker, bool, error) {
-	live, liveFound, err := Resolve(climbFrom)
+	return new(Resolver).ResolveAmong(climbFrom, path, registered)
+}
+
+// ResolveAmong is the package function ResolveAmong, asked through r.
+func (r *Resolver) ResolveAmong(climbFrom, path string, registered []*Marker) (*Marker, bool, error) {
+	live, liveFound, err := r.Resolve(climbFrom)
 	if err != nil {
 		return nil, false, err
 	}

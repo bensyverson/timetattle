@@ -242,6 +242,22 @@ rather than the nearer one. Resolving symlinks first keeps the nearer marker
 reachable. It also covers the case git cannot help with at all: a registered
 directory that is not a repository.
 
+### One harvest asks about a directory once
+
+A store holds many locators per directory, so the attribution pass remembers
+what each directory answered — whether it holds a marker, where its symlinks
+lead, which repository it belongs to — and asks the filesystem and git once.
+The memory lasts for that one pass and is never saved. A marker added or
+removed while a pass is running is picked up by the next one. A directory that
+could not be read stays unreadable for the whole pass: its events keep the
+attribution they had.
+
+Git is not run at all for a path that is not a directory, such as one that has
+since been deleted, because it could only fail there.
+
+`go run ./scripts/attributionprofile -store <path>` times a pass over a copy of
+a store, phase by phase; `-nocache` times it without the memory.
+
 ## When a directory is renamed or moved away
 
 Evidence is recorded under the path it was **observed** at, permanently, in a

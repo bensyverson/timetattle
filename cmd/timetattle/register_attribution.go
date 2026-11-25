@@ -48,9 +48,7 @@ func attributeRegistration(ctx context.Context, storePath, indexPath string, rec
 	defer st.Close()
 
 	registered := registeredWith(indexPath, m)
-	att, err := st.ResolveProjectsUnder(ctx, spellingsOf(m), func(locator string) (store.Attributed, bool, error) {
-		return resolveLocator(locator, registered)
-	})
+	att, err := st.ResolveProjectsUnder(ctx, spellingsOf(m), passResolver(&registry.Resolver{}, registered))
 	if err != nil {
 		return err
 	}

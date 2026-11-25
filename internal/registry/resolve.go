@@ -24,21 +24,26 @@ import (
 // repository — and the caller is expected to represent it as unattributed
 // rather than treat it as an error.
 func Resolve(dir string) (*Marker, bool, error) {
+	return new(Resolver).Resolve(dir)
+}
+
+// Resolve is the package function Resolve, asked through r.
+func (r *Resolver) Resolve(dir string) (*Marker, bool, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	abs = filepath.Clean(abs)
 
-	if m, ok, err := climb(abs); err != nil || ok {
+	if m, ok, err := r.climb(abs); err != nil || ok {
 		return m, ok, err
 	}
 
-	if m, ok, err := climbPhysical(abs); err != nil || ok {
+	if m, ok, err := r.climbPhysical(abs); err != nil || ok {
 		return m, ok, err
 	}
 
-	root, ok := gitCommonRoot(abs)
+	root, ok := r.gitRoot(abs)
 	if !ok || isAncestorOrSame(root, abs) {
 		// Either dir is not inside a git repository at all — the ordinary
 		// case for a plain directory like a Motion vault — or the
@@ -46,7 +51,7 @@ func Resolve(dir string) (*Marker, bool, error) {
 		// climbing it again would repeat work for the same answer: no.
 		return nil, false, nil
 	}
-	return climb(root)
+	return r.climb(root)
 }
 
 // climbPhysical repeats the climb from dir's physical path, for a dir that
@@ -114,8 +119,8 @@ func Resolve(dir string) (*Marker, bool, error) {
 // every locator's. The argument above does not depend on that, and stands.
 //
 // EvalSymlinks cannot loop: it enforces its own link budget and returns ELOOP.
-func climbPhysical(dir string) (*Marker, bool, error) {
-	real, err := filepath.EvalSymlinks(dir)
+func (r *Resolver) climbPhysical(dir string) (*Marker, bool, error) {
+	real, err := r.physicalPath(dir)
 	if err != nil || real == dir {
 		// real == dir is the overwhelmingly common case — 127,361 of the
 		// 127,368 distinct locators in the live store on 2026-08-01, the other
@@ -124,14 +129,14 @@ func climbPhysical(dir string) (*Marker, bool, error) {
 		// answer.
 		return nil, false, nil
 	}
-	return climb(real)
+	return r.climb(real)
 }
 
 // climb checks dir and each of its ancestors, nearest first, for a marker,
 // stopping at the first one found or at the filesystem root.
-func climb(dir string) (*Marker, bool, error) {
+func (r *Resolver) climb(dir string) (*Marker, bool, error) {
 	for {
-		m, ok, err := readMarker(dir)
+		m, ok, err := r.marker(dir)
 		if err != nil || ok {
 			return m, ok, err
 		}
