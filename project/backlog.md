@@ -95,3 +95,16 @@ rather than a mechanical fix.
 
 **What would un-park it:** making the repository public, which turns three
 dangling citations into three visible ones.
+
+## 2026-11-25: Make attribution incremental
+
+Was task `j5JkJi`. Attribute only new locators on each harvest, and redo
+everything when the registry changes.
+
+**Why parked:** the full pass takes 82 s at background priority on an hourly
+schedule, and an incremental one can go stale without saying so. See
+[the ruling](2026-11-25-attribution-keeps-the-full-pass.md).
+
+**What would un-park it:** the full pass, as timed in a real scheduled harvest,
+growing to where it gets in the way, for example by again holding the write lock
+for many minutes.
