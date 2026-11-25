@@ -69,13 +69,20 @@ import (
 // attributed filesystem observations. The base names are matched WHOLE, which
 // is why `env` and `.venv-old` survive an exclude of `.venv` — see
 // TestDefaultExcludesSkipVirtualenvs, and scripts/spike/env in this repository,
-// which a looser rule would delete. `.build` is Swift Package Manager's output.
+// which a looser rule would delete. `.build` is Swift Package Manager's output,
+// `.derived` is a directory Xcode is told to keep derived data in, and
+// `__pycache__` and the three caches after it are Python's.
 var DefaultExcludes = []string{
 	".git",
 	"worktrees",
 	"node_modules",
 	".venv",
 	".build",
+	".derived",
+	"__pycache__",
+	".mypy_cache",
+	".pytest_cache",
+	".ruff_cache",
 	".Trash",
 	"Autosave Vault",
 }

@@ -259,12 +259,20 @@ var bundleByExtension = map[string]string{
 // The name is exact and deliberately narrow — `env` and `venv` without the dot
 // matched one file each in that store and BOTH were source somebody wrote,
 // including this repository's own scripts/spike/env/main.go.
+//
+// `.derived` is a directory Xcode is told to keep derived data in. It and the
+// Python bytecode and tool caches hold only what a tool wrote.
 var excludedDirs = map[string]bool{
 	".git":           true,
 	"worktrees":      true,
 	"node_modules":   true,
 	".venv":          true,
 	buildoutput.Dir:  true,
+	".derived":       true,
+	"__pycache__":    true,
+	".mypy_cache":    true,
+	".pytest_cache":  true,
+	".ruff_cache":    true,
 	".Trash":         true,
 	"Autosave Vault": true,
 }

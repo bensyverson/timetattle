@@ -210,6 +210,7 @@ directories whole, mirroring `internal/filedays`' own default exclusions:
 
 ```
 .git  worktrees  node_modules  .venv  .build  .Trash  Autosave Vault
+.derived  __pycache__  .mypy_cache  .pytest_cache  .ruff_cache
 ```
 
 It also skips `.DS_Store` and this project's own `.timetattle-project.json`
@@ -223,7 +224,13 @@ burst and every file in it carries a fresh modification time.
 
 `.build` is where Swift Package Manager writes what it builds, dependency
 checkouts included. A compiler wrote those files, so they are nobody's file
-work.
+work. The same goes for `.derived`, a directory Xcode can be told to keep its
+derived data in; for `__pycache__`, Python's compiled bytecode; and for the
+caches `.mypy_cache`, `.pytest_cache` and `.ruff_cache`.
+
+Directories called `build`, `out`, `target`, `public`, `pkg` or `vendor` are
+NOT skipped, and `.gitignore` files are not consulted. Those names can hold
+work somebody did.
 
 **The names are matched WHOLE, and the list is as narrow as the evidence.** A
 directory called `env`, `venv` or `.venv-old` is NOT skipped. Virtualenvs do go
@@ -257,7 +264,7 @@ not a file a compiler wrote.
 describe what the store holds rather than what work was done. Sittings already
 derived keep the old answer until `timetattle sessionize` is run again.
 
-`filedays` snapshots written before `.build` was excluded keep it in their
+`filedays` snapshots written before a directory was excluded keep it in their
 filtered counts.
 
 ### SQLite sidecars
