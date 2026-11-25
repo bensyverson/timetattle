@@ -12,7 +12,7 @@ import (
 // version is the release number. scripts/release rewrites this line, and it is
 // stated in the source because Homebrew builds from a tarball, which carries no
 // VCS stamp.
-const version = "0.1.0"
+const version = "0.2.0"
 
 // The commit and build time are not hardcoded: they come from the VCS stamp the
 // Go toolchain embeds when it builds from within a git checkout, and read as
