@@ -122,7 +122,7 @@ func TestVersionLeadsWithTheReleaseNumberEvenWithoutAStamp(t *testing.T) {
 		t.Fatalf("versionTo: %v", err)
 	}
 	first, _, _ := strings.Cut(buf.String(), "\n")
-	if want := "timetattle 0.1.0"; first != want {
+	if want := "timetattle " + version; first != want {
 		t.Errorf("first line = %q, want %q", first, want)
 	}
 }
