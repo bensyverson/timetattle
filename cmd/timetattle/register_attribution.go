@@ -92,11 +92,16 @@ func unindexed(m *registry.Marker) *registry.Marker {
 // directory: as registered, with its symlinks resolved, and wherever it is
 // declared to have been before.
 func spellingsOf(m *registry.Marker) []string {
+	return append(liveSpellingsOf(m), m.FormerPaths...)
+}
+
+// liveSpellingsOf is the spellings of where m's directory is now.
+func liveSpellingsOf(m *registry.Marker) []string {
 	dirs := []string{m.Path}
 	if physical, err := filepath.EvalSymlinks(m.Path); err == nil && physical != m.Path {
 		dirs = append(dirs, physical)
 	}
-	return append(dirs, m.FormerPaths...)
+	return dirs
 }
 
 // registeredWith is the registry a harvest would resolve against, with m in it

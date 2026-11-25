@@ -252,6 +252,11 @@ removed while a pass is running is picked up by the next one. A directory that
 could not be read stays unreadable for the whole pass: its events keep the
 attribution they had.
 
+Git is the exception to remembering. Its answer is kept when it names a
+repository or says there is none. A git that could not be run, was killed or
+failed for another reason is asked again for the next locator in the directory.
+The locator it failed on is still treated as outside any repository.
+
 Git is not run at all for a path that is not a directory, such as one that has
 since been deleted, because it could only fail there.
 

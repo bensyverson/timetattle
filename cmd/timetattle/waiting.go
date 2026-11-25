@@ -58,12 +58,12 @@ func evidenceWaiting(events []source.Event, scope metricsScope, registered regis
 
 	// Every registered directory, not only the scope's: one nested inside a
 	// scoped directory owns what is under it.
-	owners := map[string]*registry.Marker{}
+	live := map[string]*registry.Marker{}
 	anyInScope := false
 	for _, m := range registered.markers {
 		anyInScope = anyInScope || scope.Project == "" || scope.Project == m.Project
-		for _, dir := range spellingsOf(m) {
-			owners[filepath.Clean(dir)] = m
+		for _, dir := range liveSpellingsOf(m) {
+			live[filepath.Clean(dir)] = m
 		}
 	}
 	if !anyInScope {
@@ -78,7 +78,7 @@ func evidenceWaiting(events []source.Event, scope metricsScope, registered regis
 		}
 		owner, known := placed[e.Locator]
 		if !known {
-			owner = nearestIn(owners, e.Locator)
+			owner = ownerOf(e.Locator, live, registered.markers)
 			placed[e.Locator] = owner
 		}
 		if owner == nil || (scope.Project != "" && scope.Project != owner.Project) {
@@ -101,15 +101,21 @@ func clientAt(m *registry.Marker, at time.Time, cm clientmap.Map) string {
 	return client
 }
 
-// nearestIn is the marker of the closest directory at or above path, and nil
-// when none of them is registered.
-func nearestIn(owners map[string]*registry.Marker, path string) *registry.Marker {
+// ownerOf is the marker with the most specific claim on path, and nil when
+// nothing claims it. A directory registered now holds against a former path at
+// or above its own depth, which is the precedence registry.ResolveAmong gives
+// the two.
+func ownerOf(path string, live map[string]*registry.Marker, registered []*registry.Marker) *registry.Marker {
+	alias, former, aliased := registry.FormerPathOwner(path, registered)
 	for dir := filepath.Clean(path); ; dir = filepath.Dir(dir) {
-		if m, ok := owners[dir]; ok {
+		if aliased && len(former) > len(dir) {
+			return alias
+		}
+		if m, ok := live[dir]; ok {
 			return m
 		}
 		if dir == filepath.Dir(dir) {
-			return nil
+			return alias
 		}
 	}
 }

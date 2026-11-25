@@ -2,8 +2,10 @@ package registry
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -175,6 +177,26 @@ func readMarker(dir string) (*Marker, bool, error) {
 	return &m, true, nil
 }
 
+// gitVerdict is what asking git about a directory established.
+type gitVerdict int
+
+const (
+	// gitUnanswered is git not run, killed, or failing for some other reason.
+	// It says nothing about the directory.
+	gitUnanswered gitVerdict = iota
+	// gitRepository is git naming the repository the directory belongs to.
+	gitRepository
+	// gitNoRepository is git saying the directory belongs to none.
+	gitNoRepository
+)
+
+const (
+	// gitFatalExit is the status git ends with on any fatal error, so it takes
+	// gitNotARepository as well to tell which error it was.
+	gitFatalExit      = 128
+	gitNotARepository = "not a git repository"
+)
+
 // gitCommonRoot reports the working-tree root of the repository whose
 // metadata dir actually shares, using git rather than any assumption about
 // where a worktree lives.
@@ -191,7 +213,9 @@ func readMarker(dir string) (*Marker, bool, error) {
 //
 // Failure is silent and non-fatal by design. Most directories Resolve is
 // asked about are not git repositories at all — a Motion autosave vault, a
-// scratch render directory — and that is the ordinary case, not an error.
+// scratch render directory — and that is the ordinary case, not an error. The
+// verdict still separates that case from a git that did not answer. git's
+// messages are translated, so it is run in the C locale to be recognized.
 //
 // git exports GIT_DIR, GIT_WORK_TREE and their relatives into every hook it
 // runs. A process invoked from inside one of this project's own git hooks —
@@ -202,15 +226,21 @@ func readMarker(dir string) (*Marker, bool, error) {
 // invoked it, internal/gitenv.Command strips them first rather than
 // trusting -C alone; see internal/gitenv's package doc for why that rule
 // lives there rather than as a copy here.
-func gitCommonRoot(dir string) (string, bool) {
+func gitCommonRoot(dir string) (string, gitVerdict) {
 	cmd := gitenv.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	cmd.Env = append(cmd.Env, "LC_ALL=C")
 	out, err := cmd.Output()
 	if err != nil {
-		return "", false
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == gitFatalExit &&
+			strings.Contains(string(exit.Stderr), gitNotARepository) {
+			return "", gitNoRepository
+		}
+		return "", gitUnanswered
 	}
 	commonDir := strings.TrimSpace(string(out))
 	if commonDir == "" {
-		return "", false
+		return "", gitUnanswered
 	}
-	return filepath.Dir(commonDir), true
+	return filepath.Dir(commonDir), gitRepository
 }

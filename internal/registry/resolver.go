@@ -52,7 +52,9 @@ const (
 // their ancestors.
 //
 // It remembers what it saw, failures included, so a directory that could not be
-// read stays unreadable rather than turning into one with no marker. Nothing
+// read stays unreadable rather than turning into one with no marker. The
+// exception is git: a run that failed answered nothing, and remembering it
+// would pass it off as "not a repository" for every locator there. Nothing
 // tells it the filesystem has changed, so it belongs to one pass and is never
 // persisted. Answers are kept per spelling of a path, never merged across
 // symlinks: two spellings of one directory have different ancestors, and so can
@@ -86,8 +88,8 @@ type physicalAnswer struct {
 }
 
 type gitAnswer struct {
-	root string
-	ok   bool
+	root    string
+	verdict gitVerdict
 }
 
 // ask answers from known when r remembers the path, and otherwise puts the
@@ -142,8 +144,11 @@ func (r *Resolver) gitRoot(dir string) (string, bool) {
 		return "", false
 	}
 	a := ask(r, LookupGitRoot, &r.gitRoots, dir, func(d string) gitAnswer {
-		root, ok := gitCommonRoot(d)
-		return gitAnswer{root, ok}
+		root, verdict := gitCommonRoot(d)
+		return gitAnswer{root, verdict}
 	})
-	return a.root, a.ok
+	if a.verdict == gitUnanswered {
+		delete(r.gitRoots, dir)
+	}
+	return a.root, a.verdict == gitRepository
 }
