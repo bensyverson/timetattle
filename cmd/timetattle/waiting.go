@@ -18,48 +18,52 @@ import (
 type waitingEvidence struct {
 	observations int
 	scope        metricsScope
+	// unchecked is why some registrations could not be read, so that finding
+	// nothing under them is not taken for a check that found nothing.
+	unchecked error
 }
 
 func (w waitingEvidence) any() bool { return w.observations > 0 }
 
 func (w waitingEvidence) print(out io.Writer) {
-	if !w.any() {
-		return
+	if w.any() {
+		fmt.Fprintf(out, "\nNOT YET ATTRIBUTED: %s under %s\n"+
+			"  Observed under its registered directories and carrying no project yet.\n"+
+			"  `timetattle harvest` attributes them, or reports why it cannot.\n",
+			plural(w.observations, "stored observation"), w.scope.describe())
 	}
-	fmt.Fprintf(out, "\nNOT YET ATTRIBUTED: %s under %s\n"+
-		"  Observed under its registered directories and carrying no project yet, so\n"+
-		"  no figure here counts them. `timetattle harvest` attributes them.\n",
-		plural(w.observations, "stored observation"), w.scope.describe())
+	if w.unchecked != nil {
+		fmt.Fprintf(out, "\nSome registrations could not be read, so evidence waiting on attribution\n"+
+			"may be missing or miscounted here: %v\n", w.unchecked)
+	}
 }
 
 // evidenceWaiting counts the events that carry no project although the most
 // specific registered directory above them belongs to scope. An unscoped report
 // claims nothing about any one project, so for it nothing is waiting.
 //
+// The client is the one the client-project log names at each event's own
+// instant, as it is for attributed events. A project the log has never heard of
+// has the marker's, which is what a harvest will record for all of its history.
+//
 // It compares paths as text against the events a report has already read, so it
 // costs no query and no pass over the filesystem; only the registered
 // directories themselves are asked for their physical spelling.
-func evidenceWaiting(events []source.Event, scope metricsScope, registered []*registry.Marker,
+func evidenceWaiting(events []source.Event, scope metricsScope, registered registeredDirs,
 	cm clientmap.Map) waitingEvidence {
-	w := waitingEvidence{scope: scope}
 	if !scope.filtering() {
-		return w
+		return waitingEvidence{scope: scope}
 	}
+	w := waitingEvidence{scope: scope, unchecked: registered.unread}
 
 	// Every registered directory, not only the scope's: one nested inside a
 	// scoped directory owns what is under it.
-	inScope := map[string]bool{}
+	owners := map[string]*registry.Marker{}
 	anyInScope := false
-	for _, m := range registered {
-		client := m.Client
-		if logged, ok := cm.At(m.Project, time.Now()); ok {
-			client = logged
-		}
-		mine := (scope.Project == "" || scope.Project == m.Project) &&
-			(scope.Client == "" || scope.Client == client)
-		anyInScope = anyInScope || mine
+	for _, m := range registered.markers {
+		anyInScope = anyInScope || scope.Project == "" || scope.Project == m.Project
 		for _, dir := range spellingsOf(m) {
-			inScope[filepath.Clean(dir)] = mine
+			owners[filepath.Clean(dir)] = m
 		}
 	}
 	if !anyInScope {
@@ -67,46 +71,67 @@ func evidenceWaiting(events []source.Event, scope metricsScope, registered []*re
 	}
 
 	// Many events share a locator, so each is placed once.
-	placed := map[string]bool{}
+	placed := map[string]*registry.Marker{}
 	for _, e := range events {
 		if e.Identity.Project != "" || e.Locator == "" {
 			continue
 		}
-		mine, known := placed[e.Locator]
+		owner, known := placed[e.Locator]
 		if !known {
-			mine = nearestIn(inScope, e.Locator)
-			placed[e.Locator] = mine
+			owner = nearestIn(owners, e.Locator)
+			placed[e.Locator] = owner
 		}
-		if mine {
-			w.observations++
+		if owner == nil || (scope.Project != "" && scope.Project != owner.Project) {
+			continue
 		}
+		if scope.Client != "" && scope.Client != clientAt(owner, e.Anchor(), cm) {
+			continue
+		}
+		w.observations++
 	}
 	return w
 }
 
-// nearestIn is the value dirs holds for the closest directory at or above path,
-// and false when none of them is there.
-func nearestIn(dirs map[string]bool, path string) bool {
+// clientAt is who m's project belonged to at the instant at, and "" for nobody.
+func clientAt(m *registry.Marker, at time.Time, cm clientmap.Map) string {
+	if !cm.Asserted(m.Project) {
+		return m.Client
+	}
+	client, _ := cm.At(m.Project, at)
+	return client
+}
+
+// nearestIn is the marker of the closest directory at or above path, and nil
+// when none of them is registered.
+func nearestIn(owners map[string]*registry.Marker, path string) *registry.Marker {
 	for dir := filepath.Clean(path); ; dir = filepath.Dir(dir) {
-		if value, ok := dirs[dir]; ok {
-			return value
+		if m, ok := owners[dir]; ok {
+			return m
 		}
 		if dir == filepath.Dir(dir) {
-			return false
+			return nil
 		}
 	}
 }
 
+// registeredDirs is the registry as far as a report could read it.
+type registeredDirs struct {
+	markers []*registry.Marker
+	// unread is why the rest of it could not be read.
+	unread error
+}
+
 // registeredForWaiting is the registry a report checks for waiting evidence,
 // from indexPath or the default index. The check only adds a notice, so a
-// registry that cannot be read narrows it rather than failing the report.
-func registeredForWaiting(indexPath string) []*registry.Marker {
+// registry that cannot be read is reported beside it rather than failing the
+// report.
+func registeredForWaiting(indexPath string) registeredDirs {
 	if indexPath == "" {
 		var err error
 		if indexPath, err = registry.DefaultIndexPath(); err != nil {
-			return nil
+			return registeredDirs{unread: err}
 		}
 	}
-	registered, _ := registry.List(indexPath)
-	return registered
+	markers, err := registry.List(indexPath)
+	return registeredDirs{markers: markers, unread: err}
 }

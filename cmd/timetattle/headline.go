@@ -175,9 +175,12 @@ func headline(out io.Writer, dir, storePath, configPath string, cols int) error 
 	if err != nil {
 		return err
 	}
-	// The marker found by climbing goes in whether or not the index has it.
-	waiting := evidenceWaiting(events, metricsScope{Project: marker.Project},
-		append(registeredForWaiting(""), marker), cm)
+	// The marker found by climbing goes in whether or not the index has it, as a
+	// harvest sees one it does not: an indexed marker brings its own former
+	// paths.
+	registered := registeredForWaiting("")
+	registered.markers = append(registered.markers, unindexed(marker))
+	waiting := evidenceWaiting(events, metricsScope{Project: marker.Project}, registered, cm)
 	waiting.print(out)
 
 	if w.Events == 0 && waiting.any() {

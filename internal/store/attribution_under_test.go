@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bensyverson/timetattle/internal/buildoutput"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
 )
@@ -147,7 +148,8 @@ func TestResolveProjectsUnderHoldsNoWriteLockWhileResolving(t *testing.T) {
 // The point of limiting by path is not to read the whole store, so both halves
 // of the listing have to search the locator index rather than scan.
 func TestTheListingUnderADirectorySearchesTheLocatorIndex(t *testing.T) {
-	plan := planFor(t, store.LocatorsUnderQuery, "/work/site", "/work/site/", "/work/site0")
+	plan := planFor(t, store.LocatorsUnderQuery, buildoutput.Source, buildoutput.Glob,
+		"/work/site", "/work/site/", "/work/site0")
 	// Both bounds, because a bare "locator IS NOT NULL" is also reported as a
 	// search of this index and reads every located row.
 	if !strings.Contains(plan, "event_locator (locator>? AND locator<?)") ||

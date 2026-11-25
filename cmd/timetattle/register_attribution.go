@@ -25,7 +25,11 @@ import (
 // is left for the full pass.
 //
 // Like recordClientAssertion it never creates a store that was not asked for.
-func attributeRegistration(ctx context.Context, storePath, indexPath string, m *registry.Marker, out io.Writer) error {
+func attributeRegistration(ctx context.Context, storePath, indexPath string, record indexRecord,
+	m *registry.Marker, out io.Writer) error {
+	if record == markerNotIndexed {
+		m = unindexed(m)
+	}
 	explicit := storePath != ""
 	if !explicit {
 		var err error
@@ -66,6 +70,24 @@ func attributeRegistration(ctx context.Context, storePath, indexPath string, m *
 		fmt.Fprintf(out, "  unreadable: %s (%s): %v\n", s.Locator, plural(s.Events, "event"), s.Err)
 	}
 	return nil
+}
+
+// indexRecord is whether the registry index holds a marker, which decides how
+// much of it a harvest can see.
+type indexRecord int
+
+const (
+	markerIndexed indexRecord = iota
+	markerNotIndexed
+)
+
+// unindexed is m as a harvest sees it when the index does not hold it. The pass
+// still finds the marker by climbing from a path, but reads former paths only
+// through the index, so applying them here would be undone by the next harvest.
+func unindexed(m *registry.Marker) *registry.Marker {
+	climbable := *m
+	climbable.FormerPaths = nil
+	return &climbable
 }
 
 // spellingsOf is every path under which stored evidence may name m's

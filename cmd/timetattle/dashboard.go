@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/bensyverson/timetattle/internal/clientmap"
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
-	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/sessions"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
@@ -160,7 +158,7 @@ both commands share.`,
 			return err
 		}
 		events, drop := sessions.Retain(events, excludes)
-		var registered []*registry.Marker
+		var registered registeredDirs
 		if scope.filtering() {
 			registered = registeredForWaiting(*indexPath)
 		}
@@ -807,11 +805,11 @@ func dashboardHeaderHours(scope metricsScope, data *dashboardData) string {
 }
 
 // dashboardAllWaiting reports that the scope has evidence waiting on
-// attribution and none yet attributed to it in this window.
+// attribution and no row in the report. The report is asked rather than the
+// events, because a correction gives a project hours that no event carries.
 func dashboardAllWaiting(scope metricsScope, data *dashboardData) bool {
-	return data.Waiting.any() && !slices.ContainsFunc(data.Events, func(e source.Event) bool {
-		return e.Identity.Project != "" && scope.showsProject(e.Identity.Project, data.Report.Clients)
-	})
+	_, reported := statsPresence(scope, data)
+	return data.Waiting.any() && !reported
 }
 
 // dashboardHeading bolds title (ANSI SGR 1) under any color capability and

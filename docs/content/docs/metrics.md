@@ -97,21 +97,28 @@ report over no work, so it says which it is:
 
 ```
 NOT YET ATTRIBUTED: 42 stored observations under project "Holiday Campaign"
-  Observed under its registered directories and carrying no project yet, so
-  no figure here counts them. `timetattle harvest` attributes them.
+  Observed under its registered directories and carrying no project yet.
+  `timetattle harvest` attributes them, or reports why it cannot.
 ```
 
-The count is of observations in the report's own window that carry no project
-although the most specific registered directory above them belongs to the
-client or project asked for. They were observed; what is missing is only the
-attribution. It is read from the registry and the events already in hand, as a
+The count is of observations that carry no project although the most specific
+registered directory above them belongs to the project asked for, or to the
+client asked for [as of each observation's own time](registry.md). They were
+observed; what is missing is the attribution. A path a pass cannot read, such as
+one under a file that used to be a directory, stays in the count, and `harvest`
+names it as unreadable. The window counted is the report's own; for
+`dashboard` it is the one `-days` asks for, even where the header's window
+starts later, at the first attributed observation. The count is read from the registry and the events already in hand, as a
 comparison of paths: no extra query and no walk of the filesystem. So it can
 miss evidence spelled through a symlink the registration does not name.
 
 `metrics`, [`dashboard`](dashboard.md) and the [bare
-command](#the-bare-command-what-this-directory-is) all print it. When nothing in
-scope is attributed yet, `dashboard` stops after the notice instead of drawing
-sections of zeros. Under `-csv` the notice goes to stderr. An `-all` report
+command](#the-bare-command-what-this-directory-is) all print it. The bare
+command does so only once `sessionize` has stored a derivation: before that it
+says nothing has been derived and stops. When the report has no row for the
+scope, `dashboard` stops after the notice instead of drawing sections of zeros.
+A scoped report that cannot read part of the registry says that too, whether or
+not it found anything waiting. Under `-csv` the notice goes to stderr. An `-all` report
 never prints it.
 
 **A bare date on `-to` means the end of that day.** `-to` takes an instant and

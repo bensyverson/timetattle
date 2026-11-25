@@ -4,24 +4,47 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/bensyverson/timetattle/internal/buildoutput"
 )
 
 // locatorsUnderQuery lists the distinct locators that are one directory or
 // beneath it. Its arguments are the directory, the directory with a trailing
 // separator, and the first string sorting after everything with that prefix.
 //
-// It is a pair of comparisons rather than LIKE or GLOB so that event_locator
-// can be searched, and so that a "_" or "%" in a directory name stays a
-// character.
-const locatorsUnderQuery = `SELECT locator, COUNT(*) FROM event
+// Beside each it counts the rows, then the rows reports count (stored build
+// output is not among them; see package buildoutput, whose Source and Glob are
+// the first two arguments), then the least and greatest project the rows carry,
+// with "" for none.
+//
+// The directory test is a pair of comparisons rather than LIKE or GLOB so that
+// event_locator can be searched, and so that a "_" or "%" in a directory name
+// stays a character.
+const locatorsUnderQuery = `SELECT locator, COUNT(*),
+		SUM(NOT (source_id = ? AND locator GLOB ?)),
+		MIN(COALESCE(project, '')), MAX(COALESCE(project, ''))
+	FROM event
 	WHERE locator = ? OR (locator >= ? AND locator < ?) GROUP BY locator`
+
+// locatorUnder is a distinct locator beneath a directory, with what its rows
+// already say.
+type locatorUnder struct {
+	locatorRows
+	// counted is how many of the rows reports count.
+	counted int
+	// least and greatest bound the projects the rows carry, "" being none, so
+	// that rows needing no change can be told apart without writing.
+	least, greatest string
+}
 
 // PathAttribution is what a path-limited re-attribution did.
 type PathAttribution struct {
 	Attribution
 	// Events is how many event rows under the directories each project now
 	// owns, whether or not the pass had to change them. Updated cannot answer
-	// that: it is zero for a directory that was already attributed.
+	// that: it is zero for a directory that was already attributed. It leaves
+	// out stored build output, which no report counts; Updated and Skips count
+	// every row.
 	Events map[string]int
 }
 
@@ -33,7 +56,8 @@ type PathAttribution struct {
 // its transaction, so the write lock is held only for the updates. It exists
 // for an interactive command, which must neither hold off a harvest while it
 // climbs the filesystem nor, when a harvest holds the lock, fail for any longer
-// than the store's busy timeout. An error means nothing was written.
+// than the store's busy timeout. When no row would change it takes no write
+// transaction at all. An error means nothing was written.
 func (s *Store) ResolveProjectsUnder(ctx context.Context, dirs []string, resolve Resolver) (PathAttribution, error) {
 	var none PathAttribution
 	locators, err := s.locatorsUnder(ctx, dirs)
@@ -42,11 +66,11 @@ func (s *Store) ResolveProjectsUnder(ctx context.Context, dirs []string, resolve
 	}
 	att := PathAttribution{Attribution: Attribution{Locators: len(locators)}, Events: map[string]int{}}
 
-	type answer struct {
+	type change struct {
 		locator string
 		project any
 	}
-	var answers []answer
+	var changes []change
 	for _, l := range locators {
 		id, found, err := resolve(l.locator)
 		if err != nil {
@@ -54,23 +78,26 @@ func (s *Store) ResolveProjectsUnder(ctx context.Context, dirs []string, resolve
 			att.Skips = append(att.Skips, Skip{Locator: l.locator, Events: l.events, Err: err})
 			continue
 		}
-		a := answer{locator: l.locator}
+		c := change{locator: l.locator}
+		want := ""
 		if found {
-			a.project = id.Project
+			want, c.project = id.Project, id.Project
 			att.Attributed++
-			att.Events[id.Project] += l.events
+			att.Events[id.Project] += l.counted
 		} else {
 			att.Unattributed++
 		}
-		answers = append(answers, a)
+		if l.least != want || l.greatest != want {
+			changes = append(changes, c)
+		}
 	}
-	if len(answers) == 0 {
+	if len(changes) == 0 {
 		return att, nil
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return none, fmt.Errorf("begin attributing %d locators: %w", len(answers), err)
+		return none, fmt.Errorf("begin attributing %d locators: %w", len(changes), err)
 	}
 	defer tx.Rollback()
 
@@ -80,39 +107,40 @@ func (s *Store) ResolveProjectsUnder(ctx context.Context, dirs []string, resolve
 	}
 	defer stmt.Close()
 
-	for _, a := range answers {
-		res, err := stmt.ExecContext(ctx, a.project, a.locator, a.project)
+	for _, c := range changes {
+		res, err := stmt.ExecContext(ctx, c.project, c.locator, c.project)
 		if err != nil {
-			return none, fmt.Errorf("attribute %s: %w", a.locator, err)
+			return none, fmt.Errorf("attribute %s: %w", c.locator, err)
 		}
 		affected, err := res.RowsAffected()
 		if err != nil {
-			return none, fmt.Errorf("count what changed for %s: %w", a.locator, err)
+			return none, fmt.Errorf("count what changed for %s: %w", c.locator, err)
 		}
 		att.Updated += int(affected)
 	}
 	if err := tx.Commit(); err != nil {
-		return none, fmt.Errorf("commit attributing %d locators: %w", len(answers), err)
+		return none, fmt.Errorf("commit attributing %d locators: %w", len(changes), err)
 	}
 	return att, nil
 }
 
 // locatorsUnder lists each distinct locator at or beneath any of dirs once,
 // however many of them cover it.
-func (s *Store) locatorsUnder(ctx context.Context, dirs []string) ([]locatorRows, error) {
-	var out []locatorRows
+func (s *Store) locatorsUnder(ctx context.Context, dirs []string) ([]locatorUnder, error) {
+	var out []locatorUnder
 	seen := map[string]bool{}
 	for _, dir := range dirs {
 		prefix := strings.TrimSuffix(dir, "/") + "/"
 		// "0" is the byte after "/".
 		end := strings.TrimSuffix(prefix, "/") + "0"
-		rows, err := s.db.QueryContext(ctx, locatorsUnderQuery, dir, prefix, end)
+		rows, err := s.db.QueryContext(ctx, locatorsUnderQuery,
+			buildoutput.Source, buildoutput.Glob, dir, prefix, end)
 		if err != nil {
 			return nil, fmt.Errorf("list locators under %s: %w", dir, err)
 		}
 		for rows.Next() {
-			var l locatorRows
-			if err := rows.Scan(&l.locator, &l.events); err != nil {
+			var l locatorUnder
+			if err := rows.Scan(&l.locator, &l.events, &l.counted, &l.least, &l.greatest); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("read a locator under %s: %w", dir, err)
 			}

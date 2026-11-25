@@ -30,9 +30,10 @@ narrow it explicitly and, like `-all`, bypass directory scoping entirely. See
 for the full rule — it is one rule, read by both commands.
 
 A scoped dashboard also names [evidence not yet
-attributed](metrics.md#evidence-not-yet-attributed). If that is all the scope
-has in the window, the header reads "not yet attributed", the notice follows,
-and no section is drawn.
+attributed](metrics.md#evidence-not-yet-attributed). If there is such evidence
+and the report has no row for the scope, from attribution or from an [`adjust`
+correction](metrics.md), the header reads "not yet attributed", the notice
+follows, and no section is drawn.
 
 ## `-days`: a trailing window, not `-from`/`-to`
 

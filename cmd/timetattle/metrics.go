@@ -16,7 +16,6 @@ import (
 	"github.com/bensyverson/timetattle/internal/clientmap"
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
-	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/sessions"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
@@ -224,7 +223,7 @@ never double-counted, and is the capacity denominator. Parameters come from
 		events, drop := sessions.Retain(events, excludes)
 		watch.Done(metricsPhaseRetain)
 		watch.count(metricsPhaseRetain, len(events))
-		var registered []*registry.Marker
+		var registered registeredDirs
 		if scope.filtering() {
 			registered = registeredForWaiting(*indexPath)
 		}

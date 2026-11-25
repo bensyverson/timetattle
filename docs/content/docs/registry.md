@@ -68,18 +68,25 @@ attribution: attributed 42 stored observations to Holiday Campaign
 
 It resolves each path exactly as a harvest does, so a directory with its own
 marker inside this one keeps its own evidence, and that evidence is counted
-separately. The store is the one `-store` names (default
+separately. The count is of observations reports count: stored [build
+output](filesystem.md) is attributed with the rest but left out of it. The store
+is the one `-store` names (default
 `~/.timetattle/timetattle.db`); `register` never creates the default one.
 
 **While a harvest holds the store's write lock**, which a large store's
 attribution pass can do for many minutes, registration still succeeds. It waits
-a few seconds, then says the stored evidence is not yet attributed. The next
-harvest to finish attributes it, and so does running the same `register` command
-again once the lock is free.
+a few seconds, then says the stored evidence is not yet attributed. A harvest
+that starts from then on attributes it, and so does running the same `register`
+command again once the lock is free. A harvest already running may not: it may
+have passed those paths before the marker existed. Running the command again on
+a directory whose evidence is already attributed writes nothing to attribution,
+so the lock does not stop it saying so.
 
 It looks under the directory as you named it, under its physical path if that
 differs, and under any [former path](#when-a-directory-is-renamed-or-moved-away)
-its marker declares. Evidence spelled through some *other* symlink pointing into
+its marker declares. Former paths are skipped, and `register` says so, when the
+[directory index](#finding-every-registered-directory) could not record the
+marker: a harvest reads them through that index alone. Evidence spelled through some *other* symlink pointing into
 the directory, or recorded in a git worktree outside it, waits for the next
 harvest.
 

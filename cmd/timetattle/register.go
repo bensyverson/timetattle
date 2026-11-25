@@ -136,7 +136,9 @@ directory is attributed before the command returns.`,
 				"until a harvest records it\n", m.Path, err)
 		}
 
+		record := markerIndexed
 		if idx == "" {
+			record = markerNotIndexed
 			fmt.Fprintf(os.Stderr, "timetattle register: %s was registered, but could not resolve the default "+
 				"directory index; it will not be picked up by 'timetattle harvest' until this is fixed or "+
 				"-index is passed explicitly\n", m.Path)
@@ -149,18 +151,26 @@ directory is attributed before the command returns.`,
 			// retries it. See internal/registry.RecordInIndex's doc for why this
 			// is a separate, explicitly opt-in step rather than folded into
 			// Register itself.
+			record = markerNotIndexed
 			fmt.Fprintf(os.Stderr, "timetattle register: %s was registered, but could not be added to %s (%v); "+
 				"it will not be picked up by 'timetattle harvest' until this is fixed\n", m.Path, idx, err)
+		}
+
+		if record == markerNotIndexed && len(m.FormerPaths) > 0 {
+			fmt.Fprintf(os.Stderr, "timetattle register: a harvest reads former paths through that index "+
+				"alone, so evidence under this directory's %s is left as it is\n",
+				plural(len(m.FormerPaths), "former path"))
 		}
 
 		// Last, and never fatal, for the same reason the client log is not: the
 		// marker is the fact and attribution is a cache a harvest rebuilds. A
 		// harvest holding the write lock is the ordinary way this fails, and the
 		// store's busy timeout bounds the wait.
-		if err := attributeRegistration(context.Background(), *storePath, idx, m, os.Stdout); err != nil {
+		if err := attributeRegistration(context.Background(), *storePath, idx, record, m, os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "timetattle register: %s was registered, but its stored evidence is not yet "+
-				"attributed (%v); reports will not show it until the next `timetattle harvest` finishes, or "+
-				"this register command is run again\n", m.Path, err)
+				"attributed (%v); reports will not show it until a `timetattle harvest` that starts from now "+
+				"on finishes, or this register command is run again once the store is free. A harvest "+
+				"already running may not include it\n", m.Path, err)
 		}
 		return nil
 	}
