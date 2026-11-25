@@ -30,6 +30,8 @@ Findings go in `project/` as dated documents. A document goes in `project/privat
 - **Schema migrations are numbered files in [internal/migrations/](internal/migrations/).**
 - **The pre-commit hook runs the confidentiality gate first.** It is `scripts/git-hooks/pre-commit`, wired in via `core.hooksPath`, and it runs the gate before `go vet`, a `scripts/` layout check, `go fix`, `gofmt`, `go mod tidy`, `go test ./...` and `go build`. The hook asks whether *this commit* adds anything unpublishable; `make gate` asks whether the repository is publishable *as it stands*, across the whole tree and every object in `.git`, and is what to run before pushing to a public mirror.
 
+Review baseline: 2026-11-25T18:27:26Z
+
 <!-- agents:begin core@c84939 -->
 ## Working rules
 
