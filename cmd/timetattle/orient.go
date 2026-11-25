@@ -533,8 +533,8 @@ func orientNext(out io.Writer, c orientCensus, cols int) {
 	case orientPending:
 		fmt.Fprint(out, "\nNEXT  timetattle harvest\n")
 		wrap(out, "      ", worth+" already sit inside a registered directory and "+
-			"attribute the moment the resolution pass runs, which happens only as a phase "+
-			"of harvest.", cols)
+			"attribute the moment the resolution pass runs, which harvest does over every "+
+			"stored path.", cols)
 	case orientStranded:
 		top := c.StrandedRoots[0]
 		fmt.Fprintf(out, "\nNEXT  timetattle consolidate -former %s \\\n"+

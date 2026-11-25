@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,7 +20,8 @@ func registerCmd() *cobra.Command {
 		Long: `Writes a .timetattle-project.json marker naming a client and project into a
 directory, so evidence found under it can be attributed without asking again.
 A project may span any number of directories; one project name belongs to one
-client, and reassigning either needs -force.`,
+client, and reassigning either needs -force. Evidence already stored under the
+directory is attributed before the command returns.`,
 	}
 	fs := cmd.Flags()
 	client := fs.String("client", "", "who the work in this directory is for")
@@ -138,19 +140,27 @@ client, and reassigning either needs -force.`,
 			fmt.Fprintf(os.Stderr, "timetattle register: %s was registered, but could not resolve the default "+
 				"directory index; it will not be picked up by 'timetattle harvest' until this is fixed or "+
 				"-index is passed explicitly\n", m.Path)
-			return nil
-		}
-		// A failed index write does not fail registration: the marker is the
-		// fact, the index is a convenience for enumeration that List always
-		// re-verifies against the marker rather than trusts, and a directory
-		// that could not be indexed this time is not lost — only harder for
-		// harvest to discover automatically until a later register call
-		// retries it. See internal/registry.RecordInIndex's doc for why this
-		// is a separate, explicitly opt-in step rather than folded into
-		// Register itself.
-		if err := registry.RecordInIndex(idx, m.Path); err != nil {
+		} else if err := registry.RecordInIndex(idx, m.Path); err != nil {
+			// A failed index write does not fail registration: the marker is the
+			// fact, the index is a convenience for enumeration that List always
+			// re-verifies against the marker rather than trusts, and a directory
+			// that could not be indexed this time is not lost — only harder for
+			// harvest to discover automatically until a later register call
+			// retries it. See internal/registry.RecordInIndex's doc for why this
+			// is a separate, explicitly opt-in step rather than folded into
+			// Register itself.
 			fmt.Fprintf(os.Stderr, "timetattle register: %s was registered, but could not be added to %s (%v); "+
 				"it will not be picked up by 'timetattle harvest' until this is fixed\n", m.Path, idx, err)
+		}
+
+		// Last, and never fatal, for the same reason the client log is not: the
+		// marker is the fact and attribution is a cache a harvest rebuilds. A
+		// harvest holding the write lock is the ordinary way this fails, and the
+		// store's busy timeout bounds the wait.
+		if err := attributeRegistration(context.Background(), *storePath, idx, m, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "timetattle register: %s was registered, but its stored evidence is not yet "+
+				"attributed (%v); reports will not show it until the next `timetattle harvest` finishes, or "+
+				"this register command is run again\n", m.Path, err)
 		}
 		return nil
 	}

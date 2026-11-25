@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/bensyverson/timetattle/internal/clientmap"
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
+	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/sessions"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
@@ -158,6 +160,10 @@ both commands share.`,
 			return err
 		}
 		events, drop := sessions.Retain(events, excludes)
+		var registered []*registry.Marker
+		if scope.filtering() {
+			registered = registeredForWaiting(*indexPath)
+		}
 
 		// THE CLIENT IS STAMPED HERE, exactly as metrics.go stamps it — see
 		// its own comment for why this is still the whole of what is read
@@ -205,6 +211,9 @@ both commands share.`,
 			ClientMap: cm,
 			Log:       log,
 			Exact:     *exact,
+			// Counted over the window as requested, before the clamp below can
+			// drop the very observations it is about.
+			Waiting: evidenceWaiting(events, scope, registered, cm),
 		}
 		// CLAMPING HAPPENS ONCE, HERE, BEFORE ANY SECTION RENDERS — see
 		// clampPeriodToFirstObservation's own doc comment and dashboardPeriod's
@@ -318,6 +327,9 @@ type dashboardData struct {
 	// alone today; any other section is free to read it the same way rather
 	// than inventing a second per-run switch.
 	Exact bool
+	// Waiting is the evidence under this scope's directories that is not
+	// attributed yet, and so is in none of the figures above.
+	Waiting waitingEvidence
 }
 
 // dashboardPeriod is the reporting window: Days trailing WORKING days ending
@@ -685,6 +697,12 @@ func renderDashboard(ctx context.Context, out io.Writer, scope metricsScope, per
 	fmt.Fprintf(out, "%s\n", data.Store.Path())
 	fmt.Fprintf(out, "%s\n", dashboardHeaderLine(scope, period, data))
 	fmt.Fprintf(out, "%s\n", dashboardCorrectionsLine(data))
+	data.Waiting.print(out)
+	// With nothing attributed yet, every section would be zeros and blanks
+	// about a project whose evidence is sitting in the store.
+	if dashboardAllWaiting(scope, data) {
+		return nil
+	}
 
 	for _, s := range dashboardSections {
 		if s.Detailed && !detailed {
@@ -778,11 +796,22 @@ func dashboardCorrectionsLine(data *dashboardData) string {
 // measured, so the header says so rather than printing a number nobody
 // counted.
 func dashboardHeaderHours(scope metricsScope, data *dashboardData) string {
+	if dashboardAllWaiting(scope, data) {
+		return "not yet attributed"
+	}
 	d, known := statsPresence(scope, data)
 	if !known {
 		return statUnrecorded
 	}
 	return fmt.Sprintf("%.1fh %s", d.Hours(), dashboardAttributedLabel(scope))
+}
+
+// dashboardAllWaiting reports that the scope has evidence waiting on
+// attribution and none yet attributed to it in this window.
+func dashboardAllWaiting(scope metricsScope, data *dashboardData) bool {
+	return data.Waiting.any() && !slices.ContainsFunc(data.Events, func(e source.Event) bool {
+		return e.Identity.Project != "" && scope.showsProject(e.Identity.Project, data.Report.Clients)
+	})
 }
 
 // dashboardHeading bolds title (ANSI SGR 1) under any color capability and

@@ -245,6 +245,23 @@ A source with nothing to report is a **success**, not a failure. "No presence
 on the 22nd" and "no harvest ran on the 22nd" are different facts, and only a
 recorded empty run tells them apart.
 
+## Attribution, last
+
+Once everything is ingested, the harvest [attributes](registry.md) every stored
+path against the registry. On a large store this is by far the longest step, and
+the counts are printed only when it ends, so it is bracketed:
+
+```
+attribution: started at 2026-07-14T09:00:00-05:00
+attribution: 1200 locators, 1100 attributed, 100 unattributed, 0 unreadable
+attribution: finished after 4.2s
+```
+
+A log whose last attribution line is `started at` belongs to a pass that is
+still running, or to one that was killed. Until it finishes, the evidence this
+run ingested carries no project, and a [scoped report says
+so](metrics.md#evidence-not-yet-attributed). `-quiet` prints none of this.
+
 ## Scheduling it
 
 ```console

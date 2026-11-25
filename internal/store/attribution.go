@@ -33,6 +33,12 @@ type Attributed struct {
 // without touching a filesystem or spawning git.
 type Resolver func(locator string) (Attributed, bool, error)
 
+// setProjectQuery writes one locator's answer, touching only rows it changes.
+// Its arguments are the project (nil for none), the locator, and the project
+// again.
+const setProjectQuery = `UPDATE event SET project = ?
+	WHERE locator = ? AND COALESCE(project, '') <> COALESCE(?, '')`
+
 // ResolveProjects re-attributes every event carrying a locator, by calling
 // resolve once per distinct locator and writing the answer into every row
 // that shares it.
@@ -111,8 +117,7 @@ func (s *Store) ResolveProjects(ctx context.Context, resolve Resolver) (Attribut
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.PrepareContext(ctx, `UPDATE event SET project = ?
-		WHERE locator = ? AND COALESCE(project, '') <> COALESCE(?, '')`)
+	stmt, err := tx.PrepareContext(ctx, setProjectQuery)
 	if err != nil {
 		return Attribution{}, fmt.Errorf("prepare the project update: %w", err)
 	}

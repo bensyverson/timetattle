@@ -16,6 +16,7 @@ import (
 	"github.com/bensyverson/timetattle/internal/clientmap"
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/metrics"
+	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/sessions"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
@@ -223,6 +224,10 @@ never double-counted, and is the capacity denominator. Parameters come from
 		events, drop := sessions.Retain(events, excludes)
 		watch.Done(metricsPhaseRetain)
 		watch.count(metricsPhaseRetain, len(events))
+		var registered []*registry.Marker
+		if scope.filtering() {
+			registered = registeredForWaiting(*indexPath)
+		}
 
 		// THE CLIENT IS STAMPED HERE, not read from a column, because no column
 		// holds it: the client-project log (migration 0012) is folded and each
@@ -230,10 +235,11 @@ never double-counted, and is the capacity denominator. Parameters come from
 		// project reassigned in June therefore reports the old client for May's
 		// work and the new one for July's, from one pass over ~38 rows.
 		//
-		// This is still the whole of what `metrics` reads — the store, and nothing
-		// else. The log lives in the same database as the events, so the command's
-		// designed property of consulting neither the registry nor the filesystem
-		// is untouched.
+		// This is still the whole of what any FIGURE `metrics` prints is read from:
+		// the store, and nothing else. The log lives in the same database as the
+		// events, so no figure consults the registry or the filesystem. A scoped
+		// run does read the registry, for the notice about evidence not yet
+		// attributed (see waiting.go).
 		watch.Begin(metricsPhaseStamp, 0)
 		cm, err := st.ClientMap(context.Background(), time.Time{})
 		if err != nil {
@@ -317,7 +323,10 @@ never double-counted, and is the capacity denominator. Parameters come from
 		// would sit above a finished report saying the run had not finished.
 		watch.finish()
 
+		waiting := evidenceWaiting(events, scope, registered, cm)
+
 		if *asCSV {
+			waiting.print(stderr)
 			if err := csvSeries(stdout, cal, unit, rows, scope, report.Clients); err != nil {
 				return err
 			}
@@ -331,7 +340,7 @@ never double-counted, and is the capacity denominator. Parameters come from
 		cols := columnsOf(stdout)
 		out := clipTo(stdout, cols)
 		reported := reportMetrics(out, *storePath, report, cols, excludes, drop, scope,
-			cm.Collisions(), *uncorrected)
+			cm.Collisions(), *uncorrected, waiting)
 		if set["by"] && reported {
 			reportSeries(out, report, cal, unit, rows, log, scope, cols)
 		}
@@ -595,12 +604,13 @@ func (s metricsScope) describe() string {
 // sentence that exists to refuse exactly that reading.
 func reportMetrics(out io.Writer, path string, r metrics.Report, cols int,
 	excludes sessions.Excludes, drop sessions.Drop, scope metricsScope,
-	contested []clientmap.Collision, uncorrected bool) bool {
+	contested []clientmap.Collision, uncorrected bool, waiting waitingEvidence) bool {
 	fmt.Fprintf(out, "%s\n", path)
 	fmt.Fprintf(out, "gap %v, lead-in %v, tail-out %v\n", r.Params.Gap, r.Params.LeadIn, r.Params.TailOut)
 	fmt.Fprintf(out, "presence: %s\n", listOrNone(r.Params.PresenceSources))
 	fmt.Fprintf(out, "ignored:  %s\n", listOrNone(r.Params.IgnoreSources))
 	reportExclusions(out, excludes, drop)
+	waiting.print(out)
 
 	if r.Presence.Total == 0 {
 		fmt.Fprint(out, "\nnothing was recorded in this span, which is not the same as nothing "+
@@ -615,7 +625,7 @@ func reportMetrics(out io.Writer, path string, r metrics.Report, cols int,
 		metricsHours(r.Presence.Observed), metricsHours(r.Presence.Margin()), 100*r.Presence.MarginShare())
 
 	metricsBuckets(out, r.Sittings)
-	if !metricsScopeMatched(out, r, cols, scope) {
+	if !metricsScopeMatched(out, r, cols, scope, waiting) {
 		return false
 	}
 	metricsCollisions(out, cols, contested)
@@ -678,7 +688,8 @@ func metricsBand(b metrics.Bucket) string {
 // table of zeroes, and a reader could not tell which they were looking at. So
 // the report says what was asked for and that nothing carried that name, in the
 // same words the empty-span case already uses.
-func metricsScopeMatched(out io.Writer, r metrics.Report, cols int, scope metricsScope) bool {
+func metricsScopeMatched(out io.Writer, r metrics.Report, cols int, scope metricsScope,
+	waiting waitingEvidence) bool {
 	if !scope.filtering() {
 		return true
 	}
@@ -689,6 +700,12 @@ func metricsScopeMatched(out io.Writer, r metrics.Report, cols int, scope metric
 		if scope.showsProject(p.Name, r.Clients) {
 			return true
 		}
+	}
+	// "No evidence here carries that name" is true and misleading when the
+	// evidence is there and the name has not been written onto it yet; the
+	// notice already printed says which.
+	if waiting.any() {
+		return false
 	}
 	fmt.Fprint(out, "\n")
 	wrap(out, "", fmt.Sprintf("nothing in this span was attributed to %s, which is not a figure of "+

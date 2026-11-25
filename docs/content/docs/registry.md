@@ -55,6 +55,34 @@ unconditionally on every run. Running it again with a *different* client or
 project is refused unless `-force` is given, so a mistyped path cannot
 silently reassign a directory someone else already blessed.
 
+## Evidence that is already stored
+
+Evidence usually predates the registration, so `register` attributes what the
+store already holds under the directory before it returns, and says how much:
+
+```console
+$ timetattle register -client ACORN -project "Holiday Campaign"
+/Users/you/Movies/ACORN/holiday-render registered to ACORN / Holiday Campaign
+attribution: attributed 42 stored observations to Holiday Campaign
+```
+
+It resolves each path exactly as a harvest does, so a directory with its own
+marker inside this one keeps its own evidence, and that evidence is counted
+separately. The store is the one `-store` names (default
+`~/.timetattle/timetattle.db`); `register` never creates the default one.
+
+**While a harvest holds the store's write lock**, which a large store's
+attribution pass can do for many minutes, registration still succeeds. It waits
+a few seconds, then says the stored evidence is not yet attributed. The next
+harvest to finish attributes it, and so does running the same `register` command
+again once the lock is free.
+
+It looks under the directory as you named it, under its physical path if that
+differs, and under any [former path](#when-a-directory-is-renamed-or-moved-away)
+its marker declares. Evidence spelled through some *other* symlink pointing into
+the directory, or recorded in a git worktree outside it, waits for the next
+harvest.
+
 ## One project, many directories
 
 A project is not limited to one directory. A repository, a shared asset
@@ -327,12 +355,10 @@ pass against the registry rather than written at collection time — see
 [The event store](/docs/store). That pass is not part of this command; it
 reads what `register` writes.
 
-`timetattle harvest` runs that pass automatically, every time, after
-ingestion — not only when new events arrive. Registering a directory does
-not retroactively rewrite anything by itself; it is the *next* harvest that
-notices and re-attributes whatever was already sitting under it, including
-events collected long before the directory was ever registered. There is no
-separate command to remember to run.
+`timetattle harvest` runs that pass over every stored path automatically, every
+time, after ingestion — not only when new events arrive. `register` also runs
+it, limited to the directory it just blessed — see below. There is no separate
+command to remember to run.
 
 ## Finding every registered directory
 

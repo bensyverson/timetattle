@@ -88,6 +88,32 @@ a directory and the bare `timetattle` command reads one:
 any directory. `-client` and `-project` still narrow the report exactly as
 before; giving either one bypasses directory scoping entirely; so does `-all`.
 
+## Evidence not yet attributed
+
+A project is written onto stored evidence by an [attribution
+pass](registry.md#evidence-that-is-already-stored), which `harvest` runs last. A
+scoped report over evidence the pass has not reached would otherwise read like a
+report over no work, so it says which it is:
+
+```
+NOT YET ATTRIBUTED: 42 stored observations under project "Holiday Campaign"
+  Observed under its registered directories and carrying no project yet, so
+  no figure here counts them. `timetattle harvest` attributes them.
+```
+
+The count is of observations in the report's own window that carry no project
+although the most specific registered directory above them belongs to the
+client or project asked for. They were observed; what is missing is only the
+attribution. It is read from the registry and the events already in hand, as a
+comparison of paths: no extra query and no walk of the filesystem. So it can
+miss evidence spelled through a symlink the registration does not name.
+
+`metrics`, [`dashboard`](dashboard.md) and the [bare
+command](#the-bare-command-what-this-directory-is) all print it. When nothing in
+scope is attributed yet, `dashboard` stops after the notice instead of drawing
+sections of zeros. Under `-csv` the notice goes to stderr. An `-all` report
+never prints it.
+
 **A bare date on `-to` means the end of that day.** `-to` takes an instant and
 the span is inclusive at both ends, so `-to 2026-08-03` once meant midnight that
 morning and silently dropped the whole of the day it named — which made

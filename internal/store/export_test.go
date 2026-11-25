@@ -14,6 +14,10 @@ var EventsQuery = eventsQuery
 // asked the same question: which rows does SQLite have to touch to answer it.
 var UsageQuery = usageQuery
 
+// LocatorsUnderQuery is the listing a path-limited attribution issues for one
+// directory.
+const LocatorsUnderQuery = locatorsUnderQuery
+
 // MatchIdentityQuery and FillPayloadQuery are the two statements a payload
 // backfill issues, exposed for the same reason EventsQuery is: the question the
 // plan test asks is about the TEXT, and asking it of a copy would answer it

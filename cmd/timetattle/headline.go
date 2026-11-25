@@ -171,7 +171,18 @@ func headline(out io.Writer, dir, storePath, configPath string, cols int) error 
 		return err
 	}
 
-	if w.Events == 0 {
+	cm, err := st.ClientMap(ctx, time.Time{})
+	if err != nil {
+		return err
+	}
+	// The marker found by climbing goes in whether or not the index has it.
+	waiting := evidenceWaiting(events, metricsScope{Project: marker.Project},
+		append(registeredForWaiting(""), marker), cm)
+	waiting.print(out)
+
+	if w.Events == 0 && waiting.any() {
+		// The notice above is the whole answer.
+	} else if w.Events == 0 {
 		wrap(out, "    ", fmt.Sprintf("no observation of this project at all, across %v of presence "+
 			"in the window. That is not a figure of zero hours: nothing carrying this project's name "+
 			"was recorded here. `timetattle status` says whether collection was working.",

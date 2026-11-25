@@ -333,7 +333,9 @@ error names every source that failed; the macOS stores need Full Disk Access.`,
 		// as well as the directories to plan sources for: evidence recorded under
 		// a path that was later renamed away cannot be climbed to, so the marker
 		// that owns it is found across the registry instead of up the tree.
-		resolveErr := resolveProjects(ctx, st, markers, out)
+		resolveErr := timedAttribution(out, time.Now, func() error {
+			return resolveProjects(ctx, st, markers, out)
+		})
 		return harvestFailure(errors.Join(append(lost, captureErr, planErr, listErr, manifestErr, ingestErr, resolveErr)...))
 	}
 	return cmd

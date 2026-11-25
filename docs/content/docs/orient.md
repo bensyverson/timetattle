@@ -115,8 +115,9 @@ this order:
 
 1. **Inside a registered directory already.** Asked of `registry.ResolveAmong` —
    the real resolver, with the real registry, exactly as the attribution pass
-   asks it. These attribute the next time the resolution pass runs, and that
-   pass runs only as a phase of `harvest`.
+   asks it. These attribute the next time the resolution pass runs. The pass over
+   every stored path runs only as a phase of `harvest`; `register` runs it for
+   the one directory it blesses.
 2. **The path is gone from disk.** No marker can be written into a directory
    that does not exist, so `register` cannot reach these however many times it
    is run. [`timetattle consolidate`](registry.md) declares the rename instead.
