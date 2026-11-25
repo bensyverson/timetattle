@@ -16,11 +16,13 @@ package sessions
 // The same predicate is used in both places rather than being written twice —
 // see fsobserve.IsDatabaseSidecar, which both skipFile and Match call.
 //
-// # Code decides one rule; the person decides the rest
+// # Code decides two rules; the person decides the rest
 //
 // The split is by whether a rule is universal or personal, and it is not a
 // matter of taste. A -wal cannot be a deliverable on any machine, so nobody
-// should have to configure it away and it lives in code. A .log is another
+// should have to configure it away and it lives in code. So does what the
+// filesystem walk saw under a Swift ".build" directory, which a compiler wrote
+// (see package buildoutput). A .log is another
 // matter: Ben's are noise because Easley is a server he runs that syncs its
 // own access logs, and somebody else's .log is the output of their scraper.
 // Hardcoding that would be the tool deciding something it has no way to know,
@@ -34,8 +36,8 @@ package sessions
 // MBCommon.h, a README.md, a design PDF — which are plausibly a real evening
 // spent editing one document. No rule in this file may reach them. That is why
 // there is no heuristic here: no "a day with fewer than N observations", no
-// "stamped at exactly 05:00 is cron". Every exclusion is either the one
-// universal rule above or something a person wrote down, and everything that
+// "stamped at exactly 05:00 is cron". Every exclusion is either one of the two
+// universal rules above or something a person wrote down, and everything that
 // is dropped is counted and reported. Weak evidence is surfaced as weak; it is
 // never dropped silently.
 
@@ -44,6 +46,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bensyverson/timetattle/internal/buildoutput"
 	"github.com/bensyverson/timetattle/internal/fsobserve"
 	"github.com/bensyverson/timetattle/internal/source"
 )
@@ -51,7 +54,7 @@ import (
 // Excludes decides which observations are machine noise rather than evidence
 // of somebody's work.
 //
-// The zero value is not "exclude nothing": it is the universal rule and nothing
+// The zero value is not "exclude nothing": it is the universal rules and nothing
 // else, which is what a machine with no config file gets.
 type Excludes struct {
 	// globs match a locator's BASE NAME, and prefixes match the whole
@@ -127,6 +130,9 @@ func (x Excludes) Patterns() []string { return x.order }
 // Match reports whether locator names a file that is not evidence of work, and
 // says which rule decided.
 //
+// It judges the file's name and path only. The build-output rule also depends
+// on which source made the observation, so only Retain applies it.
+//
 // An empty locator is never excluded and never can be: knowledgeC and Biome
 // carry no path at all, and they are the presence stream every capacity figure
 // is a fraction of. A file-name rule has nothing whatever to say about them.
@@ -181,6 +187,8 @@ type Drop struct {
 	// Sidecars is how many the universal SQLite rule took. It is separate
 	// from ByPattern because nobody configured it and nobody can turn it off.
 	Sidecars int
+	// BuildOutput is how many the universal build-output rule took.
+	BuildOutput int
 	// ByPattern counts what each configured pattern took, and holds an entry
 	// for EVERY pattern, including those that took nothing. A pattern that
 	// matched nothing is a person having said something the tool did nothing
@@ -214,6 +222,12 @@ func Retain(events []source.Event, x Excludes) ([]source.Event, Drop) {
 
 	kept := make([]source.Event, 0, len(events))
 	for _, e := range events {
+		// Before the patterns, so that none of them is credited with it.
+		if buildoutput.Is(e) {
+			drop.Total++
+			drop.BuildOutput++
+			continue
+		}
 		pattern, matched := x.match(e.Locator)
 		if !matched {
 			kept = append(kept, e)

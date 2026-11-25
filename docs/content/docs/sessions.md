@@ -640,9 +640,11 @@ its own working tree; 1,025 rotated `.log.bz2` files were being counted as
 135.2h of work across 513 days — 11.2% of all attributed time, with 0.0h
 corroborated — and excluding them takes that project to 5.7h across 13 days
 while leaving every day it has a commit or a real file save on. On somebody
-else's machine the same files are a scraper's deliverable. The one rule that
-holds everywhere — SQLite's `-wal` and `-shm` sidecars — is in code instead, and
-needs no configuration.
+else's machine the same files are a scraper's deliverable. The two rules that
+hold everywhere are in code instead and need no configuration: SQLite's `-wal`
+and `-shm` sidecars, and
+[Swift build output](/docs/filesystem/#build-output-already-stored) beneath a
+`.build` directory.
 
 **Every exclusion is counted and itemised**, by rule, on every run of
 `sessionize` and `metrics`, and a pattern that matched *nothing* says so:

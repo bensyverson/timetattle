@@ -114,6 +114,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bensyverson/timetattle/internal/buildoutput"
 	"github.com/bensyverson/timetattle/internal/fsobserve"
 	"github.com/bensyverson/timetattle/internal/source"
 )
@@ -249,6 +250,9 @@ type Result struct {
 	// EventsConsidered is how many events survived the class, source and
 	// extension filters — not how many were passed in.
 	EventsConsidered int
+	// BuildOutput is how many of the source's observations were left out as
+	// build output.
+	BuildOutput int
 	// Documents is how many distinct (directory, name) pairs those events
 	// described.
 	Documents int
@@ -298,6 +302,10 @@ func Reconstruct(events []source.Event, opts Options) Result {
 	// order and why a store read does not have to be sorted first.
 	docs := map[key]*doc{}
 	for _, e := range events {
+		if e.Source == o.Source && buildoutput.Is(e) {
+			result.BuildOutput++
+			continue
+		}
 		if e.Source != o.Source || e.Shape != source.Point || e.Locator == "" || e.Start.IsZero() {
 			continue
 		}

@@ -103,7 +103,7 @@ because `knowledgeC` repeats itself and identical observations are one row.
 | `-store` | Event store to ingest into. Defaults to `~/.timetattle/timetattle.db`. |
 | `-motion-vault` | Motion's Autosave Vault to preserve. Defaults to the `motion-autosave` manifest source's root, so a relocated vault (see [Adding an evidence source](/docs/sources/)) is followed automatically. |
 | `-filedays-roots` | Comma-separated directories to scan for file modification days. Defaults to reading `~/.timetattle/filedays-roots.txt`, one path per line (`#` comments and blank lines ignored, `~` expanded). Nothing configured means nothing is scanned. |
-| `-filedays-exclude` | Comma-separated directory names to skip whole when scanning. Defaults to `.git,worktrees,node_modules,.venv,.Trash,Autosave Vault`. |
+| `-filedays-exclude` | Comma-separated directory names to skip whole when scanning. Defaults to `.git,worktrees,node_modules,.venv,.build,.Trash,Autosave Vault`. |
 | `-index` | Registry index of registered directories to read (see [Registering a project](/docs/registry/)). Defaults to `~/.timetattle/registered-directories.json`. |
 | `-quiet` | Print nothing on success. For scheduled runs. |
 
@@ -1417,7 +1417,7 @@ never overwritten:
 ```json
 {
   "observed_at": "2026-07-28T21:33:00Z",
-  "excludes": [".git", "worktrees", "node_modules", ".venv", ".Trash", "Autosave Vault"],
+  "excludes": [".git", "worktrees", "node_modules", ".venv", ".build", ".Trash", "Autosave Vault"],
   "roots": [
     {
       "root": "/Users/you/git/acorn",

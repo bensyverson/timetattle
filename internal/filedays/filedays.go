@@ -69,12 +69,13 @@ import (
 // attributed filesystem observations. The base names are matched WHOLE, which
 // is why `env` and `.venv-old` survive an exclude of `.venv` — see
 // TestDefaultExcludesSkipVirtualenvs, and scripts/spike/env in this repository,
-// which a looser rule would delete.
+// which a looser rule would delete. `.build` is Swift Package Manager's output.
 var DefaultExcludes = []string{
 	".git",
 	"worktrees",
 	"node_modules",
 	".venv",
+	".build",
 	".Trash",
 	"Autosave Vault",
 }

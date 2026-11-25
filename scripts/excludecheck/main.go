@@ -51,6 +51,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/bensyverson/timetattle/internal/buildoutput"
 	"github.com/bensyverson/timetattle/internal/config"
 	"github.com/bensyverson/timetattle/internal/fsobserve"
 	"github.com/bensyverson/timetattle/internal/sessions"
@@ -151,7 +152,9 @@ func run(storePath, configPath, exclude string, verbose bool) error {
 	droppedPerProject := map[string]int{}
 
 	for _, e := range events {
-		if e.Identity.Project == "" {
+		// Not part of the population: no report counts it, whatever the
+		// configured patterns say.
+		if e.Identity.Project == "" || buildoutput.Is(e) {
 			continue
 		}
 		key := projectDay{project: e.Identity.Project, day: cal.DayOf(e.Anchor()).String()}

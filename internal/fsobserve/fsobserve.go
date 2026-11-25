@@ -149,12 +149,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bensyverson/timetattle/internal/buildoutput"
 	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/source"
 )
 
 // ID identifies this source on every event it produces.
-const ID = "fs-observations"
+const ID = buildoutput.Source
 
 // Kind reports how this source is read, for diagnostics only.
 //
@@ -263,6 +264,7 @@ var excludedDirs = map[string]bool{
 	"worktrees":      true,
 	"node_modules":   true,
 	".venv":          true,
+	buildoutput.Dir:  true,
 	".Trash":         true,
 	"Autosave Vault": true,
 }
