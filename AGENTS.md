@@ -21,15 +21,16 @@ Findings go in `project/` as dated documents. A document goes in `project/privat
 - **`project/private/` is gitignored and does not ship.** Write findings there freely and name real clients, directories and hours — that is what it is for, and a measurement pseudonymised until it cannot be reproduced is worse than one that is simply not published.
 - **What ships must stand on its own.** `docs/content/docs/`, `README.md` and the code comments are the published record, and a public reader cannot follow a citation into `project/private/`. A comment that says "see the memo" and nothing else has therefore said nothing. Carry the reasoning, not just the pointer.
 - **Nothing that ships may carry a real client name, rate, contract figure or developer identifier** — that includes docs, code comments, test names and fixtures. `go run ./scripts/confidential -names <names> -gate .` is the check. Note what it exists to catch: the live store and the on-disk registry markers still hold REAL names, so pasting a live `review`, `metrics`, `orient` or `dashboard` capture into a published page re-imports exactly what was removed — and `dashboard` is the one that also carries a rate or a contract total, since its Allocation & Effective Rate section reads the config's `engagements` money. Three such leaks shipped this way and were caught three days late.
-- **The task database is a third such source, and the only one that also holds money.** `.jobs.db` is gitignored and untracked, so it is not itself a publication risk — but 20 of 53 tasks name a real client and four carry rates or contract values, and `job show <id>` is the first thing any agent runs. Quoting a task description into a document, a commit message, a test name or a code comment re-imports both. Pseudonymise on the way out, exactly as you would a `metrics` capture.
+- **The task database is a third such source, and the only one that also holds money.** `.jobs.db*` and `.jobs/` (its event log, which holds the same text) are gitignored and must stay untracked, whatever `job gitignore` recommends. 20 of 53 tasks name a real client and four carry rates or contract values, and `job show <id>` is the first thing any agent runs. Quoting a task description into a document, a commit message, a test name or a code comment re-imports both. Pseudonymise on the way out, exactly as you would a `metrics` capture.
 
 ## Build, install and checks
 
 - **Install with `make install`, never a bare `go install`.** `make install` is `go install` *plus* re-signing, and the signing is not optional dressing — a bare `go install` silently revokes this machine's Full Disk Access grant. See the Makefile comment and the 2026-07-30 entry in [project/gotchas.md](project/gotchas.md). `make agent` additionally (re)schedules the four-hourly harvest launchd agent.
+- **Release with `scripts/release`**, which publishes to the Homebrew tap checked out beside this repo; see [distribution.md](docs/content/docs/distribution.md).
 - **Schema migrations are numbered files in [internal/migrations/](internal/migrations/).**
 - **The pre-commit hook runs the confidentiality gate first.** It is `scripts/git-hooks/pre-commit`, wired in via `core.hooksPath`, and it runs the gate before `go vet`, a `scripts/` layout check, `go fix`, `gofmt`, `go mod tidy`, `go test ./...` and `go build`. The hook asks whether *this commit* adds anything unpublishable; `make gate` asks whether the repository is publishable *as it stands*, across the whole tree and every object in `.git`, and is what to run before pushing to a public mirror.
 
-<!-- agents:begin core@ffe7d8 -->
+<!-- agents:begin core@c84939 -->
 ## Working rules
 
 **Understand the why.** If the goal behind a request isn't clear, ask before solving — beware the XY problem.
@@ -61,6 +62,8 @@ Findings go in `project/` as dated documents. A document goes in `project/privat
 **Where these rules come from.** The marked regions are generated and shared across repos via a CLI tool named `agents`; don't edit inside them. If a rule here is wrong or cost you time, say so in `project/gotchas.md` prefixed `rule:`; that is how shared rules get reviewed.
 
 **Local rulings.** A repo-local ruling, or an override of a shared rule, lives in the project-owned head of `AGENTS.md`, above the generated regions — say plainly that it overrides, and link a dated project doc for the why.
+
+**American English.** Write American English everywhere; code, comments, docs, commit messages, memories: color, behavior, center, -ize, labeled, gray, catalog. Keep an external API's own spelling as-is (e.g. Apple's `isCancelled`).
 
 ## A session
 

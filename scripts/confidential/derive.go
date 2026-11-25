@@ -73,6 +73,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -191,7 +192,11 @@ func derive(p derivePaths) derived {
 
 	identities, isrc := readSigningIdentities(p.Identities)
 	d.Sources = append(d.Sources, isrc)
-	for _, lit := range append(signingLiterals(identities), gate.DeniedLiterals...) {
+	// A ruling covers a signing literal too: a personal certificate carries only
+	// its holder's name, which a copyright line has to state. A literal the file
+	// itself denies stays denied.
+	signing := slices.DeleteFunc(signingLiterals(identities), gate.publishable)
+	for _, lit := range append(signing, gate.DeniedLiterals...) {
 		accepted, err := acceptDenyLiteral(lit)
 		if err != nil {
 			d.Refused = append(d.Refused, err.Error())

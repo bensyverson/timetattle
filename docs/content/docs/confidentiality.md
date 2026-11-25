@@ -135,6 +135,11 @@ including the scheduled harvest.
 make classify > ~/.timetattle/publication-gate.json
 ```
 
+A name listed there is also dropped from the literals derived from signing
+certificates. A personal certificate carries only its holder's name, which a
+license's copyright line has to state; team IDs and other certificate names are
+still hunted.
+
 **Read it before saving it.** Every name in it is one this machine knows about
 and the tree contains; listing it says it is safe to publish. A name that
 identifies a client is not safe to publish and does not belong in that file —

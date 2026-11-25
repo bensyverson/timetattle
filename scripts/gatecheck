@@ -20,8 +20,8 @@
 #      than through somebody remembering to run the auditor?
 #   4. Does the classification file, saved EXACTLY the way the hook's own
 #      error message says to save it, parse when the gate reads it back?
-#      install.sh and release.sh each worked and had never been run against
-#      the other's output; this is the same seam one tool over.
+#      A writer and a reader that each work can still disagree about the
+#      bytes between them.
 #   5. Does this script's OWN cleanup refuse a path it did not create? See
 #      is_safe_temp_dir below for the near miss that put this check here.
 #

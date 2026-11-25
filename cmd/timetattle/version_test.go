@@ -111,3 +111,18 @@ func TestVersionWhenReadBuildInfoFails(t *testing.T) {
 		t.Errorf("output should admit the commit is unknown:\n%s", buf.String())
 	}
 }
+
+// A build from a release tarball, which is how Homebrew builds, carries no VCS
+// stamp, so the release number has to be stated in the source.
+func TestVersionLeadsWithTheReleaseNumberEvenWithoutAStamp(t *testing.T) {
+	withBuildInfo(t, nil, false)
+
+	var buf bytes.Buffer
+	if err := versionTo(&buf, nil); err != nil {
+		t.Fatalf("versionTo: %v", err)
+	}
+	first, _, _ := strings.Cut(buf.String(), "\n")
+	if want := "timetattle 0.1.0"; first != want {
+		t.Errorf("first line = %q, want %q", first, want)
+	}
+}

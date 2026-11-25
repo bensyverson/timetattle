@@ -44,7 +44,7 @@ coverage.*
 /transcripts
 /weakcensus
 
-# scripts/release.sh's build output: signed/notarized dmg and intermediates
+# scripts/profile's output
 /dist/
 
 # SQLite databases (server data store + local job state) and WAL sidecars
@@ -53,6 +53,14 @@ coverage.*
 *.db-wal
 *.sqlite
 *.sqlite3
+
+# The task database in every form job writes it. `job gitignore` would leave
+# .jobs/log tracked; here it cannot be, because task text names clients and
+# carries rates. The `.jobs.db*` pattern covers the lock and the pre-adoption
+# copy, which *.db misses and which the confidentiality gate, skipping binaries,
+# would not catch.
+/.jobs.db*
+/.jobs/
 
 local/
 

@@ -401,3 +401,24 @@ func TestAConfigNameStaysSensitiveEvenWhenClassifiedPublishable(t *testing.T) {
 		t.Errorf("Candidates = %v, want it counted once, as sensitive", d.Candidates)
 	}
 }
+
+// A signing certificate can carry nothing more than the author's own name,
+// which belongs in a copyright line. The ruling that clears a registered name
+// has to clear that literal too, or the license cannot be committed.
+func TestAClassifiedNameIsNotHuntedAsASigningLiteral(t *testing.T) {
+	d := derive(derivePaths{
+		Config:   writeConfig(t, nil, nil, nil),
+		Registry: filepath.Join(t.TempDir(), "absent.json"),
+		Gate:     writeGateFile(t, []string{"Pat Fixture"}, nil),
+		Identities: func() (string, error) {
+			return `  1) AB12 "Apple Development: Pat Fixture (QQ11WW22EE)"`, nil
+		},
+	})
+
+	if slices.Contains(d.Deny, "Pat Fixture") {
+		t.Errorf("Deny = %v, want the classified name left out", d.Deny)
+	}
+	if !slices.Contains(d.Deny, "QQ11WW22EE") {
+		t.Errorf("Deny = %v, want the unclassified team ID still hunted", d.Deny)
+	}
+}

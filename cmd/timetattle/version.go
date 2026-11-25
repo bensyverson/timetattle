@@ -9,13 +9,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version exists so a released binary is traceable to a commit — see
-// scripts/release.sh, which is the reason this file exists. It deliberately
-// carries no version string or commit hash of its own to hardcode; those come
-// from the VCS stamp the Go toolchain embeds automatically (since 1.18) when
-// a binary is built from within a git checkout. `go version -m <binary>`
-// shows the same information from outside the process; this command is that,
-// surfaced for someone who does not have the Go toolchain installed.
+// version is the release number. scripts/release rewrites this line, and it is
+// stated in the source because Homebrew builds from a tarball, which carries no
+// VCS stamp.
+const version = "0.1.0"
+
+// The commit and build time are not hardcoded: they come from the VCS stamp the
+// Go toolchain embeds when it builds from within a git checkout, and read as
+// unknown otherwise.
 //
 // readBuildInfo is a var, not a direct call to debug.ReadBuildInfo, purely so
 // version_test.go can substitute a fixed value — the real one depends on
@@ -31,10 +32,11 @@ func versionTo(stdout io.Writer, args []string) error {
 func versionCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print the commit this binary was built from",
-		Long: `Prints the module pseudo-version, the commit this binary was built at, and
-whether the working tree was dirty at build time. The commit is the Go
-toolchain's VCS stamp, so a -buildvcs=false build reports it as unknown.`,
+		Short: "Print the version and the commit this binary was built from",
+		Long: `Prints the release number, the commit this binary was built at, and whether
+the working tree was dirty at build time. The commit is the Go toolchain's VCS
+stamp, so a build from a release tarball or with -buildvcs=false reports it as
+unknown.`,
 		RunE: func(*cobra.Command, []string) error { return versionRun(stdout) },
 	}
 }
@@ -58,11 +60,6 @@ func versionRun(stdout io.Writer) error {
 				dirty = s.Value == "true"
 			}
 		}
-	}
-
-	version := "(unknown)"
-	if ok && info != nil && info.Main.Version != "" {
-		version = info.Main.Version
 	}
 
 	fmt.Fprintf(stdout, "timetattle %s\n", version)

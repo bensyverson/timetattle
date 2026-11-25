@@ -60,7 +60,19 @@ separable from the measurements without making them irreproducible. What it
 concluded lives here instead, in [the documentation](docs/content/docs/) and in
 the comments, which are written to stand on their own for that reason.
 
+## Install
+
+```console
+$ brew install bensyverson/tap/timetattle
+$ brew services start timetattle      # harvest every hour
+```
+
+Then grant it Full Disk Access (`brew info timetattle` says where). macOS only.
+
 ## Quick start
+
+From a clone instead of Homebrew, `make agent` does the install and the
+scheduling. Use one or the other: both schedule the same launchd agent.
 
 ```console
 $ make agent                   # go install, sign, schedule the harvester
@@ -239,10 +251,8 @@ until enough days have been through it.
   why the gap is inert below the margins, why the best score is usually a
   plateau rather than an answer, and how a reviewer confirming what he was shown
   produces labels a fit cannot learn from.
-- [Distributing a signed release](docs/content/docs/distribution.md) — why a
-  prebuilt release ships as a notarized, stapled `.dmg` rather than a bare
-  binary or a `.pkg`, the `scripts/release.sh` pipeline, and what the
-  one-command `scripts/install.sh` does.
+- [Releasing](docs/content/docs/distribution.md) — how a version reaches
+  Homebrew, and how the binary is signed.
 - [Running the tests](docs/content/docs/testing.md) — the two test runs, why
   the ordinary one does not touch your machine's data, what that means it has
   not verified, and the gate that keeps the two from merging back together.
@@ -323,3 +333,7 @@ widened by accident.
 Everything stays on the machine. There is no network component. Client
 contract values live in global configuration, never inside a repository, so
 they cannot be committed by accident.
+
+## Author and license
+
+By Ben Syverson. [MIT](LICENSE).
