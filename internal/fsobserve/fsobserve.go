@@ -149,13 +149,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bensyverson/timetattle/internal/buildoutput"
+	"github.com/bensyverson/timetattle/internal/generated"
 	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/source"
 )
 
 // ID identifies this source on every event it produces.
-const ID = buildoutput.Source
+const ID = generated.Source
 
 // Kind reports how this source is read, for diagnostics only.
 //
@@ -267,7 +267,7 @@ var excludedDirs = map[string]bool{
 	"worktrees":      true,
 	"node_modules":   true,
 	".venv":          true,
-	buildoutput.Dir:  true,
+	".build":         true,
 	".derived":       true,
 	"__pycache__":    true,
 	".mypy_cache":    true,

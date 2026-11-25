@@ -5,16 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bensyverson/timetattle/internal/buildoutput"
+	"github.com/bensyverson/timetattle/internal/generated"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
 )
 
-// The census is a report like any other, so stored build output stays out of
+// The census is a report like any other, so stored generated files stay out of
 // every figure in it: the total, the span and the unattributed locators.
-func TestLocatorCountsLeavesOutStoredBuildOutput(t *testing.T) {
+func TestLocatorCountsLeavesOutStoredGeneratedFiles(t *testing.T) {
 	f := newStore(t)
-	run, err := f.BeginRun(context.Background(), store.RunSpec{SourceID: buildoutput.Source, Input: "/tmp/walk"})
+	run, err := f.BeginRun(context.Background(), store.RunSpec{SourceID: generated.Source, Input: "/tmp/walk"})
 	if err != nil {
 		t.Fatalf("BeginRun: %v", err)
 	}
@@ -30,11 +30,14 @@ func TestLocatorCountsLeavesOutStoredBuildOutput(t *testing.T) {
 	)
 	f.write(t, run,
 		// Both ends of the span, so that either one leaking through moves it.
-		at(-time.Hour, buildoutput.Source, "/Users/you/git/app/.build/debug/early.o"),
-		at(time.Hour, buildoutput.Source, "/Users/you/git/app/.build/debug/late.o"),
-		at(0, buildoutput.Source, kept),
+		at(-time.Hour, generated.Source, "/Users/you/git/app/.build/debug/early.o"),
+		at(time.Hour, generated.Source, "/Users/you/git/app/.build/debug/late.o"),
+		at(0, generated.Source, kept),
+		at(2*time.Second, generated.Source, "/Users/you/git/app/.venv/lib/site.py"),
+		at(3*time.Second, generated.Source, "/Users/you/git/app/pkg/__pycache__/x.pyc"),
+		at(4*time.Second, generated.Source, "/Users/you/git/app/.ruff_cache/x"),
 		// No locator: the filter must not lose a row it cannot judge.
-		at(time.Minute, buildoutput.Source, ""),
+		at(time.Minute, generated.Source, ""),
 	)
 	// Another source's locator under .build records somebody working there.
 	f.write(t, f.run(t), at(2*time.Minute, sourceID, session))

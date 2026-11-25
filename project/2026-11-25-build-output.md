@@ -12,6 +12,13 @@ Whether the changed figures are acceptable is not decided here.
 
 ## The rule
 
+> **Later the same day** the rule was widened to more directory names and
+> `internal/buildoutput` became `internal/generated`; see
+> [what leaving the caches out changes](2026-11-25-cache-directories.md). The
+> figures here are of `.build` alone. `scripts/buildoutput` and the messages the
+> commands print have changed since, so reproducing them as printed takes the
+> tree at `60dfd12`.
+
 - `fsobserve` and `filedays` skip a directory named exactly `.build`.
 - The rule for stored records is in one place, `internal/buildoutput`.
 - Stored observations are not deleted or edited. A `fs-observations` event

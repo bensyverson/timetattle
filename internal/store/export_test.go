@@ -15,8 +15,11 @@ var EventsQuery = eventsQuery
 var UsageQuery = usageQuery
 
 // LocatorsUnderQuery is the listing a path-limited attribution issues for one
-// directory.
-const LocatorsUnderQuery = locatorsUnderQuery
+// directory, and NotGeneratedArgs are its leading arguments.
+var (
+	LocatorsUnderQuery = locatorsUnderQuery
+	NotGeneratedArgs   = notGeneratedArgs
+)
 
 // MatchIdentityQuery and FillPayloadQuery are the two statements a payload
 // backfill issues, exposed for the same reason EventsQuery is: the question the

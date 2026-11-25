@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bensyverson/timetattle/internal/buildoutput"
+	"github.com/bensyverson/timetattle/internal/generated"
 	"github.com/bensyverson/timetattle/internal/registry"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
@@ -109,19 +109,19 @@ func TestRegisterLeavesFormerPathsAloneWhenTheIndexCannotRecordTheMarker(t *test
 	}
 }
 
-func TestRegisterCountLeavesOutStoredBuildOutput(t *testing.T) {
+func TestRegisterCountLeavesOutStoredGeneratedFiles(t *testing.T) {
 	dir := t.TempDir()
 	kept := filepath.Join(dir, "main.swift")
-	built := filepath.Join(dir, buildoutput.Dir, "debug", "main.o")
+	built := filepath.Join(dir, ".build", "debug", "main.o")
 	st, db := newStore(t)
-	run, err := st.BeginRun(context.Background(), store.RunSpec{SourceID: buildoutput.Source, Input: "/tmp/walk"})
+	run, err := st.BeginRun(context.Background(), store.RunSpec{SourceID: generated.Source, Input: "/tmp/walk"})
 	if err != nil {
 		t.Fatalf("BeginRun: %v", err)
 	}
 	var events []source.Event
 	for i, l := range []string{kept, built} {
 		e := source.NewPoint(time.Date(2026, 7, 14, 9, i, 0, 0, time.UTC),
-			source.Identity{Document: filepath.Base(l)}, buildoutput.Source)
+			source.Identity{Document: filepath.Base(l)}, generated.Source)
 		e.Locator = l
 		events = append(events, e)
 	}
@@ -134,9 +134,9 @@ func TestRegisterCountLeavesOutStoredBuildOutput(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 	if !strings.Contains(out, "attributed 1 stored observation to loom") {
-		t.Errorf("count includes build output:\n%s", out)
+		t.Errorf("count includes a generated file:\n%s", out)
 	}
 	if got := storedProjects(t, db)[built]; got != "loom" {
-		t.Errorf("stored build output has project %q, want loom", got)
+		t.Errorf("a stored generated file has project %q, want loom", got)
 	}
 }

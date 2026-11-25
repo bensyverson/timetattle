@@ -4,7 +4,47 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/bensyverson/timetattle/internal/generated"
+	"github.com/bensyverson/timetattle/internal/source"
 )
+
+// TestTallyCountsEachDirectoryApartAndNoLocator: the old rule's figures must
+// stay readable beside the new names', and nothing printed may be a locator.
+func TestTallyCountsEachDirectoryApartAndNoLocator(t *testing.T) {
+	at := func(locator string) source.Event {
+		e := source.NewPoint(time.Unix(0, 0), source.Identity{}, generated.Source)
+		e.Locator = locator
+		return e
+	}
+	var out bytes.Buffer
+	tally(&out, []source.Event{
+		at("/Secret/app/main.py"),
+		at("/Secret/app/.venv/a.py"),
+		at("/Secret/app/.venv/a.py"),
+		at("/Secret/app/.venv/lib/__pycache__/a.pyc"),
+		at("/Secret/app/__pycache__/b.pyc"),
+		// Under two names, and .build's rule came first.
+		at("/Secret/app/.venv/x/.build/c.o"),
+	})
+	got := strings.Join(strings.Fields(out.String()), " ")
+	if strings.Contains(got, "Secret") {
+		t.Errorf("a locator reached the output:\n%s", out.String())
+	}
+	for _, want := range []string{
+		"all stored 6 5",
+		"under .build 1 1",
+		"under .derived 0 0",
+		"under .venv 3 2",
+		"under __pycache__ 1 1",
+		"counted 1 1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
+	}
+}
 
 const header = "level,name,seconds,observed_seconds,allocated_seconds\n"
 

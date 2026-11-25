@@ -1,16 +1,19 @@
-// Command buildoutput measures what leaving Swift build output out of a store's
-// figures changes. It prints counts and hours only, never a locator, project or
-// client name, so its output can be published.
+// Command buildoutput measures what leaving generated files (build output,
+// installed dependencies, caches) out of a store's figures changes. It prints
+// counts and hours only, never a locator, project or client name, so its output
+// can be published.
 //
 // Two independent parts, each optional.
 //
-// -store counts filesystem observations, and how many of them are build output:
+// -store counts filesystem observations, and how many of them are under each
+// generated directory. One under two of them counts for the earlier of
+// generated.Dirs, so ".build" reads as it did when it was the only one:
 //
 //	go run ./scripts/buildoutput -store copy.db [-from 2026-08-27]
 //
 // -before and -after compare two `timetattle metrics -all -by span -csv`
 // captures of the same store over the same window, one from a binary built
-// before the rule and one from a binary built with it:
+// before a change to the rule and one from a binary built with it:
 //
 //	go run ./scripts/buildoutput -before before.csv -after after.csv
 package main
@@ -24,11 +27,14 @@ import (
 	"maps"
 	"math"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/bensyverson/timetattle/internal/buildoutput"
+	"github.com/bensyverson/timetattle/internal/generated"
+	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
 )
 
@@ -70,7 +76,7 @@ func run(out io.Writer, storePath, from, before, after string) error {
 }
 
 func count(out io.Writer, storePath, from string) error {
-	filter := store.Filter{Source: buildoutput.Source}
+	filter := store.Filter{Source: generated.Source}
 	if from != "" {
 		at, err := time.ParseInLocation(time.DateOnly, from, time.Local)
 		if err != nil {
@@ -88,19 +94,47 @@ func count(out io.Writer, storePath, from string) error {
 		return err
 	}
 
-	all, built := map[string]bool{}, map[string]bool{}
-	var builtEvents int
-	for _, e := range events {
-		all[e.Locator] = true
-		if buildoutput.Is(e) {
-			builtEvents++
-			built[e.Locator] = true
-		}
-	}
-	fmt.Fprintf(out, "%-32s %10s %10s %10s\n", "filesystem observations", "before", "after", "build")
-	fmt.Fprintf(out, "%-32s %10d %10d %10d\n", "observations", len(events), len(events)-builtEvents, builtEvents)
-	fmt.Fprintf(out, "%-32s %10d %10d %10d\n", "distinct files", len(all), len(all)-len(built), len(built))
+	tally(out, events)
 	return nil
+}
+
+// tally prints how many observations and distinct files sit under each
+// generated directory, and what is left to be counted.
+func tally(out io.Writer, events []source.Event) {
+	type group struct {
+		observations int
+		files        map[string]bool
+	}
+	add := func(g *group, locator string) {
+		g.observations++
+		if g.files == nil {
+			g.files = map[string]bool{}
+		}
+		g.files[locator] = true
+	}
+	var all, counted group
+	under := make([]group, len(generated.Dirs))
+	for _, e := range events {
+		add(&all, e.Locator)
+		i := slices.IndexFunc(generated.Dirs, func(dir string) bool {
+			sep := string(filepath.Separator)
+			return strings.Contains(e.Locator, sep+dir+sep)
+		})
+		if i < 0 || !generated.Is(e) {
+			add(&counted, e.Locator)
+			continue
+		}
+		add(&under[i], e.Locator)
+	}
+	row := func(label string, g group) {
+		fmt.Fprintf(out, "%-32s %12d %14d\n", label, g.observations, len(g.files))
+	}
+	fmt.Fprintf(out, "%-32s %12s %14s\n", "filesystem observations", "observations", "distinct files")
+	row("all stored", all)
+	for i, dir := range generated.Dirs {
+		row("under "+dir, under[i])
+	}
+	row("counted", counted)
 }
 
 // totals is one metrics capture reduced to what can be printed, plus the

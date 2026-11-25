@@ -643,8 +643,8 @@ while leaving every day it has a commit or a real file save on. On somebody
 else's machine the same files are a scraper's deliverable. The two rules that
 hold everywhere are in code instead and need no configuration: SQLite's `-wal`
 and `-shm` sidecars, and
-[Swift build output](/docs/filesystem/#build-output-already-stored) beneath a
-`.build` directory.
+[generated files](/docs/filesystem/#generated-files-already-stored) beneath a
+directory such as `.build`, `.venv` or `__pycache__`.
 
 **Every exclusion is counted and itemised**, by rule, on every run of
 `sessionize` and `metrics`, and a pattern that matched *nothing* says so:

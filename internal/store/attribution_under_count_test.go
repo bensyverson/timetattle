@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bensyverson/timetattle/internal/buildoutput"
+	"github.com/bensyverson/timetattle/internal/generated"
 	"github.com/bensyverson/timetattle/internal/source"
 	"github.com/bensyverson/timetattle/internal/store"
 )
@@ -20,9 +20,9 @@ func resolveAs(project string) store.Resolver {
 // Events is quoted to a person as how many observations were attributed, so it
 // leaves out what no report counts. The rows are still attributed: the rule is
 // applied where they are read.
-func TestResolveProjectsUnderAttributesStoredBuildOutputWithoutCountingIt(t *testing.T) {
+func TestResolveProjectsUnderAttributesStoredGeneratedFilesWithoutCountingThem(t *testing.T) {
 	f := newStore(t)
-	run, err := f.BeginRun(context.Background(), store.RunSpec{SourceID: buildoutput.Source, Input: "/tmp/walk"})
+	run, err := f.BeginRun(context.Background(), store.RunSpec{SourceID: generated.Source, Input: "/tmp/walk"})
 	if err != nil {
 		t.Fatalf("BeginRun: %v", err)
 	}
@@ -36,7 +36,9 @@ func TestResolveProjectsUnderAttributesStoredBuildOutputWithoutCountingIt(t *tes
 		built   = "/work/app/.build/debug/main.o"
 		session = "/work/app/.build/checkouts/dep"
 	)
-	f.write(t, run, at(0, buildoutput.Source, kept), at(time.Minute, buildoutput.Source, built))
+	f.write(t, run, at(0, generated.Source, kept), at(time.Minute, generated.Source, built),
+		at(time.Second, generated.Source, "/work/app/.venv/lib/site.py"),
+		at(2*time.Second, generated.Source, "/work/app/.mypy_cache/x.json"))
 	// Another source's locator under .build records somebody working there.
 	f.write(t, f.run(t), at(2*time.Minute, sourceID, session))
 
@@ -47,11 +49,11 @@ func TestResolveProjectsUnderAttributesStoredBuildOutputWithoutCountingIt(t *tes
 	if att.Events["p"] != 2 {
 		t.Errorf("Events = %v, want 2 under p: the source file and the session", att.Events)
 	}
-	if att.Updated != 3 {
-		t.Errorf("Updated = %d, want all 3 rows", att.Updated)
+	if att.Updated != 5 {
+		t.Errorf("Updated = %d, want all 5 rows", att.Updated)
 	}
 	if got := projectsByLocator(t, f.all(t))[built]; got != "p" {
-		t.Errorf("stored build output has project %q, want p", got)
+		t.Errorf("a stored generated file has project %q, want p", got)
 	}
 }
 

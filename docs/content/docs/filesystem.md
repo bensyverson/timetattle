@@ -239,26 +239,32 @@ two files and both were source somebody wrote — one of them this project's own
 `scripts/spike/env/main.go`. Widening the rule to catch a virtualenv nobody has
 would delete work somebody did.
 
-**For every name but `.build`, this applies where evidence is COLLECTED, not
-where it is read.** It stops the next harvest and changes nothing already in the
-store; the read-time rules are `sessions.exclude`, the
-[SQLite sidecar rule](#sqlite-sidecars) and the
-[build-output rule](#build-output-already-stored). For the virtualenv the difference is immaterial and that was measured too — see
-[project/private/2026-08-01-virtualenvs-are-volume-without-harm.md](https://github.com/bensyverson/timetattle/blob/main/project/private/2026-08-01-virtualenvs-are-volume-without-harm.md).
+**Some of these names are also left out where evidence is read**: the ones
+whose contents a tool wrote, covered [below](#generated-files-already-stored).
+For the others the list applies only where evidence is COLLECTED. It stops the
+next harvest and changes nothing already in the store; the other read-time rules
+are `sessions.exclude` and the [SQLite sidecar rule](#sqlite-sidecars).
 
-### Build output already stored
+### Generated files already stored
 
-The store has no delete, so what was collected from `.build` directories before
-they were skipped stays there. It is left out where events are read instead: a
-filesystem observation of anything beneath a directory named `.build` is not
-counted by `sessionize`, `metrics`, `review`, `dashboard`, `fit`, `orient`, the
-bare command's summary or `chains`. Nothing is configured and nothing is deleted.
-`sessionize`, `metrics`, `fit` and `chains` say how many observations the rule
-left out.
+The store has no delete, so what was collected from a directory before it was
+skipped stays there. For these directories it is left out where events are read
+instead:
+
+```
+.build  .derived  .venv  __pycache__  .mypy_cache  .pytest_cache  .ruff_cache
+```
+
+A filesystem observation of anything beneath a directory with one of these names
+is not counted by `sessionize`, `metrics`, `review`, `dashboard`, `fit`,
+`orient`, the bare command's summary or `chains`. Nothing is configured and
+nothing is deleted. `sessionize`, `metrics`, `fit` and `chains` say how many
+observations the rule left out.
 
 The rule reaches only the filesystem source. A Claude Code session whose working
-directory is inside `.build` still counts: that records somebody working there,
-not a file a compiler wrote.
+directory is inside one of them still counts: that records somebody working
+there, not a file a tool wrote. It goes by the directory's name, so a file
+somebody wrote by hand inside one is left out too.
 
 `status`'s per-source event counts still include these records, because they
 describe what the store holds rather than what work was done. Sittings already
@@ -288,7 +294,8 @@ same kind of file, but `2026-08-01-journal` is a perfectly ordinary name for a
 diary entry, and this collector would rather miss a rollback journal than delete
 somebody's day.
 
-This and the build-output rule are the only exclusions in code. A `.db` or a `.log` **can** be
+This and the [generated-file rule](#generated-files-already-stored) are the only
+exclusions applied in code to what is already stored. A `.db` or a `.log` **can** be
 somebody's real deliverable, so excluding those is a declaration the user makes
 in `sessions.exclude` — see [Sessions](/docs/sessions/#excluding-machine-activity).
 

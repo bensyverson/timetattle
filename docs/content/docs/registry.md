@@ -68,8 +68,9 @@ attribution: attributed 42 stored observations to Holiday Campaign
 
 It resolves each path exactly as a harvest does, so a directory with its own
 marker inside this one keeps its own evidence, and that evidence is counted
-separately. The count is of observations reports count: stored [build
-output](filesystem.md) is attributed with the rest but left out of it. The store
+separately. The count is of observations reports count: stored [generated
+files](filesystem.md#generated-files-already-stored) are attributed with the rest
+but left out of it. The store
 is the one `-store` names (default
 `~/.timetattle/timetattle.db`); `register` never creates the default one.
 

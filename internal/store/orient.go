@@ -5,19 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
-
-	"github.com/bensyverson/timetattle/internal/buildoutput"
 )
-
-// countedByCensus leaves stored build output out of a census query; see
-// package buildoutput. It takes buildoutput.Source and buildoutput.Glob.
-// The COALESCE keeps a row with no locator, which NOT over NULL would drop.
-const countedByCensus = `NOT (source_id = ? AND COALESCE(locator, '') GLOB ?)`
 
 // LocatorCounts is the census `timetattle orient` needs, computed in SQL
 // instead of by reading every event into a source.Event: how many
-// observations the store holds in total and the span they cover (stored build
-// output is in none of these figures), and — among
+// observations the store holds in total and the span they cover (stored
+// observations of generated files are in none of these figures), and — among
 // the observations no project has been attributed to — how many carry no
 // locator at all against how many distinct locators appear and how many
 // observations back each one.
@@ -51,10 +44,9 @@ type LocatorCounts struct {
 func (s *Store) LocatorCounts(ctx context.Context) (LocatorCounts, error) {
 	var out LocatorCounts
 	out.ByLocator = map[string]int{}
-	counted := []any{buildoutput.Source, buildoutput.Glob}
 
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM canonical_event WHERE `+countedByCensus, counted...,
+		`SELECT COUNT(*) FROM canonical_event WHERE `+notGenerated, notGeneratedArgs...,
 	).Scan(&out.Observations); err != nil {
 		return LocatorCounts{}, fmt.Errorf("count observations in %s: %w", s.path, err)
 	}
@@ -69,7 +61,7 @@ func (s *Store) LocatorCounts(ctx context.Context) (LocatorCounts, error) {
 	var earliest, latest sql.NullString
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT MIN(COALESCE(started_at, ended_at)), MAX(COALESCE(started_at, ended_at))
-			FROM canonical_event WHERE `+countedByCensus, counted...,
+			FROM canonical_event WHERE `+notGenerated, notGeneratedArgs...,
 	).Scan(&earliest, &latest); err != nil {
 		return LocatorCounts{}, fmt.Errorf("find the span of observations in %s: %w", s.path, err)
 	}
@@ -89,8 +81,8 @@ func (s *Store) LocatorCounts(ctx context.Context) (LocatorCounts, error) {
 	// group is read out into NoPath explicitly, by column validity rather than
 	// by comparing against "", so nothing here would notice if that changed.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT locator, COUNT(*) FROM canonical_event WHERE project IS NULL AND `+countedByCensus+
-			` GROUP BY locator`, counted...)
+		`SELECT locator, COUNT(*) FROM canonical_event WHERE project IS NULL AND `+notGenerated+
+			` GROUP BY locator`, notGeneratedArgs...)
 	if err != nil {
 		return LocatorCounts{}, fmt.Errorf("count unattributed locators in %s: %w", s.path, err)
 	}

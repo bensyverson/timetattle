@@ -21,8 +21,8 @@ package sessions
 // The split is by whether a rule is universal or personal, and it is not a
 // matter of taste. A -wal cannot be a deliverable on any machine, so nobody
 // should have to configure it away and it lives in code. So does what the
-// filesystem walk saw under a Swift ".build" directory, which a compiler wrote
-// (see package buildoutput). A .log is another
+// filesystem walk saw under a directory only a tool writes to, such as ".build"
+// or ".venv" (see package generated). A .log is another
 // matter: Ben's are noise because Easley is a server he runs that syncs its
 // own access logs, and somebody else's .log is the output of their scraper.
 // Hardcoding that would be the tool deciding something it has no way to know,
@@ -46,8 +46,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bensyverson/timetattle/internal/buildoutput"
 	"github.com/bensyverson/timetattle/internal/fsobserve"
+	"github.com/bensyverson/timetattle/internal/generated"
 	"github.com/bensyverson/timetattle/internal/source"
 )
 
@@ -130,7 +130,7 @@ func (x Excludes) Patterns() []string { return x.order }
 // Match reports whether locator names a file that is not evidence of work, and
 // says which rule decided.
 //
-// It judges the file's name and path only. The build-output rule also depends
+// It judges the file's name and path only. The generated-file rule also depends
 // on which source made the observation, so only Retain applies it.
 //
 // An empty locator is never excluded and never can be: knowledgeC and Biome
@@ -187,8 +187,8 @@ type Drop struct {
 	// Sidecars is how many the universal SQLite rule took. It is separate
 	// from ByPattern because nobody configured it and nobody can turn it off.
 	Sidecars int
-	// BuildOutput is how many the universal build-output rule took.
-	BuildOutput int
+	// Generated is how many the universal generated-file rule took.
+	Generated int
 	// ByPattern counts what each configured pattern took, and holds an entry
 	// for EVERY pattern, including those that took nothing. A pattern that
 	// matched nothing is a person having said something the tool did nothing
@@ -223,9 +223,9 @@ func Retain(events []source.Event, x Excludes) ([]source.Event, Drop) {
 	kept := make([]source.Event, 0, len(events))
 	for _, e := range events {
 		// Before the patterns, so that none of them is credited with it.
-		if buildoutput.Is(e) {
+		if generated.Is(e) {
 			drop.Total++
-			drop.BuildOutput++
+			drop.Generated++
 			continue
 		}
 		pattern, matched := x.match(e.Locator)

@@ -24,8 +24,8 @@ import (
 // disagree about what the corpus is. `chains` deliberately does NOT apply the
 // configured patterns: it asks which file became which, which is a question
 // about the filesystem's history rather than about whose work a day was, and a
-// rotated log is a real answer to it. A copy a build made is not, so chains
-// leaves build output out itself.
+// rotated log is a real answer to it. A copy a tool made is not, so chains
+// leaves generated files out itself.
 
 // excludeFlagUsage is the one description of the flag, so sessionize and
 // metrics cannot document it two different ways.
@@ -72,14 +72,14 @@ func reportExclusions(out io.Writer, x sessions.Excludes, drop sessions.Drop) {
 // excludeBreakdown itemises a drop, naming the rule responsible for each part.
 // The two code rules are listed separately from the configured patterns because
 // nobody configured them and nobody can turn them off — see
-// fsobserve.IsDatabaseSidecar and package buildoutput.
+// fsobserve.IsDatabaseSidecar and package generated.
 func excludeBreakdown(x sessions.Excludes, drop sessions.Drop) string {
 	var parts []string
 	if drop.Sidecars > 0 {
 		parts = append(parts, plural(drop.Sidecars, "SQLite sidecar"))
 	}
-	if drop.BuildOutput > 0 {
-		parts = append(parts, fmt.Sprintf("%d build output (.build/)", drop.BuildOutput))
+	if drop.Generated > 0 {
+		parts = append(parts, fmt.Sprintf("%d in generated directories", drop.Generated))
 	}
 	for _, p := range x.Patterns() {
 		if n := drop.ByPattern[p]; n > 0 {

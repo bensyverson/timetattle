@@ -3,25 +3,23 @@ package store
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
-
-	"github.com/bensyverson/timetattle/internal/buildoutput"
 )
 
 // locatorsUnderQuery lists the distinct locators that are one directory or
 // beneath it. Its arguments are the directory, the directory with a trailing
 // separator, and the first string sorting after everything with that prefix.
 //
-// Beside each it counts the rows, then the rows reports count (stored build
-// output is not among them; see package buildoutput, whose Source and Glob are
-// the first two arguments), then the least and greatest project the rows carry,
-// with "" for none.
+// Beside each it counts the rows, then the rows reports count (observations of
+// generated files are not among them; notGeneratedArgs come first), then the
+// least and greatest project the rows carry, with "" for none.
 //
 // The directory test is a pair of comparisons rather than LIKE or GLOB so that
 // event_locator can be searched, and so that a "_" or "%" in a directory name
 // stays a character.
-const locatorsUnderQuery = `SELECT locator, COUNT(*),
-		SUM(NOT (source_id = ? AND locator GLOB ?)),
+var locatorsUnderQuery = `SELECT locator, COUNT(*),
+		SUM(` + notGenerated + `),
 		MIN(COALESCE(project, '')), MAX(COALESCE(project, ''))
 	FROM event
 	WHERE locator = ? OR (locator >= ? AND locator < ?) GROUP BY locator`
@@ -43,8 +41,8 @@ type PathAttribution struct {
 	// Events is how many event rows under the directories each project now
 	// owns, whether or not the pass had to change them. Updated cannot answer
 	// that: it is zero for a directory that was already attributed. It leaves
-	// out stored build output, which no report counts; Updated and Skips count
-	// every row.
+	// out stored observations of generated files, which no report counts;
+	// Updated and Skips count every row.
 	Events map[string]int
 }
 
@@ -134,7 +132,7 @@ func (s *Store) locatorsUnder(ctx context.Context, dirs []string) ([]locatorUnde
 		// "0" is the byte after "/".
 		end := strings.TrimSuffix(prefix, "/") + "0"
 		rows, err := s.db.QueryContext(ctx, locatorsUnderQuery,
-			buildoutput.Source, buildoutput.Glob, dir, prefix, end)
+			append(slices.Clone(notGeneratedArgs), dir, prefix, end)...)
 		if err != nil {
 			return nil, fmt.Errorf("list locators under %s: %w", dir, err)
 		}

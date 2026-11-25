@@ -167,9 +167,9 @@ func reportChains(out io.Writer, r chains.Result, subject string) {
 	fmt.Fprintf(out, "%s considered, %s, %d in a chain, %d in none\n\n",
 		plural(r.EventsConsidered, "observation"), plural(r.Documents, "document"),
 		r.Chained, len(r.Unchained))
-	if r.BuildOutput > 0 {
-		fmt.Fprintf(out, "%s of build output (.build/) not considered\n\n",
-			plural(r.BuildOutput, "observation"))
+	if r.Generated > 0 {
+		fmt.Fprintf(out, "%s in generated directories not considered\n\n",
+			plural(r.Generated, "observation"))
 	}
 
 	for _, c := range r.Chains {
